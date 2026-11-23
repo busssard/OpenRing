@@ -215,6 +215,9 @@ launch --ei tab 0 --es card WHAT_WAS;                                 shot today
 launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
 launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
 launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
+# When and how long (issue #435): the sheet opened on Today's row for Sauna (extra life_time, demo mode only; nothing is saved
+# without a tap): From as two wheels, How long as the tag's usual lengths, Save, Without a time
+launch --ei tab 0 --es card WHAT_WAS --ez life_time true;           shot today-life-time 3
 # A night by hand (issue #427), before the left out examples below change the demo file: hand_night (demo mode only, nothing
 # stored) shows today and the day before yesterday as without a device night, so Today asks for last night and the demo's
 # made up night by hand shows on its day; hand_entry opens the entry for last night with two wake marks (nothing is saved)
@@ -229,6 +232,13 @@ launch --ei tab 1; sleep 3
 swipe_up; swipe_up;                       shot sleep-details 1
 # the Details card with Total sleep first, next to Time in bed (issue #409); sleep-details above scrolls past it
 launch --ei tab 1 --es card DETAILS;        shot sleep-details-card 2
+# Sleep sounds (issue #380, phase 1b), demo mode only, which never records: the card with the demo night's clips (tones made in
+# code), the consent before the first night, the microphone test's made up result, the clip list, Settings' part in the Phone block
+launch --ei tab 1 --es card SLEEP_SOUNDS;   shot sleep-sounds-card 2
+launch --es sounds consent;                 shot sleep-sounds-consent 2
+launch --es sounds test;                    shot sleep-sounds-test 2
+launch --es sounds list;                    shot sleep-sounds-list 3
+launch --es settings sounds;                shot settings-sounds 3
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 launch --ei tab 1 --ez analysis true --ei period 1
@@ -435,6 +445,23 @@ shot body-life 1
 launch --ei tab 4 --es card LIFE_FACTORS --ei life_read 1; sleep 3
 scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body for the read day"
 shot body-life-touch 1
+# how the nights went after each factor (issue #292, phase 2): the card with every row folded, then Alcohol's row opened (the
+# demo's made up clear effect: the sentence, the range bar, the chart of the nights touched on its newest night after Alcohol)
+# and Meditation's (a number that is not clear yet); extra life_effect is a factor's key, demo mode only
+launch --ei tab 4 --es card LIFE_FACTORS_AND; sleep 3
+scroll_to "LIFE FACTORS AND YOUR NIGHTS" 3 || echo "::warning::issue #292 step: the card Life factors and your nights was not found on Body"
+shot body-life-effect 1
+launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect alcohol; sleep 3
+scroll_to "After alcohol" 4 || echo "::warning::issue #292 step: Alcohol's row was not open on Body"
+shot body-life-effect-clear 1
+launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect meditation; sleep 3
+scroll_to "After meditation" 4 || echo "::warning::issue #292 step: Meditation's row was not open on Body"
+shot body-life-effect-unclear 1
+# the demo's sauna yesterday at 19:00 for 45 minutes as a band on yesterday's heart rate (issue #435), touched in the band (82 % of
+# the chart's width is about 19:20), and the line under the chart: what the ring measured during it next to the day's average
+launch --ei tab 4 --es day "$(date -d '1 day ago' +%F)" --es card HEART_RATE_TODAY; sleep 3
+if touch_desc "Heart rate of the day with your logged times" 82; then shot body-life-band 1
+else echo "::warning::issue #435 step: the day's heart rate chart with the sauna band was not on screen to touch it"; shot body-life-band 1; fi
 launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
 scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1

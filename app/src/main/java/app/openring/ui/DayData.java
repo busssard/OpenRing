@@ -31,6 +31,11 @@ public final class DayData {
     public app.openring.data.ScreenDays.Info screen;
     /** The zone this day is shown in: its main night's, else the zone noted then, else the phone's (issue #22). */
     public java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+    /** Sleep sounds (issue #380, phase 1b): the night shown on this day's Sleep tab, null for none; its clip folder. */
+    public app.openring.data.Sounds.Night soundNight;
+    public java.io.File soundFolder;
+    /** False when the sleep sounds could not be read (the card says so). */
+    public boolean soundsOk = true;
     /**
      * The times left out because someone else wore the ring (issue #254) that reach this day or the day before (its night),
      * merged, oldest first, each {start, stop}. Empty for nearly everyone.
@@ -51,8 +56,16 @@ public final class DayData {
     public app.openring.core.LifeTags.Known life;
     /** Every day with a life factor in force, its tags by key. A few thousand rows even after years, read in the background. */
     public final java.util.TreeMap<LocalDate, List<String>> lifeDays = new java.util.TreeMap<LocalDate, List<String>>();
+    /** The logged times of the life factors (issue #435): each day in force with a time, for the bands on the day's charts. */
+    public final List<app.openring.core.LifeTimes.Entry> lifeTimes = new ArrayList<app.openring.core.LifeTimes.Entry>();
     /** False when the life factors could not be read (the cards say so; the screens' other numbers are unaffected). */
     public boolean lifeOk = true;
+    /**
+     * Life factors phase 2 (issue #292): how the nights went after each factor, in the card's order ({@code data/LifeEffects},
+     * worked out here in the background, kept while nothing changed). Empty without a ring or without factors; null when it
+     * could not be worked out (the card says so).
+     */
+    public List<app.openring.core.analysis.FactorEffect.Result> lifeEffects = new ArrayList<app.openring.core.analysis.FactorEffect.Result>();
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
     /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
@@ -423,13 +436,27 @@ public final class DayData {
             // life factors (issue #292): the person's own tags, the same in every file; demo mode reads the demo's
             d.life = app.openring.data.LifeLog.known(db);
             d.lifeDays.putAll(app.openring.data.LifeLog.all(db));
+            d.lifeTimes.addAll(app.openring.data.LifeLog.times(db));
         } catch (RuntimeException e) {
             // the cards say they could not be read. Not through failed(): the Data check names nothing of the tags, and the log
             // gets the error's kind only, never a tag, a name or a date
             d.life = null;
             d.lifeDays.clear();
+            d.lifeTimes.clear();
             d.lifeOk = false;
             app.openring.ble.RingManager.get(c).log("day load: the life factors could not be read: " + e.getClass().getSimpleName());
+        }
+        if (d.lifeOk && d.has.ring) {
+            try {
+                // the effect for you (issue #292, phase 2): the ring's nights of the last 12 months against each factor, with the
+                // period tracker's two factors when it shows; reads only
+                d.lifeEffects = app.openring.data.LifeEffects.read(db, LocalDate.now(), java.time.ZoneId.systemDefault(), d.life, d.lifeDays,
+                        d.periodShown ? d.periods : null);
+            } catch (RuntimeException e) {
+                // the card says it could not be worked out; the error's kind only, never a tag, a name or a value
+                d.lifeEffects = null;
+                app.openring.ble.RingManager.get(c).log("day load: the effect of the life factors: " + e.getClass().getSimpleName());
+            }
         }
         try {
             // the Recent badges row on Today (issue #265): one read of the 7 days and the weeks before them
@@ -459,6 +486,16 @@ public final class DayData {
             d.handReplacedBy = -1;
             d.handOk = false;
             d.ok = failed(c, date, "nights by hand", e);
+        }
+        try {
+            // sleep sounds (issue #380): the night of this day in the file shown (the demo has its own), and its clip folder
+            d.soundNight = app.openring.data.Sounds.forDay(db, date, d.zone);
+            d.soundFolder = app.openring.data.Sounds.folder(c, db);
+        } catch (RuntimeException e) {
+            // the card says it could not be read; the log gets the error's kind only, never a time or a kind of sound
+            d.soundNight = null;
+            d.soundsOk = false;
+            app.openring.ble.RingManager.get(c).log("day load: sleep sounds could not be read: " + e.getClass().getSimpleName());
         }
         try {
             d.batteries(c, db, System.currentTimeMillis() / 1000);

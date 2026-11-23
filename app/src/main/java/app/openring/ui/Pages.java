@@ -555,6 +555,7 @@ public final class Pages {
             if (offer != null) root.addView(offer);
             // the watch's nights around this day and its statistics still show (owner's report of 13 November)
             if (!d.watchRecent.isEmpty()) root.addView(recentNights(c, d, d.watchRecent, nav));
+            root.addView(SoundViews.card(c, d, nav));
             root.addView(infoCard(c, "About sleep", Explain.SLEEP_WATCH_ONLY));
             HistoryViews.sleep(c, root, d);
             if (HistoryViews.watch(d)) root.addView(furtherAnalysis(c, d));
@@ -575,6 +576,7 @@ public final class Pages {
             // slept without the ring and the watch: enter the night by hand (issue #427)
             View offer = HandViews.offerCard(c, d, nav);
             if (offer != null) root.addView(offer);
+            root.addView(SoundViews.card(c, d, nav));
             root.addView(infoCard(c, "About sleep", Explain.SLEEP));
             LinearLayout how = Ui.card(c);
             how.addView(Ui.caption(c, "How to see your sleep"));
@@ -597,7 +599,9 @@ public final class Pages {
         hyp.addView(Ui.caption(c, "Sleep depth through the night"));
         hyp.addView(Ui.gap(c, 10));
         double clockAt = Json.d(n, "clock_change_at");
-        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz), app.openring.core.Tour.CHART), Ui.sized(c, -1, 170));
+        // logged times of life factors that reach into the night (issue #435): bands, read by touch
+        List<app.openring.core.LifeTimes.Band> nightLife = LifeCard.bands(d, Json.d(n, "start"), Json.d(n, "end"), nz);
+        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz).life(nightLife), app.openring.core.Tour.CHART), Ui.sized(c, -1, 170));
         JSONArray mv = n.optJSONArray("motion_series");
         if (mv != null && mv.length() > 0) {
             hyp.addView(Ui.gap(c, 6));
@@ -662,6 +666,8 @@ public final class Pages {
         root.addView(hyp);
 
         root.addView(timeline(c, n, nz, d.leftOut));
+        // sleep sounds of this night (issue #380): the night's marks with their clips, Listen tonight
+        root.addView(SoundViews.card(c, d, nav));
         root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors", null, n));
         root.addView(infoCard(c, "About the sleep score", Explain.SLEEP));
 
@@ -685,14 +691,17 @@ public final class Pages {
         root.addView(stats);
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
-        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz).nearestMinute(),
+        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz).nearestMinute()
+                        .life(nightLife),
                 "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : minute(Json.d(n, "lowest_hr_time"), nz)
                         + app.openring.core.analysis.ClockChange.repeatNote(nz, WakeUps.roundMin(Json.d(n, "lowest_hr_time"))))));
-        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz).nearestMinute(),
+        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz).nearestMinute()
+                        .life(nightLife),
                 "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
         JSONArray sp = n.optJSONArray("spo2_series");
         if (sp != null && sp.length() > 0) {
-            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz).nearestMinute(),
+            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz).nearestMinute()
+                            .life(nightLife),
                     "Average " + Ui.fmt(Json.d(n, "spo2"), 1) + "%"));
         }
 
@@ -753,7 +762,8 @@ public final class Pages {
         boolean withHr = hr != null && !hr.points.isEmpty();
         // a watch that does not tell REM from light sleep shows them as one stage (owner's report of 13 November)
         boolean lightRem = !d.watchRem.tells(wn);
-        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end), app.openring.core.Tour.CHART).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem),
+        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end), app.openring.core.Tour.CHART).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem)
+                        .life(LifeCard.bands(d, wn.start, wn.end, nz)),
                 Ui.sized(c, -1, withHr ? 250 : 170));
         hyp.addView(Ui.gap(c, 4));
         hyp.addView(Ui.text(c, withHr ? "Touch or slide along the chart to see the time, the stage and the nearest heart rate."
@@ -796,6 +806,7 @@ public final class Pages {
         // the night's timeline from the watch's stages, as the ring's (each wake up of a minute or more)
         app.openring.core.DeviceHistory.NightRow row = watchOnly ? d.deviceHistory.night(d.date) : null;
         if (row != null) root.addView(timeline(c, app.openring.data.WatchHistory.nightJson(row), nz, new ArrayList<double[]>()));
+        root.addView(SoundViews.card(c, d, nav));
         if (scored) {
             DeviceViews.deviceParts(c, root, d, "sleep", Ui.SLEEP);
             root.addView(infoCard(c, "About the sleep score", Explain.SLEEP_DEVICE));
@@ -1441,7 +1452,15 @@ public final class Pages {
             pc.addView(Ui.gap(c, 8));
             int peak = 0;
             for (int h = 0; h < 24; h++) if (!Double.isNaN(hourly[h]) && (Double.isNaN(hourly[peak]) || hourly[h] > hourly[peak])) peak = h;
-            pc.addView(new Charts.BarChart(c, hourly, labels, Ui.ACTIVE).valueFormat("%.1f").highlight(peak), Ui.sized(c, -1, 120));
+            // touch reads each hour, and the logged times of life factors show as bands over their hours (issue #435)
+            String[] hourTips = new String[24];
+            for (int h = 0; h < 24; h++) {
+                hourTips[h] = String.format(Locale.getDefault(), "%02d:00 to ", h) + (h == 23 ? "midnight  " : String.format(Locale.getDefault(), "%02d:00  ", h + 1))
+                        + (Double.isNaN(hourly[h]) ? "no reading" : String.format(Locale.getDefault(), "%.1f MET", hourly[h]));
+            }
+            Charts.BarChart met = new Charts.BarChart(c, hourly, labels, Ui.ACTIVE).valueFormat("%.1f").highlight(peak).tips(hourTips);
+            LifeCard.onHours(met, d);
+            pc.addView(met, Ui.sized(c, -1, 120));
             pc.addView(Ui.gap(c, 6));
             // the bands of Wellness.day (issue #47)
             pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. While awake, under 1.5 counts as inactive, 1.5 to 3 low, "
@@ -1876,7 +1895,14 @@ public final class Pages {
         // the middle label at noon, also when the day has 23 or 25 hours
         double noon = d.date.atTime(12, 0).atZone(d.zone).toEpochSecond();
         // a time left out because someone else wore the ring: a grey band, readable by touch (issue #254)
-        hr.addView(new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon).leftOut(d.leftOutPieces()), Ui.sized(c, -1, 140));
+        // logged times of life factors (issue #435): a band with its name, read by touch, and under the chart what the line
+        // measured during each, next to the day's average (measured values only, never a cause)
+        List<app.openring.core.LifeTimes.Band> dayLife = LifeCard.bands(d, ds, de);
+        Charts.LineChart dayChart = new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon).leftOut(d.leftOutPieces()).life(dayLife);
+        dayChart.setContentDescription(dayLife.isEmpty() ? "Heart rate of the day, touch to read it" : "Heart rate of the day with your logged times, touch to read them");
+        hr.addView(dayChart, Ui.sized(c, -1, 140));
+        View during = LifeCard.during(c, d, line, dayLife, dh.avg);
+        if (during != null) hr.addView(during);
         String fromOther = d.merged == null ? null : app.openring.core.MainDevice.heartLine(d.merged, d.zone);
         if (fromOther != null) {
             hr.addView(Ui.gap(c, 4));
@@ -1971,8 +1997,11 @@ public final class Pages {
             // how close each prediction method was on these cycles (issue #383)
             if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
         }
-        // the life factors logged on Today, as a month (issue #292): the evidence itself, no effect worked out yet
+        // the life factors logged on Today, as a month (issue #292): the evidence itself
         root.addView(LifeCard.body(c, d));
+        // how the nights went after each factor, for you (issue #292, phase 2); only with a ring
+        View effects = LifeCard.effects(c, d);
+        if (effects != null) root.addView(effects);
         return root;
     }
 
