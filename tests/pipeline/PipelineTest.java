@@ -15289,10 +15289,6 @@ public class PipelineTest {
         return app.openring.data.LifeLog.on(db, day);
     }
 
-    static Db db422(Context c) {
-        return Db.get(c);
-    }
-
     /**
      * Runs {@code write} with {@code LifeLog.failRowsAfter} at 1 (a stop after the first row of a write over several rows);
      * true when it stopped. The caller then checks every row is as before.

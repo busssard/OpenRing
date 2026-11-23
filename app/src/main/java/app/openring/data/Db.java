@@ -1067,6 +1067,19 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * Every main night of the history ordered by start, one at a time: {@code each} gets its day and its JSON string as they
+     * are read, so a day's newest main night comes last (the daily CSV's zones, {@code Exporter.DayZones}, issue #460).
+     */
+    public void eachMainNight(java.util.function.BiConsumer<String, String> each) {
+        Cursor c = getReadableDatabase().rawQuery("SELECT day, json FROM nights WHERE main=1 ORDER BY start", null);
+        try {
+            while (c.moveToNext()) each.accept(c.getString(0), c.getString(1));
+        } finally {
+            c.close();
+        }
+    }
+
     /** Days before and after a date that the "Recent nights" strip shows (issue #98). */
     public static final int RECENT_DAYS = 30;
 
