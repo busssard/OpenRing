@@ -8,9 +8,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import app.openring.core.rings.RingFamily;
+
 /**
- * The Watch check (issue #251, phase 1a): what a Withings watch shows of its Bluetooth layout, without pairing and
- * without storing anything. {@code ble/WatchLink} fills a {@link Report} from one short session, {@code ui/WatchActivity}
+ * The Device check (issue #251, phase 1a, the Watch check; issue #418, phase 1, any ring or watch): what a device shows of
+ * its Bluetooth layout, without pairing and without storing anything. A Withings watch is listened to as before; for any
+ * other device ({@link RingFamily} names its family) the report holds only names, services and characteristics, no
+ * messages, so it can never hold a health value. {@code ble/WatchLink} fills a {@link Report} from one short session, {@code ui/WatchActivity}
  * shows it, and this class turns it into the text the person copies. Demo mode shows {@link #demoFound} and
  * {@link #demoReport} through the same code.
  *
@@ -48,11 +52,22 @@ public final class WatchCheck {
     /** The service UUID the public notes give for the Steel HR (unconfirmed): "WITH" in ASCII in its middle. */
     public static final String WITHINGS_SERVICE = "00000020-5749-5448-0037-000000000000";
 
-    public static final String INTRO = "Open Ring can look at a Withings watch to learn how it talks. This check only listens: it does not pair, "
-            + "changes nothing on the watch and stores nothing.";
-    public static final String SIGNAL = "Signal: closer to 0 means nearer. Your watch is usually the strongest.";
+    /** The screen's title and the Settings row that opens it (issue #418). */
+    public static final String TITLE = "Device check";
+    public static final String ROW = "Check a ring or watch";
+    public static final String INTRO = "Open Ring can look at a ring or watch to learn how it talks. This check only looks and listens: it does not pair, "
+            + "changes nothing on the device and stores nothing.";
+    public static final String SIGNAL = "Signal: closer to 0 means nearer. Your device is usually the strongest.";
     /** Said under the report when the phone was not paired with the watch before the check and is now (review of #270). */
     public static final String PAIRED_NOW = "The phone is now paired with this watch. To undo it, open Android's Bluetooth settings, tap the watch and choose Forget.";
+
+    /** {@link #PAIRED_NOW} for a device that is not a Withings watch (review of #430). */
+    public static final String PAIRED_NOW_DEVICE = "The phone is now paired with this device. To undo it, open Android's Bluetooth settings, tap the device and choose Forget.";
+
+    /** The sentence for a bond the check left: the watch's or the device's. */
+    public static String pairedNow(Report r) {
+        return other(r) ? PAIRED_NOW_DEVICE : PAIRED_NOW;
+    }
 
     /** True when the check left a bond that was not there before, so the screen tells how to remove it. */
     public static boolean pairedDuring(Report r) {
@@ -67,10 +82,12 @@ public final class WatchCheck {
     public static final String SEND_BACK = "What to send back: tap Copy the report and paste it as a comment on issue 251 on GitHub, with the "
             + "model name on the back of the watch, the firmware shown in the Withings app and the battery % on 3 mornings.";
     public static final String NO_ANSWER = "The watch did not answer. It may be busy with the Withings app; close that app and try again.";
+    /** {@link #NO_ANSWER} for a device that is not a Withings watch. */
+    public static final String NO_ANSWER_DEVICE = "The device did not answer. It may be busy with its own app; close that app and try again.";
     public static final String BUSY = "The ring is busy right now. Try again in a minute.";
-    public static final String DEMO = "Demo mode: this is a made up example. Turn demo mode off to check a real watch.";
+    public static final String DEMO = "Demo mode: this is a made up example. Turn demo mode off to check a real ring or watch.";
     /** The status line of the ring while the check holds it (review of #270), so a sync by hand meanwhile shows why it waits. */
-    public static final String RUNNING = "Watch check running, the ring is free again within 30 seconds";
+    public static final String RUNNING = "Device check running, the ring is free again within 30 seconds";
 
     /** Why a check ended early, in plain words for the screen; the status code or error goes to {@link Report#detail}. */
     public static final String ENDED_STOPPED = "The check was stopped because the screen was left.";
@@ -81,12 +98,94 @@ public final class WatchCheck {
 
     /** The line above the report on the screen: plain words only, the details stay in the report. */
     public static String outcome(Report r) {
-        if (!r.connected) return r.problem != null ? r.problem : NO_ANSWER;
+        boolean watch = !other(r);
+        if (r.family == RingFamily.OURA && !r.connected && r.problem == null) return OURA_LEFT;
+        if (!r.connected) return r.problem != null ? r.problem : watch ? NO_ANSWER : NO_ANSWER_DEVICE;
         if (r.problem != null) return "The check ended early. " + r.problem + " What it found so far is below.";
-        return "Done. The watch was let go again.";
+        return watch ? "Done. The watch was let go again." : "Done. The device was let go again.";
     }
 
-    public static final String NOTHING_FOUND = "Nothing found nearby. Wake the watch (press its button), keep it next to the phone and scan again.";
+    public static final String NOTHING_FOUND = "Nothing found nearby. Wake the watch (press its button) or close the ring's own app, keep the "
+            + "device next to the phone and scan again.";
+
+    /** The report note for a device that was not listened to (every one but a Withings watch, issue #418). */
+    public static final String DEVICE_NOTE = "When the device answered, the report holds its name, maker, battery level and Bluetooth layout. "
+            + "The check did not listen to its messages, so the report holds no health values.";
+
+    /** True for a report of a device that is not a Withings watch (its family is known and not Withings). */
+    static boolean other(Report r) {
+        return r.family != null && r.family != RingFamily.WITHINGS;
+    }
+
+    /**
+     * False for the person's own Oura ring (review of #430): the check never connects to it, so there is no report to show
+     * or copy, only {@link #OURA_LEFT} and the family's line ({@link RingFamily#OURA_LINE}).
+     */
+    public static boolean showsReport(Report r) {
+        return r != null && r.family != RingFamily.OURA;
+    }
+
+    /** The note under the report: what it holds. */
+    public static String reportNote(Report r) {
+        return r.listen ? REPORT_NOTE : DEVICE_NOTE;
+    }
+
+    /** What to do with the report: the watch's lines of issue #251, or the family's one line (issue #418). */
+    public static String sendBack(Report r) {
+        return other(r) ? r.family.line() : SEND_BACK;
+    }
+
+    /**
+     * Whether the session switches notifications on and listens: only for a Withings watch, known from the scan or from
+     * the Withings service in its layout. Any other device is only looked at (names, services, characteristics), so its
+     * report can never hold a health value and nothing is written to it.
+     */
+    public static boolean listens(RingFamily scanFamily, Report r) {
+        boolean withings = scanFamily == RingFamily.WITHINGS;
+        for (Service s : r.services) {
+            RingFamily f = RingFamily.byService(s.uuid);
+            // a service of another family (a ring with a Withings word in its name, review of #430): never listened to
+            if (f != null && f != RingFamily.WITHINGS) return false;
+            if (f == RingFamily.WITHINGS) withings = true;
+        }
+        return withings;
+    }
+
+    /**
+     * The family of a scanned device, from its name, advertised services and maker data: Oura's company id
+     * ({@link Protocol#COMPANY_ID}) counts as the Oura service, as {@code ble/RingScanner.isOura} counts it.
+     */
+    public static RingFamily family(Found f) {
+        List<String> s = f.services;
+        if (f.ouraMaker) {
+            s = new ArrayList<String>(s);
+            s.add(RingFamily.OURA_SERVICE);
+        }
+        return RingFamily.of(f.name, s, null);
+    }
+
+    /** Said instead of an outcome for the Oura ring: the check does not connect to it (review of #430). */
+    public static final String OURA_LEFT = "Not connected: Open Ring already reads this ring, so the check leaves it alone and a sync is never disturbed.";
+
+    /** The report of the Oura ring, from the scan alone: the check never connects to it, so a sync is never disturbed. */
+    public static Report ouraReport(Found f) {
+        Report r = new Report();
+        r.name = title(f);
+        r.rssi = f.rssi;
+        r.listen = false;
+        r.family = RingFamily.OURA;
+        return r;
+    }
+
+    /**
+     * Names the family of a finished report from everything known: the scan's name and services, the services of the
+     * layout and the maker read from Device Information. A report that was listened to is a Withings watch's.
+     */
+    public static void settle(Found f, Report r) {
+        List<String> all = new ArrayList<String>(f.services);
+        for (Service s : r.services) if (!all.contains(s.uuid)) all.add(s.uuid);
+        r.family = r.listen ? RingFamily.WITHINGS : RingFamily.of(f.name, all, r.manufacturer);
+    }
 
     // ---------------------------------------------------------------- names
 
@@ -141,7 +240,7 @@ public final class WatchCheck {
 
     /** True for a UUID with "WITH" in ASCII where the public notes put it (5749-5448). */
     public static boolean withings(String uuid) {
-        return uuid != null && uuid.toLowerCase(Locale.ROOT).contains("-5749-5448-");
+        return RingFamily.withingsService(uuid);
     }
 
     /**
@@ -168,6 +267,8 @@ public final class WatchCheck {
         public String name;
         public int rssi;
         public final List<String> services = new ArrayList<String>();
+        /** True when the advertisement carries maker data under Oura's company id ({@link Protocol#COMPANY_ID}). */
+        public boolean ouraMaker;
 
         public Found(String address, String name, int rssi) {
             this.address = address;
@@ -221,31 +322,27 @@ public final class WatchCheck {
     }
 
     /**
-     * The devices worth listing: those with a name, and any that looks like a Withings watch even
-     * without one. Unnamed devices (headphones, tags, other phones) only fill the list (owner, 3 Nov).
+     * The devices worth listing: those with a name, and any of a known family (a Withings watch, a ring) even without
+     * one. Unnamed devices (headphones, tags, other phones) only fill the list (owner, 3 Nov).
      */
     public static List<Found> shown(List<Found> all) {
         List<Found> out = new ArrayList<Found>();
-        for (Found f : all) if (likelyWatch(f) || f.name != null && !f.name.trim().isEmpty()) out.add(f);
+        for (Found f : all) if (family(f) != RingFamily.UNKNOWN || f.name != null && !f.name.trim().isEmpty()) out.add(f);
         return out;
     }
 
     /**
-     * Watch setup's name rule (issue #251): a name starting with steel, withings, activit or scanwatch, in any case.
-     * It is stricter than {@link #likelyWatch} (a prefix, not anywhere in the name, and no "hwa0") and also takes
-     * "scanwatch"; both are kept as they were, Setup adds the exact Withings service on its own.
+     * Watch setup's name rule: the Withings family's name rule, {@link RingFamily#withingsName} (issue #418: one rule for
+     * Setup and the check, withings, steel, activit, scanwatch or hwa0 anywhere in the name, in any case). Setup adds the
+     * exact Withings service on its own.
      */
     public static boolean setupName(String name) {
-        String low = name == null ? "" : name.toLowerCase(Locale.ROOT);
-        return low.startsWith("steel") || low.startsWith("withings") || low.startsWith("activit") || low.startsWith("scanwatch");
+        return RingFamily.withingsName(name);
     }
 
-    /** True when the name or the advertised services suggest a Withings watch. */
+    /** True when the name or the advertised services suggest a Withings watch: the Withings family of {@link RingFamily}. */
     public static boolean likelyWatch(Found f) {
-        String n = f.name == null ? "" : f.name.toLowerCase(Locale.ROOT);
-        if (n.contains("withings") || n.contains("steel") || n.contains("hwa0") || n.contains("activit")) return true;
-        for (String s : f.services) if (withings(s)) return true;
-        return false;
+        return family(f) == RingFamily.WITHINGS;
     }
 
     /** "Signal -58 dBm" and the advertised services, the second line of a row in the scan list. */
@@ -257,7 +354,8 @@ public final class WatchCheck {
             sb.append(", services: ");
             for (int i = 0; i < f.services.size(); i++) sb.append(i == 0 ? "" : ", ").append(name(f.services.get(i)));
         }
-        if (likelyWatch(f)) sb.append("\nLooks like a Withings watch");
+        String line = family(f).rowLine(); // "Looks like a Withings watch", "Looks like a ring of the QRing family (...)"
+        if (line != null) sb.append('\n').append(line);
         return sb.toString();
     }
 
@@ -334,6 +432,13 @@ public final class WatchCheck {
         /** A status code or error name for the report only (never on the screen), or null. */
         public String detail;
         public final List<Service> services = new ArrayList<Service>();
+        /** The family the screen names (issue #418), set by {@link #settle}; null in a report made before that. */
+        public RingFamily family;
+        /**
+         * Whether the session listened ({@link #listens}): true for a Withings watch. False keeps every message out of the
+         * report, so a ring's report holds names, services and characteristics only.
+         */
+        public boolean listen = true;
 
         public Service add(String uuid) {
             Service s = new Service(uuid);
@@ -345,8 +450,10 @@ public final class WatchCheck {
     /** The copied report: {@code bytes} false keeps only lengths and the first {@link #TYPE_BYTES} bytes of each message. */
     public static String text(Report r, boolean bytes) {
         StringBuilder sb = new StringBuilder();
-        sb.append("Open Ring watch check").append(bytes ? " (with message bytes, private)" : "").append('\n');
+        boolean bytesShown = bytes && r.listen;
+        sb.append(other(r) ? "Open Ring device check" : "Open Ring watch check").append(bytesShown ? " (with message bytes, private)" : "").append('\n');
         sb.append("Name: ").append(r.name == null || r.name.isEmpty() ? "(no name)" : r.name).append('\n');
+        if (other(r)) sb.append("Looks like: ").append(r.family.title).append('\n');
         if (r.rssi != NO_RSSI) sb.append("Signal: ").append(r.rssi).append(" dBm\n");
         sb.append("Model: ").append(or(r.model)).append('\n');
         sb.append("Firmware: ").append(or(r.firmware)).append('\n');
@@ -357,6 +464,7 @@ public final class WatchCheck {
         sb.append("Paired with this phone before: ").append(r.bondedBefore ? "yes" : "no").append('\n');
         sb.append("Paired now: ").append(r.bondedAfter ? "yes" : "no").append('\n');
         if (!r.connected) sb.append("Connected: no\n");
+        else if (!r.listen) sb.append("Connected in ").append(seconds(r.connectMs)).append(", messages not listened to (no health values)\n");
         else sb.append("Connected in ").append(seconds(r.connectMs)).append(", listened ").append(seconds(r.listenMs)).append('\n');
         if (r.problem != null) sb.append("Ended early: ").append(r.problem).append('\n');
         if (r.detail != null) sb.append("Detail: ").append(r.detail).append('\n');
@@ -365,6 +473,12 @@ public final class WatchCheck {
             for (Characteristic c : s.characteristics) {
                 // only the service is marked as Withings like; its characteristics keep their plain UUID
                 sb.append("  ").append(standard(c.uuid) ? name(c.uuid) : c.uuid).append(": ").append(properties(c.props));
+                if (!r.listen) {
+                    // not a Withings watch: never a message in its report, whatever a characteristic holds
+                    if (sends(c.props)) sb.append(" (not listened to)");
+                    sb.append('\n');
+                    continue;
+                }
                 if (c.listening != null) sb.append(c.listening ? " (listened)" : " (did not switch on)");
                 else if (sends(c.props) && standard(c.uuid)) sb.append(" (standard, not listened to)");
                 sb.append('\n');
@@ -424,13 +538,55 @@ public final class WatchCheck {
 
     // ---------------------------------------------------------------- demo
 
-    /** The made up scan of demo mode: a watch, headphones and a device without a name. */
+    /** The address of the made up QRing ring in {@link #demoFound} (issue #418). */
+    public static final String DEMO_RING = "00:00:00:00:00:04";
+
+    /** The made up scan of demo mode: a watch, headphones, a device without a name and a QRing ring (issue #418). */
     public static List<Found> demoFound() {
         List<Found> l = new ArrayList<Found>();
         l.add(new Found("00:00:00:00:00:01", "Headphones (example)", -71).service("0000110b" + BASE));
         l.add(new Found("00:00:00:00:00:02", "Steel HR (example)", -52).service(WITHINGS_SERVICE));
         l.add(new Found("00:00:00:00:00:03", null, -88));
+        l.add(new Found(DEMO_RING, "R09_ABCD (example)", -63).service(RingFamily.QRING_SERVICE));
         return l;
+    }
+
+    /** The made up report of demo mode for the device {@code f}: the watch's, the ring's, or one of its advertised layout only. */
+    public static Report demoReport(Found f) {
+        Report r;
+        if (likelyWatch(f)) r = demoReport();
+        else if (DEMO_RING.equals(f.address)) r = demoRingReport();
+        else {
+            r = new Report();
+            r.name = title(f);
+            r.rssi = f.rssi;
+            r.connected = true;
+            r.listen = false;
+            r.connectMs = 1100;
+            for (String s : f.services) r.add(s);
+        }
+        settle(f, r);
+        return r;
+    }
+
+    /** The made up report of the demo's QRing ring: looked at, never listened to (issue #418); every value is made up. */
+    public static Report demoRingReport() {
+        Report r = new Report();
+        r.name = "R09_ABCD (example)";
+        r.rssi = -63;
+        r.connected = true;
+        r.listen = false;
+        r.battery = 70;
+        r.connectMs = 900;
+        r.add("00001800" + BASE).add("00002a00" + BASE, 0x02);
+        r.add("0000180f" + BASE).add("00002a19" + BASE, 0x12);
+        Service q = r.add(RingFamily.QRING_SERVICE);
+        q.add("6e400002-b5a3-f393-e0a9-e50e24dcca9e", 0x0c);
+        q.add("6e400003-b5a3-f393-e0a9-e50e24dcca9e", 0x10);
+        Service big = r.add(RingFamily.QRING_BIG);
+        big.add("de5bf72a-d711-4e47-af26-65e3012a5dc7", 0x0c);
+        big.add("de5bf729-d711-4e47-af26-65e3012a5dc7", 0x10);
+        return r;
     }
 
     /** The made up report of demo mode, built like a real one (the first message bytes are made up too). */
