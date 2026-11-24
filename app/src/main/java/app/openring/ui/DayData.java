@@ -648,7 +648,6 @@ public final class DayData {
         return Double.isNaN(v) ? null : app.openring.core.DeviceScores.version(v);
     }
 
-    /** Values of a day field for the {@code n} days ending at the selected date (NaN if missing). */
     /** Today when this day was loaded: the charts' windows end here while the shown day is inside them (owner, 23 November). */
     public LocalDate today = LocalDate.now();
 
@@ -662,28 +661,62 @@ public final class DayData {
         return app.openring.core.DayWindow.index(date, end(n), n);
     }
 
+    /** "" when a chart of {@code n} days ends on the shown day, else " in the n days up to the day you picked", for the averages under it. */
+    public String upTo(int n) {
+        return app.openring.core.DayWindow.upTo(date, end(n), n);
+    }
+
+    /** A day field of the stored day summaries, NaN where missing. */
+    app.openring.core.DayWindow.Value field(final String field) {
+        return new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(LocalDate day) {
+                return Json.d(history.get(day.toString()), field);
+            }
+        };
+    }
+
+    /** A score's value from the nested score object of the stored day summaries, NaN where missing. */
+    app.openring.core.DayWindow.Value scoreValue(final String field) {
+        return new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(LocalDate day) {
+                JSONObject o = history.get(day.toString());
+                JSONObject s = o == null ? null : o.optJSONObject(field);
+                return s == null || !s.has("value") ? Double.NaN : s.optDouble("value");
+            }
+        };
+    }
+
+    /**
+     * Values of a day field for the {@code n} days ending at the shown day (NaN if missing), for numbers worked out for that day
+     * (averages, usual values). Charts draw {@link #chartSeries} instead (code review of #455: a display window never changes a number).
+     */
     public double[] series(String field, int n) {
-        double[] out = new double[n];
-        LocalDate end = end(n);
-        for (int i = 0; i < n; i++) {
-            JSONObject o = history.get(end.minusDays(n - 1 - i).toString());
-            out[i] = Json.d(o, field);
-        }
-        return out;
+        return app.openring.core.DayWindow.values(date, n, field(field));
     }
 
-    /** Score value from a nested score object of a day summary, or NaN. */
+    /** Values of a day field for the {@code n} days a chart draws, ending at {@link #end} (NaN if missing). Only for drawing. */
+    public double[] chartSeries(String field, int n) {
+        return app.openring.core.DayWindow.values(end(n), n, field(field));
+    }
+
+    /** Score values (nested score objects) for the {@code n} days ending at the shown day, NaN where missing. */
     public double[] scoreSeries(String field, int n) {
-        double[] out = new double[n];
-        LocalDate end = end(n);
-        for (int i = 0; i < n; i++) {
-            JSONObject o = history.get(end.minusDays(n - 1 - i).toString());
-            JSONObject s = o == null ? null : o.optJSONObject(field);
-            out[i] = s == null || !s.has("value") ? Double.NaN : s.optDouble("value");
-        }
-        return out;
+        return app.openring.core.DayWindow.values(date, n, scoreValue(field));
     }
 
+    /** Score values for the {@code n} days a chart draws, ending at {@link #end}. Only for drawing. */
+    public double[] chartScoreSeries(String field, int n) {
+        return app.openring.core.DayWindow.values(end(n), n, scoreValue(field));
+    }
+
+    /** The shown day's usual value of a field: the mean of the 14 days before it ({@link app.openring.core.DayWindow#usual}). */
+    public double usual(String field) {
+        return app.openring.core.DayWindow.usual(date, field(field));
+    }
+
+    /** The weekday letters under a chart of {@code n} days, ending at {@link #end}. */
     public String[] weekdayLabels(int n) {
         String[] l = new String[n];
         LocalDate end = end(n);

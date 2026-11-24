@@ -704,9 +704,16 @@ public final class Pages {
         LinearLayout week = Ui.card(c);
         week.addView(Ui.caption(c, "Total sleep, last 7 days"));
         week.addView(Ui.gap(c, 8));
-        double[] asleep = d.series("asleep_min", 7);
+        double[] asleep = d.chartSeries("asleep_min", 7);
         for (int i = 0; i < asleep.length; i++) asleep[i] /= 60.0;
-        week.addView(new Charts.BarChart(c, asleep, d.weekdayLabels(7), Ui.SLEEP).valueFormat("%.1f h").target(8).highlight(d.pickedIndex(7)), Ui.sized(c, -1, 130));
+        // touch reads each day, so the newer days next to a picked one read too (code review of #455)
+        week.addView(new Charts.BarChart(c, asleep, d.weekdayLabels(7), Ui.SLEEP).valueFormat("%.1f h").target(8).highlight(d.pickedIndex(7))
+                .tips(HistoryViews.tips(d, asleep, new HistoryViews.Fmt() {
+                    @Override
+                    public String of(double v) {
+                        return Ui.hm(v * 60) + " asleep";
+                    }
+                })), Ui.sized(c, -1, 130));
         root.addView(week);
         addNaps(c, root, d);
         root.addView(furtherAnalysis(c, d));
@@ -1234,13 +1241,20 @@ public final class Pages {
         root.addView(t);
 
         root.addView(chartCard(c, "HRV, last 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.end(30), 30).pick(d.date).unit(" ms"),
-                "Average " + Ui.fmt(Stats.mean(d.series("hrv", 30)), 0) + " ms. Compare with yourself, not with others: HRV differs a lot between people."));
+                "Average " + Ui.fmt(Stats.mean(d.series("hrv", 30)), 0) + " ms" + d.upTo(30) + ". Compare with yourself, not with others: HRV differs a lot between people."));
         root.addView(chartCard(c, "Resting heart rate, last 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.end(30), 30).pick(d.date).unit(" bpm"),
-                "Average " + Ui.fmt(Stats.mean(d.series("rhr", 30)), 0) + " bpm. A downward trend usually means improving fitness and recovery."));
+                "Average " + Ui.fmt(Stats.mean(d.series("rhr", 30)), 0) + " bpm" + d.upTo(30) + ". A downward trend usually means improving fitness and recovery."));
         LinearLayout week = Ui.card(c);
         week.addView(Ui.caption(c, "Readiness, last 7 days"));
         week.addView(Ui.gap(c, 8));
-        week.addView(new Charts.BarChart(c, d.scoreSeries("readiness", 7), d.weekdayLabels(7), Ui.READY).highlight(d.pickedIndex(7)), Ui.sized(c, -1, 130));
+        double[] ready = d.chartScoreSeries("readiness", 7);
+        week.addView(new Charts.BarChart(c, ready, d.weekdayLabels(7), Ui.READY).highlight(d.pickedIndex(7))
+                .tips(HistoryViews.tips(d, ready, new HistoryViews.Fmt() {
+                    @Override
+                    public String of(double v) {
+                        return "readiness " + Math.round(v);
+                    }
+                })), Ui.sized(c, -1, 130));
         root.addView(week);
         return root;
     }
@@ -1264,10 +1278,9 @@ public final class Pages {
         return card;
     }
 
+    /** The mean of the 14 days before the shown day, whatever the charts draw (code review of #455; {@code CoreTest.dayWindow}). */
     static double usual(DayData d, String field) {
-        double[] v = d.series(field, 15);
-        double[] prior = java.util.Arrays.copyOf(v, 14);
-        return Stats.countFinite(prior) >= 3 ? Stats.mean(prior) : Double.NaN;
+        return d.usual(field);
     }
 
     static View signalRow(Context c, String name, double value, double usual, String unit, int dp, boolean lowerIsBetter) {
@@ -1469,7 +1482,14 @@ public final class Pages {
         LinearLayout week = Ui.card(c);
         week.addView(Ui.caption(c, "Active burn, last 7 days"));
         week.addView(Ui.gap(c, 8));
-        week.addView(new Charts.BarChart(c, d.series("active_kcal", 7), d.weekdayLabels(7), Ui.ACTIVE).target(target).highlight(d.pickedIndex(7)), Ui.sized(c, -1, 130));
+        double[] burn = d.chartSeries("active_kcal", 7);
+        week.addView(new Charts.BarChart(c, burn, d.weekdayLabels(7), Ui.ACTIVE).target(target).highlight(d.pickedIndex(7))
+                .tips(HistoryViews.tips(d, burn, new HistoryViews.Fmt() {
+                    @Override
+                    public String of(double v) {
+                        return HistoryViews.whole(v) + " kcal active";
+                    }
+                })), Ui.sized(c, -1, 130));
         root.addView(week);
         return root;
     }
@@ -2002,7 +2022,7 @@ public final class Pages {
     }
 
     static TS daysSeries(DayData d, String field, int n) {
-        return app.openring.data.DaySeries.of(d.end(n), d.series(field, n));
+        return app.openring.data.DaySeries.of(d.end(n), d.chartSeries(field, n));
     }
 
     static View hero(Context c, double score, String label, int color, String sub) {

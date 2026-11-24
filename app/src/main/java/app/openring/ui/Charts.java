@@ -556,7 +556,10 @@ public final class Charts {
             return this;
         }
 
-        /** The shown day in a chart of days (owner, 23 November): a faint line and a bigger dot, while newer days stay in view. */
+        /**
+         * The shown day in a chart of days (owner, 23 November): a faint line and a bigger dot, while newer days stay in view. Not
+         * drawn when it is the chart's last day ({@link #daily}'s end, today), so the everyday look stays as it was.
+         */
         private java.time.LocalDate pickDay;
 
         public LineChart pick(java.time.LocalDate day) {
@@ -753,7 +756,8 @@ public final class Charts {
                         && (k == shown - 1 || series.t(idx[k + 1]) - series.t(idx[k]) > gap);
                 if (daily || alone) cv.drawCircle(xs[k], ys[k], Ui.dp(getContext(), daily ? 3 : 2.5f), dot);
             }
-            if (daily && pickDay != null) {
+            // on the chart's last day (today, the everyday case) no mark: the chart looks as it always did (code review of #455)
+            if (daily && pickDay != null && !pickDay.equals(dayEnd)) {
                 double pt = pickDay.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + 43200;
                 if (pt >= from && pt <= to) {
                     float px = (float) (left + (pt - from) / (to - from) * (w - left));
@@ -935,6 +939,15 @@ public final class Charts {
             grid.setColor(Ui.LINE);
             grid.setStrokeWidth(1);
             grid.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 3), Ui.dp(c, 4)}, 0));
+            highlight = bed.length - 1;
+        }
+
+        /** The night in full colour: the newest by default, the picked day's when an older day is shown (code review of #455). */
+        private int highlight;
+
+        public SleepTimes highlight(int i) {
+            highlight = i;
+            return this;
         }
 
         /** Minutes after noon of the day before, so an evening lies above the morning after it. */
@@ -984,7 +997,7 @@ public final class Charts {
                 if (Double.isNaN(a[i])) continue;
                 float cx = left + slot * i + slot / 2;
                 float y0 = (float) (top + (a[i] - lo) / (hi - lo) * (bottom - top)), y1 = (float) (top + (b[i] - lo) / (hi - lo) * (bottom - top));
-                bar.setColor(i == n - 1 || i == touched ? Ui.SLEEP : Ui.alpha(Ui.SLEEP, 0.5f));
+                bar.setColor(i == highlight || i == touched ? Ui.SLEEP : Ui.alpha(Ui.SLEEP, 0.5f));
                 r.set(cx - bw / 2, y0, cx + bw / 2, Math.max(y0 + 2, y1));
                 cv.drawRoundRect(r, bw / 3, bw / 3, bar);
             }
