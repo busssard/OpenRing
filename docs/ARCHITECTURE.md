@@ -1218,7 +1218,10 @@ Nothing new is stored: everything is worked out on each load from the stored int
   check keeps its 14 day totals.
 * **Badges without a ring**: `Badges.Day.stepGoal` (the step goal, `BadgeDays.read` sets it on the watch's or the phone's days)
   stands in for the ring's calorie target in Goal reached, with the same 4 of 7 and "after 7 days without" rules, on worn days
-  only; a day with the ring's target always goes by its burn. The Badges page's rules (`Explain.badge(kind, device)`) and its
+  only; a day with the ring's target always goes by its burn, and a count takes only days of the kind of the day judged (old ring
+  days next to the phone's days after a ring was removed). The step goal is today's setting for every day, so a new goal also
+  counts for earlier days (stated in the rule's text; per day goals would be new stored data). The calorie average takes the 7
+  full days (`StepCalories.weekEnd`). The Badges page's rules (`Explain.badge(kind, device)`) and its
   wait line (`badgesWait(nights, device, stepDays)`) follow the device; with the ring they are unchanged. Settings, Phone
   offers the step goal (the watch setup's four chips, the same `watch_goal` setting) when no watch is added.
 

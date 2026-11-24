@@ -1734,6 +1734,86 @@ public class WatchTest {
     }
 
     static void phonePhase2_329() {
+        Locale was = Locale.getDefault();
+        Locale.setDefault(Locale.US);
+        try {
+            phonePhase2Checks329();
+            review467();
+        } finally {
+            Locale.setDefault(was);
+        }
+    }
+
+    /** The independent review of #467: full days in the average, one kind of goal per count, the phone's grouping, texts. */
+    static void review467() {
+        LocalDate today = LocalDate.of(2026, 11, 24);
+        check("#467 review: the calorie average ends yesterday while today runs, at the shown day once it has ended",
+                app.openring.core.StepCalories.weekEnd(today, today).equals(today.minusDays(1))
+                && app.openring.core.StepCalories.weekEnd(today.minusDays(3), today).equals(today.minusDays(3))
+                && app.openring.core.StepCalories.weekEnd(today.plusDays(1), today).equals(today.minusDays(1)));
+        // 8 days of steps, the last one today and still running: the average of the 7 full days never sees today's part day
+        double[] byDay = {6000, 7000, 8000, 9000, 10000, 11000, 12000, 500};
+        LocalDate first = today.minusDays(7);
+        LocalDate end = app.openring.core.StepCalories.weekEnd(today, today);
+        double[] seven = new double[7];
+        for (int i = 0; i < 7; i++) seven[i] = byDay[(int) (end.minusDays(6 - i).toEpochDay() - first.toEpochDay())];
+        double full = app.openring.core.StepCalories.dailyMean(seven, 72);
+        byDay[7] = 4000; // later in the day
+        for (int i = 0; i < 7; i++) seven[i] = byDay[(int) (end.minusDays(6 - i).toEpochDay() - first.toEpochDay())];
+        check("#467 review: a part day leaves the 7 day average alone (9,000 steps a day, 247 kcal at 72 kg)", Math.abs(full
+                - app.openring.core.StepCalories.kcal(9000, 72)) < 1e-9 && app.openring.core.StepCalories.dailyMean(seven, 72) == full
+                && "Last 7 full days: about 250 kcal a day from walking.".equals(app.openring.core.StepCalories.week(full)),
+                full + " " + app.openring.core.StepCalories.week(full));
+        String usual = app.openring.core.StepCalories.about(72, false);
+        check("#467 review: without an entered weight the line says it is the usual one and where to set yours",
+                usual.contains("the usual weight of 72 kg (set yours in Settings, Profile and goals)") && !usual.contains("your weight of")
+                && app.openring.core.StepCalories.about(64, true).equals(app.openring.core.StepCalories.about(64)) && plain(usual), usual);
+
+        // ring days with the ring's target, then the phone's days with the step goal (the ring was removed): never one count
+        LocalDate d0 = LocalDate.of(2026, 9, 1);
+        List<app.openring.core.analysis.Badges.Day> mixed = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 3; i++) {
+            app.openring.core.analysis.Badges.Day b = phoneDay(d0.plusDays(i), 5000, Double.NaN);
+            b.activeKcal = 500;
+            b.targetKcal = 400;
+            b.with = "the ring";
+            mixed.add(b);
+        }
+        for (int i = 3; i < 5; i++) mixed.add(phoneDay(d0.plusDays(i), 9000, 8000));
+        check("#467 review: 3 ring goal days and 2 step goal days are no 4 of 7", goals(mixed, d0.plusDays(30)).isEmpty(), goals(mixed, d0.plusDays(30)));
+        mixed.add(phoneDay(d0.plusDays(5), 9000, 8000));
+        mixed.add(phoneDay(d0.plusDays(6), 9000, 8000));
+        List<app.openring.core.analysis.Badges.Badge> g = goals(mixed, d0.plusDays(30));
+        check("#467 review: the 4th step goal day earns it, counting only step goal days", g.size() == 1 && g.get(0).date.equals(d0.plusDays(6))
+                && g.get(0).count == 4 && g.get(0).text.startsWith("Step goal reached on 4 of the last 7 days"), g);
+        List<app.openring.core.analysis.Badges.Day> after = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 7; i++) {
+            app.openring.core.analysis.Badges.Day b = phoneDay(d0.plusDays(i), 5000, Double.NaN);
+            b.activeKcal = 300;
+            b.targetKcal = 400;
+            b.with = "the ring";
+            after.add(b);
+        }
+        after.add(phoneDay(d0.plusDays(7), 9000, 8000));
+        check("#467 review: 7 ring days without the ring's goal do not make the first step goal day an \"after 7 days without\"",
+                goals(after, d0.plusDays(30)).isEmpty(), goals(after, d0.plusDays(30)));
+        // the phone's grouping in the badge's text
+        Locale.setDefault(Locale.GERMANY);
+        List<app.openring.core.analysis.Badges.Day> four = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 4; i++) four.add(phoneDay(d0.plusDays(i), 9000, 8000));
+        String de = goals(four, d0.plusDays(30)).get(0).text;
+        Locale.setDefault(Locale.US);
+        check("#467 review: the badge's steps with the phone's grouping", de.contains("9.000 of 8.000 steps with this phone"), de);
+        String goalPhone = app.openring.ui.Explain.badge(app.openring.core.analysis.Badges.GOAL, MainDevice.PHONE);
+        check("#467 review: Goal reached says plainly when a day counts, and that a new goal counts for earlier days",
+                goalPhone.contains("Days count when your steps reach your daily step goal.") && goalPhone.endsWith("A new step goal also counts for earlier days.")
+                && !goalPhone.contains("stands in"), goalPhone);
+        String w = app.openring.ui.Explain.badgesWait(0, MainDevice.PHONE, 3);
+        check("#467 review: the waiting line names Above your usual", w.startsWith("Above your usual compares your steps with your own last 4 weeks")
+                && w.contains("You have 3 days so far"), w);
+    }
+
+    static void phonePhase2Checks329() {
         // ---- calories from steps: 0.5 kcal per kg and km, the distance the Activity tab shows (0.762 m a step)
         double k = app.openring.core.StepCalories.kcal(8000, 72);
         check("#329 phase 2 calories: 8,000 steps at 72 kg are 0.5 x 72 x 6.096 km = 219.5 kcal", Math.abs(k - 219.456) < 1e-9, k);
@@ -1751,7 +1831,7 @@ public class WatchTest {
         check("#329 phase 2 calories: the 7 day average leaves days without steps out", Math.abs(mean - (k + k / 2) / 2) < 1e-9
                 && Double.isNaN(app.openring.core.StepCalories.dailyMean(new double[] {Double.NaN, Double.NaN}, 72))
                 && Double.isNaN(app.openring.core.StepCalories.dailyMean(new double[0], 72)), mean);
-        check("#329 phase 2 calories: the week's line", "Last 7 days: about 190 kcal a day from walking.".equals(app.openring.core.StepCalories.week(187))
+        check("#329 phase 2 calories: the week's line", "Last 7 full days: about 190 kcal a day from walking.".equals(app.openring.core.StepCalories.week(187))
                 && app.openring.core.StepCalories.week(Double.NaN) == null, app.openring.core.StepCalories.week(187));
         String about = app.openring.core.StepCalories.about(64);
         check("#329 phase 2 calories: the line names the rule, its source, the weight and the error", about.contains("0.5 kcal for each kg")

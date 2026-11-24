@@ -780,8 +780,9 @@ public final class Explain {
             case Badges.GOAL:
                 return "Goal reached: your daily step goal reached on " + Badges.GOAL_OF + " of the last " + week + " (at most once in "
                         + week + "), or the first goal day after " + week + " without one. There is no badge for every single day, "
-                        + "rest days matter too. Without a ring the step goal stands in for the calorie goal. "
-                        + (watch ? "It is set in the watch setup." : "It is set in Settings, Phone.");
+                        + "rest days matter too. Days count when your steps reach your daily step goal. "
+                        + (watch ? "It is set in the watch setup." : "It is set in Settings, Phone.")
+                        + " A new step goal also counts for earlier days.";
             case Badges.BEST_NIGHT:
             case Badges.RESTFUL_WEEK:
             case Badges.RECOVERED:
@@ -809,7 +810,7 @@ public final class Explain {
         if (device == app.openring.core.MainDevice.PHONE) {
             String sleep = "Sleep badges need a ring or a watch.";
             if (stepDays >= Badges.MIN_DAYS) return sleep;
-            return "Badges from your steps compare with your own last " + Badges.MIN_DAYS / 7 + " to " + Badges.WEEKS + " weeks, so they come after about "
+            return "Above your usual compares your steps with your own last " + Badges.WEEKS + " weeks, so it comes after about "
                     + Badges.MIN_DAYS + " days with steps from this phone. You have " + (stepDays == 1 ? "1 day" : stepDays + " days") + " so far. " + sleep;
         }
         String ring = badgesWait(nights);

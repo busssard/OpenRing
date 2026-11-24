@@ -525,6 +525,16 @@ public final class Badges {
         return !kcalGoal(d) && d.stepGoal > 0 && stepsDay(d);
     }
 
+    /**
+     * The kind of goal a day can say yes or no about: 1 the ring's burn against its target, 2 the step goal, 0 none. A count of
+     * goal days only takes days of the kind of the day judged (review of #467): after a ring was removed its old days keep the
+     * ring's target while the phone's days have the step goal, and the two never add up in one badge.
+     */
+    private static int goalKind(Day d) {
+        if (!goalKnown(d)) return 0;
+        return kcalGoal(d) ? 1 : 2;
+    }
+
     private static boolean goalDay(Day d) {
         if (!goalKnown(d)) return false;
         return kcalGoal(d) ? d.activeKcal >= d.targetKcal : d.steps >= d.stepGoal;
@@ -533,7 +543,8 @@ public final class Badges {
     /** "412 of 400 kcal", or without a ring "10,240 of 10,000 steps with this phone". */
     private static String goalText(Day d) {
         if (kcalGoal(d)) return Math.round(d.activeKcal) + " of " + Math.round(d.targetKcal) + " kcal";
-        return String.format(Locale.US, "%,d of %,d steps with %s", Math.round(d.steps), Math.round(d.stepGoal), d.with);
+        // with the phone's grouping, as the step numbers on the screens (review of #467)
+        return String.format(Locale.getDefault(), "%,d of %,d steps with %s", Math.round(d.steps), Math.round(d.stepGoal), d.with);
     }
 
     private static void goal(Day[] at, int i, Badge[][] got, boolean pause) {
@@ -542,9 +553,10 @@ public final class Badges {
         boolean steps = !kcalGoal(d);
         String kcal = goalText(d), what = steps ? "Step goal" : "Activity goal";
         double target = steps ? d.stepGoal : d.targetKcal;
+        int kind = goalKind(d);
         int days = 0, lowered = 0;
         for (int j = Math.max(0, i - WEEK + 1); j <= i; j++) {
-            if (goalDay(at[j])) {
+            if (goalDay(at[j]) && goalKind(at[j]) == kind) {
                 days++;
                 if (at[j].goalLowered) lowered++;
             }
@@ -557,7 +569,7 @@ public final class Badges {
             return;
         }
         if (i < WEEK) return;
-        for (int j = i - WEEK; j < i; j++) if (!goalKnown(at[j]) || goalDay(at[j])) return;
+        for (int j = i - WEEK; j < i; j++) if (goalKind(at[j]) != kind || goalDay(at[j])) return;
         String text = what + " reached after " + WEEK + " days without it: " + kcal;
         if (d.goalLowered) text += " (goal lowered after a low readiness day)";
         got[i][GOAL] = new Badge(d.date, GOAL, 1, target, 1, null, text);

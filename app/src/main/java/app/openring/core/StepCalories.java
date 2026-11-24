@@ -65,19 +65,37 @@ public final class StepCalories {
     public static final String LABEL = "Calories from walking";
     public static final String NOTE = "Estimate from your steps and weight";
 
-    /** The line under the estimate on Activity: how it is worked out, from what, and how far off it can be. */
+    /** The line under the estimate on Activity, with a weight the person entered. */
     public static String about(double weightKg) {
+        return about(weightKg, true);
+    }
+
+    /**
+     * The line under the estimate on Activity: how it is worked out, from what, and how far off it can be. {@code own}: the weight
+     * was entered; otherwise it is the app's usual weight and the line says where to set it.
+     */
+    public static String about(double weightKg, boolean own) {
+        String weight = own ? "your weight of " + Math.round(weightKg) + " kg (Settings, Profile and goals)"
+                : "the usual weight of " + Math.round(weightKg) + " kg (set yours in Settings, Profile and goals)";
         return "Estimate: about " + fmt(KCAL_PER_KG_KM) + " kcal for each kg of body weight and each km walked on level ground "
-                + "(the walking equation of the American College of Sports Medicine), from the distance above and your weight of "
-                + Math.round(weightKg) + " kg (Settings, Profile and goals). For walking it is right within about a quarter. Running, hills, "
+                + "(the walking equation of the American College of Sports Medicine), from the distance above and "
+                + weight + ". For walking it is right within about a quarter. Running, hills, "
                 + "stairs, cycling and steps while the phone is not on you are missing, so a ring or a watch usually counts more. "
                 + "It leaves out what your body burns at rest.";
     }
 
-    /** "Last 7 days: about 190 kcal a day from walking." or null without any day. */
+    /** "Last 7 full days: about 190 kcal a day from walking." or null without any day. */
     public static String week(double meanKcal) {
         if (Double.isNaN(meanKcal)) return null;
-        return "Last 7 days: about " + Math.round(shown(meanKcal)) + " kcal a day from walking.";
+        return "Last 7 full days: about " + Math.round(shown(meanKcal)) + " kcal a day from walking.";
+    }
+
+    /**
+     * The last day of the 7 full days the average takes (review of #467): the shown day when it has ended, else the day before
+     * {@code today}, so a day still running (a part day) never pulls the average down or makes it change through the day.
+     */
+    public static LocalDate weekEnd(LocalDate shown, LocalDate today) {
+        return shown.isBefore(today) ? shown : today.minusDays(1);
     }
 
     private static String fmt(double v) {
@@ -126,6 +144,6 @@ public final class StepCalories {
 
     /** Every fixed text, for the tests (plain, no dashes as punctuation). */
     public static String[] texts() {
-        return new String[] {LABEL, NOTE, about(72), week(190), COMPARE_TITLE, COMPARE_INTRO, COMPARE_NOTE, GOAL_LABEL, GOAL_NOTE, goalChip(8000, true)};
+        return new String[] {LABEL, NOTE, about(72), about(72, false), week(190), COMPARE_TITLE, COMPARE_INTRO, COMPARE_NOTE, GOAL_LABEL, GOAL_NOTE, goalChip(8000, true)};
     }
 }

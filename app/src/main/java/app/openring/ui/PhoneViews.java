@@ -283,12 +283,15 @@ final class PhoneViews {
     static void calories(Context c, LinearLayout card, DayData d) {
         View stat = caloriesStat(c, d);
         if (stat == null) return;
-        double kg = Prefs.of(c).weightKg();
+        Prefs p = Prefs.of(c);
+        double kg = p.weightKg();
         card.addView(Ui.statRow(c, stat));
-        card.addView(Ui.text(c, app.openring.core.StepCalories.about(kg), 12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(Ui.text(c, app.openring.core.StepCalories.about(kg, p.weightStored()), 12, Ui.TEXT_3, Ui.REGULAR));
         app.openring.core.DeviceHistory h = d.deviceHistory;
         if (h == null || h.device != MainDevice.PHONE) return;
-        String week = app.openring.core.StepCalories.week(app.openring.core.StepCalories.dailyMean(h.last(h.steps, d.date,
+        // the 7 full days: a day still running would pull the average down (review of #467)
+        java.time.LocalDate end = app.openring.core.StepCalories.weekEnd(d.date, java.time.LocalDate.now());
+        String week = app.openring.core.StepCalories.week(app.openring.core.StepCalories.dailyMean(h.last(h.steps, end,
                 app.openring.core.DeviceHistory.WEEK), kg));
         if (week != null) card.addView(Ui.text(c, week, 12, Ui.TEXT_2, Ui.REGULAR));
     }
@@ -299,7 +302,8 @@ final class PhoneViews {
      */
     static View compareCard(Context c, DayData d) {
         app.openring.core.DeviceHistory h = d.deviceHistory;
-        if (!phoneOnly(d) || h == null || h.device != MainDevice.PHONE) return null;
+        // shown whenever one of the 7 days has steps, also when the shown day has none (review of #467)
+        if (d.has == null || !d.has.phoneOnly() || h == null || h.device != MainDevice.PHONE) return null;
         double[] steps = h.last(h.steps, d.date, app.openring.core.DeviceHistory.WEEK);
         boolean any = false;
         for (double v : steps) any |= !Double.isNaN(v);
