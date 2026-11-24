@@ -555,37 +555,49 @@ public final class Sounds {
      * The demo's night of sounds, only into the demo file and its folder (Design review of #380): last night from 23:05 to 06:55,
      * talking at 00:41, a snoring stretch from 02:12 to 02:26, a cough like sound at 03:37 (each with a clip of tones made in
      * code, {@code SleepSounds.demoTone}, never a voice), a mark at 05:03 whose sound was deleted, and 12 minutes at 04:10 when
-     * another app held the microphone. Old demo clip files are removed first.
+     * another app held the microphone. Old demo clip files are removed first. A clip file that cannot be written (review of
+     * #450) leaves its mark without sound, so the demo night and its marks are always there.
      */
-    static void demo(Context c, Db db, java.time.LocalDate today, java.time.ZoneId zone) throws java.io.IOException {
+    static void demo(Context c, Db db, java.time.LocalDate today, java.time.ZoneId zone) {
         if (!Db.DEMO.equals(db.fileName)) throw new IllegalStateException("demo clips only go into the demo file");
         File folder = folder(c, db);
         deleteTree(folder);
-        if (!folder.mkdirs() && !folder.isDirectory()) throw new java.io.IOException("the demo clip folder could not be made");
+        boolean ok = folder.mkdirs() || folder.isDirectory();
         double start = today.minusDays(1).atTime(23, 5).atZone(zone).toEpochSecond(), stop = today.atTime(6, 55).atZone(zone).toEpochSecond();
         double talk = at(today, 0, 41, zone), snore = at(today, 2, 12, zone), snoreEnd = at(today, 2, 26, zone), loudest = at(today, 2, 19, zone);
         double cough = at(today, 3, 37, zone), gone = at(today, 5, 3, zone), gap = at(today, 4, 10, zone);
-        demoClip(db, folder, talk, talk + 3.2, SoundDetector.TALK, -31, talk, 9);
-        demoClip(db, folder, snore, snoreEnd, SoundDetector.SNORE, -27, loudest, 8);
-        demoClip(db, folder, cough, cough + 0.6, SoundDetector.COUGH, -24, cough, 6);
+        int clips = demoClip(db, ok ? folder : null, talk, talk + 3.2, SoundDetector.TALK, -31, talk, 9)
+                + demoClip(db, ok ? folder : null, snore, snoreEnd, SoundDetector.SNORE, -27, loudest, 8)
+                + demoClip(db, ok ? folder : null, cough, cough + 0.6, SoundDetector.COUGH, -24, cough, 6);
         addMark(db, gone, gone + 4, SoundDetector.TALK, -35.0);
         addGap(db, gap, gap + 12 * 60, GAP_SILENCE);
-        addNight(db, start, stop, -62.0, 3, ENDED_TIME);
+        addNight(db, start, stop, -62.0, clips, ENDED_TIME);
     }
 
     private static double at(java.time.LocalDate day, int h, int m, java.time.ZoneId zone) {
         return day.atTime(h, m).atZone(zone).toEpochSecond();
     }
 
-    private static void demoClip(Db db, File folder, double start, double stop, String kind, double peak, double sound, double seconds) throws java.io.IOException {
+    /** One demo mark with its tone in {@code folder} (null: no folder); 1, or 0 when the file could not be written (the mark then without sound). */
+    private static int demoClip(Db db, File folder, double start, double stop, String kind, double peak, double sound, double seconds) {
         String name = "s" + Math.round(sound * 1000) + ".wav";
-        short[] pcm = SleepSounds.demoTone(kind, seconds);
-        java.io.FileOutputStream o = new java.io.FileOutputStream(new File(folder, name));
-        try {
-            o.write(SleepSounds.wav(pcm, 0, pcm.length, SoundDetector.RATE));
-        } finally {
-            o.close();
+        if (folder != null) {
+            File f = new File(folder, name);
+            try {
+                short[] pcm = SleepSounds.demoTone(kind, seconds);
+                java.io.FileOutputStream o = new java.io.FileOutputStream(f);
+                try {
+                    o.write(SleepSounds.wav(pcm, 0, pcm.length, SoundDetector.RATE));
+                } finally {
+                    o.close();
+                }
+                addClip(db, start, stop, kind, peak, name);
+                return 1;
+            } catch (java.io.IOException e) {
+                f.delete();
+            }
         }
-        addClip(db, start, stop, kind, peak, name);
+        addMark(db, start, stop, kind, peak);
+        return 0;
     }
 }

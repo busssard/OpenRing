@@ -25,6 +25,7 @@ import app.openring.core.SleepSounds;
 import app.openring.core.analysis.SoundDetector;
 import app.openring.data.Prefs;
 import app.openring.data.SoundNight;
+import app.openring.data.SoundQueue;
 import app.openring.data.Sounds;
 import app.openring.ui.MainActivity;
 
@@ -166,17 +167,13 @@ public final class SoundService extends Service {
         return START_NOT_STICKY;
     }
 
-    /** A piece of samples and the clock when its last sample came; {@link #END} ends the worker. */
-    private static final Object[] END = new Object[0];
-    /** Pieces waiting for the worker: 60 s; when full (the worker held up), the piece is dropped and becomes a gap. */
-    static final int QUEUE = 600;
-
     /**
      * The night's loop. This thread only reads the microphone and hands each piece, with the clock of its last sample, to a
-     * worker thread that feeds {@link SoundNight} (detector, clip encoding, rows): a slow encode or write never holds up the
-     * reading, so the microphone's buffer (10 s) does not overrun (review of #450). A piece the worker cannot take within 60 s
-     * is dropped and the night stores the missing time as a gap. Every way out passes the finally, which ends the worker,
-     * finishes the night and releases the microphone and the wake lock.
+     * worker thread that feeds {@link SoundNight} (detector, clip encoding, rows) through {@link SoundQueue}: a slow encode or
+     * write never holds up the reading, so the microphone's buffer (10 s) does not overrun (review of #450). A piece the worker
+     * cannot take within 60 s is dropped and the night stores the missing time as a gap. Every way out passes the finally, which
+     * ends the worker (never waiting for good, also when it stopped early with a full queue), finishes the night (also after an
+     * error in the worker, so it does not stay "listening") and releases the microphone and, in its own finally, the wake lock.
      */
     void listen() {
         final Context c = getApplicationContext();
@@ -184,9 +181,7 @@ public final class SoundService extends Service {
         AudioRecord rec = null;
         SoundNight night = null;
         String why = Sounds.ENDED_SYSTEM;
-        final boolean[] closed = {false};
-        final java.util.concurrent.ArrayBlockingQueue<Object[]> queue = new java.util.concurrent.ArrayBlockingQueue<Object[]>(QUEUE);
-        Thread worker = null;
+        SoundQueue queue = null;
         try {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "openring:sounds");
@@ -207,37 +202,14 @@ public final class SoundService extends Service {
             SleepSounds.Stop stop = SleepSounds.stopAt(start, usual.stopMinute(), zone);
             night = SoundNight.start(c, start, Prefs.of(c).soundThreshold(), new ClipEncoder());
             log(c, "sleep sounds: listening (" + (unprocessed(c) ? "unprocessed" : "voice recognition") + " source)");
-            final SoundNight fed = night;
-            worker = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        while (true) {
-                            Object[] piece = queue.take();
-                            if (piece == END) return;
-                            short[] s = (short[]) piece[0];
-                            if (!fed.feed(s, 0, s.length, (Double) piece[1])) {
-                                // Delete all closed the night: nothing of it is written any more
-                                closed[0] = true;
-                                return;
-                            }
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    } catch (Throwable e) {
-                        log(c, "sleep sounds: the night stopped by an error (" + e.getClass().getSimpleName() + ")");
-                        closed[0] = true;
-                    }
-                }
-            }, "sleep-sounds-night");
-            worker.start();
+            queue = new SoundQueue(SoundQueue.QUEUE, night);
             short[] buf = new short[PIECE];
             while (true) {
                 if (stopAsked) {
                     why = Sounds.ENDED_HAND;
                     break;
                 }
-                if (destroyed || closed[0]) break;
+                if (destroyed || queue.stopped()) break;
                 double now = System.currentTimeMillis() / 1000.0;
                 if (now >= stop.at) {
                     why = stop.limit ? Sounds.ENDED_LIMIT : Sounds.ENDED_TIME;
@@ -250,45 +222,52 @@ public final class SoundService extends Service {
                 }
                 if (n == 0) continue;
                 // a full queue drops the piece: the night sees the clock jump and stores the time as a gap
-                queue.offer(new Object[] {java.util.Arrays.copyOf(buf, n), System.currentTimeMillis() / 1000.0});
+                queue.offer(buf, n, System.currentTimeMillis() / 1000.0);
             }
         } catch (Throwable e) {
             log(c, "sleep sounds: stopped by an error (" + e.getClass().getSimpleName() + ")");
         } finally {
-            if (rec != null) {
-                try {
-                    rec.stop();
-                } catch (RuntimeException ignored) {
-                    // never started
-                }
-                rec.release();
-            }
-            if (worker != null) {
-                // the worker feeds what is waiting, then ends
-                try {
-                    queue.put(END);
-                    worker.join(120000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            if (night != null && !closed[0]) {
-                try {
-                    night.finish(why);
-                    log(c, "sleep sounds: stopped (" + why + ")");
-                } catch (Throwable e) {
-                    log(c, "sleep sounds: the end of the night was not written (" + e.getClass().getSimpleName() + ")");
-                }
-            }
             try {
-                SoundNight.tidyReal(c, Prefs.of(c).soundKeepDays());
-            } catch (Throwable e) {
-                log(c, "sleep sounds: tidy failed (" + e.getClass().getSimpleName() + ")");
+                if (rec != null) {
+                    try {
+                        rec.stop();
+                    } catch (RuntimeException ignored) {
+                        // never started
+                    }
+                    rec.release();
+                }
+                if (queue != null) {
+                    // the worker feeds what is waiting, then ends (what waits is dropped when it stopped already)
+                    try {
+                        queue.end(120000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (queue.failed()) {
+                        log(c, "sleep sounds: the night stopped by an error (" + queue.error().getClass().getSimpleName() + ")");
+                        why = Sounds.ENDED_SYSTEM;
+                    }
+                }
+                // after Delete all the night is closed already and finish does nothing
+                if (night != null && !night.closed()) {
+                    try {
+                        night.finish(why);
+                        log(c, "sleep sounds: stopped (" + why + ")");
+                    } catch (Throwable e) {
+                        log(c, "sleep sounds: the end of the night was not written (" + e.getClass().getSimpleName() + ")");
+                    }
+                }
+                try {
+                    SoundNight.tidyReal(c, Prefs.of(c).soundKeepDays());
+                } catch (Throwable e) {
+                    log(c, "sleep sounds: tidy failed (" + e.getClass().getSimpleName() + ")");
+                }
+            } finally {
+                if (wl != null && wl.isHeld()) wl.release();
+                looping = false;
+                stopForeground(true);
+                stopSelf();
             }
-            if (wl != null && wl.isHeld()) wl.release();
-            looping = false;
-            stopForeground(true);
-            stopSelf();
         }
     }
 
