@@ -261,6 +261,62 @@ final class PhoneViews {
         return card;
     }
 
+    // ---------------------------------------------------------------------------- phase 2 (issue #329)
+
+    /** Only the phone counts steps (no ring, no watch), and its day is loaded: the estimate and the comparison are shown. */
+    static boolean phoneOnly(DayData d) {
+        return d.has != null && d.has.phoneOnly() && d.merged != null && !Double.isNaN(d.merged.steps);
+    }
+
+    /** The day's calories from walking as a stat, for Activity and Today with only the phone; null otherwise. */
+    static View caloriesStat(Context c, DayData d) {
+        if (!phoneOnly(d)) return null;
+        double k = app.openring.core.StepCalories.kcal(d.merged.steps, Prefs.of(c).weightKg());
+        return Ui.stat(c, app.openring.core.StepCalories.LABEL, Ui.fmt(app.openring.core.StepCalories.shown(k), 0), "kcal", Ui.ACTIVE,
+                app.openring.core.StepCalories.NOTE);
+    }
+
+    /**
+     * Activity with only the phone: the day's calories from walking (an estimate, clearly marked), how it is worked out and how far
+     * off it can be, and the last 7 days' average; nothing otherwise (the ring has its active burn, the watch its own calories).
+     */
+    static void calories(Context c, LinearLayout card, DayData d) {
+        View stat = caloriesStat(c, d);
+        if (stat == null) return;
+        double kg = Prefs.of(c).weightKg();
+        card.addView(Ui.statRow(c, stat));
+        card.addView(Ui.text(c, app.openring.core.StepCalories.about(kg), 12, Ui.TEXT_3, Ui.REGULAR));
+        app.openring.core.DeviceHistory h = d.deviceHistory;
+        if (h == null || h.device != MainDevice.PHONE) return;
+        String week = app.openring.core.StepCalories.week(app.openring.core.StepCalories.dailyMean(h.last(h.steps, d.date,
+                app.openring.core.DeviceHistory.WEEK), kg));
+        if (week != null) card.addView(Ui.text(c, week, 12, Ui.TEXT_2, Ui.REGULAR));
+    }
+
+    /**
+     * Activity with only the phone: this phone's steps of the 7 days up to the shown day, newest first, to hold next to the
+     * phone's own health app (Open Ring cannot read it); null without the phone's days.
+     */
+    static View compareCard(Context c, DayData d) {
+        app.openring.core.DeviceHistory h = d.deviceHistory;
+        if (!phoneOnly(d) || h == null || h.device != MainDevice.PHONE) return null;
+        double[] steps = h.last(h.steps, d.date, app.openring.core.DeviceHistory.WEEK);
+        boolean any = false;
+        for (double v : steps) any |= !Double.isNaN(v);
+        if (!any) return null;
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.caption(c, app.openring.core.StepCalories.COMPARE_TITLE));
+        card.addView(Ui.gap(c, 4));
+        card.addView(Ui.text(c, app.openring.core.StepCalories.COMPARE_INTRO, 13, Ui.TEXT_2, Ui.REGULAR));
+        card.addView(Ui.gap(c, 6));
+        for (String line : app.openring.core.StepCalories.compareLines(steps, d.date, java.time.LocalDate.now(), Locale.getDefault())) {
+            card.addView(Ui.text(c, line, 14, Ui.TEXT, Ui.REGULAR));
+        }
+        card.addView(Ui.gap(c, 6));
+        card.addView(Ui.text(c, app.openring.core.StepCalories.COMPARE_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+        return card;
+    }
+
     // ---------------------------------------------------------------------------------------- without a ring
 
     /** No ring by choice, outside demo mode (issue #329): ring only actions show "Add a ring" instead. */

@@ -698,6 +698,13 @@ else echo "::warning::watch statistics step: Steps, last 7 days was not on scree
 launch --ei tab 3 --ei devices 1 --es card "WORKOUTS,_LAST_30";    shot activity-watch-only-workouts
 launch --ei tab 4 --ei devices 1 --es card "RESTING_HEART_RATE,_30"; shot body-watch-only-stats
 launch --ei tab 3 --ei devices 2 --es card "STEPS,_LAST_7";        shot activity-phone-only-stats
+# Phone steps, phase 2 (issue #329): with only the phone, calories from walking (an estimate, how and how far off under it), the
+# card that lists the last 7 days to hold next to the phone's own health app, and the Badges page whose rules say what counts
+# with the phone (Goal reached by the step goal, the sleep badges need a ring or a watch)
+launch --ei tab 3 --ei devices 2 --es card CALORIES_FROM;           shot activity-phone-calories
+launch --ei tab 3 --ei devices 2 --es card COMPARE_WITH;            shot activity-phone-compare
+launch --ez badges true --ei devices 2;     shot badges-phone-only 4
+swipe_up; swipe_up; swipe_up;               shot badges-phone-only-kinds 1
 # The Screen tab with only the watch (owner's report of 14 November, extra devices 1, demo mode only): the 14 days with the
 # watch's nights in purple and the green first look, and the day's numbers (first look, before bed, in the night) from them
 launch --ei tab 5 --ei devices 1 --es card LAST_14_DAYS;            shot screen-watch-only-days

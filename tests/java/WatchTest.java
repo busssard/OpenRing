@@ -58,6 +58,7 @@ public class WatchTest {
         review389();
         routes251();
         codeHealthWatchDays();
+        phonePhase2_329();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1709,6 +1710,164 @@ public class WatchTest {
 
     static boolean plain(String t) {
         return t == null || !t.contains(" - ") && !t.contains("–") && !t.contains("—") && !t.contains("--");
+    }
+
+    // ------------------------------------------------------------------- phone steps, phase 2 (issue #329)
+
+    /** A day counted by this phone for the badges: worn 15 hours, ended, with {@code steps} and the step goal {@code goal}. */
+    static app.openring.core.analysis.Badges.Day phoneDay(LocalDate d, double steps, double goal) {
+        app.openring.core.analysis.Badges.Day b = new app.openring.core.analysis.Badges.Day(d);
+        b.steps = steps;
+        b.coveredMin = 900;
+        b.restMin = 0;
+        b.stepGoal = goal;
+        b.with = "this phone";
+        return b;
+    }
+
+    static List<app.openring.core.analysis.Badges.Badge> goals(List<app.openring.core.analysis.Badges.Day> days, LocalDate today) {
+        List<app.openring.core.analysis.Badges.Badge> out = new ArrayList<app.openring.core.analysis.Badges.Badge>();
+        for (app.openring.core.analysis.Badges.Badge b : app.openring.core.analysis.Badges.of(days, today)) {
+            if (b.kind == app.openring.core.analysis.Badges.GOAL) out.add(b);
+        }
+        return out;
+    }
+
+    static void phonePhase2_329() {
+        // ---- calories from steps: 0.5 kcal per kg and km, the distance the Activity tab shows (0.762 m a step)
+        double k = app.openring.core.StepCalories.kcal(8000, 72);
+        check("#329 phase 2 calories: 8,000 steps at 72 kg are 0.5 x 72 x 6.096 km = 219.5 kcal", Math.abs(k - 219.456) < 1e-9, k);
+        check("#329 phase 2 calories: they grow with the steps and the weight, in proportion", Math.abs(app.openring.core.StepCalories.kcal(16000, 72) - 2 * k) < 1e-9
+                && Math.abs(app.openring.core.StepCalories.kcal(8000, 144) - 2 * k) < 1e-9 && app.openring.core.StepCalories.kcal(0, 72) == 0);
+        check("#329 phase 2 calories: none without steps or with a weight outside the profile's range (30 to 250 kg)",
+                Double.isNaN(app.openring.core.StepCalories.kcal(Double.NaN, 72)) && Double.isNaN(app.openring.core.StepCalories.kcal(-1, 72))
+                && Double.isNaN(app.openring.core.StepCalories.kcal(8000, 29)) && Double.isNaN(app.openring.core.StepCalories.kcal(8000, 251))
+                && Double.isNaN(app.openring.core.StepCalories.kcal(8000, Double.NaN)) && !Double.isNaN(app.openring.core.StepCalories.kcal(8000, 30))
+                && !Double.isNaN(app.openring.core.StepCalories.kcal(8000, 250)));
+        check("#329 phase 2 calories: shown to the nearest 10 kcal, so they do not look exact", app.openring.core.StepCalories.shown(k) == 220
+                && app.openring.core.StepCalories.shown(214.9) == 210 && app.openring.core.StepCalories.shown(0) == 0
+                && Double.isNaN(app.openring.core.StepCalories.shown(Double.NaN)));
+        double mean = app.openring.core.StepCalories.dailyMean(new double[] {Double.NaN, 8000, 4000}, 72);
+        check("#329 phase 2 calories: the 7 day average leaves days without steps out", Math.abs(mean - (k + k / 2) / 2) < 1e-9
+                && Double.isNaN(app.openring.core.StepCalories.dailyMean(new double[] {Double.NaN, Double.NaN}, 72))
+                && Double.isNaN(app.openring.core.StepCalories.dailyMean(new double[0], 72)), mean);
+        check("#329 phase 2 calories: the week's line", "Last 7 days: about 190 kcal a day from walking.".equals(app.openring.core.StepCalories.week(187))
+                && app.openring.core.StepCalories.week(Double.NaN) == null, app.openring.core.StepCalories.week(187));
+        String about = app.openring.core.StepCalories.about(64);
+        check("#329 phase 2 calories: the line names the rule, its source, the weight and the error", about.contains("0.5 kcal for each kg")
+                && about.contains("American College of Sports Medicine") && about.contains("your weight of 64 kg") && about.contains("within about a quarter")
+                && about.contains("Running") && about.contains("at rest"), about);
+        check("#329 phase 2 calories: the error in the text is the constant", app.openring.core.StepCalories.ERROR == 0.25
+                && app.openring.core.StepCalories.KCAL_PER_KG_KM == 0.5 && app.openring.core.StepCalories.ROUND_TO == 10);
+
+        // ---- the lines to compare with the phone's own health app
+        LocalDate tue = LocalDate.of(2026, 11, 17);
+        double[] week = {5000, Double.NaN, 1, 8412, 10050, 7000, 3120};
+        String[] lines = app.openring.core.StepCalories.compareLines(week, tue, tue, Locale.US);
+        check("#329 phase 2 compare: newest first, today so far, then each day with its date", lines.length == 7 && "Today so far: 3,120 steps".equals(lines[0])
+                && "Mon 16 Nov: 7,000 steps".equals(lines[1]) && "Sat 14 Nov: 8,412 steps".equals(lines[3]) && "Fri 13 Nov: 1 step".equals(lines[4])
+                && "Thu 12 Nov: no steps counted".equals(lines[5]) && "Wed 11 Nov: 5,000 steps".equals(lines[6]), Arrays.toString(lines));
+        String[] past = app.openring.core.StepCalories.compareLines(week, tue, tue.plusDays(3), Locale.US);
+        check("#329 phase 2 compare: a past week has no today", "Tue 17 Nov: 3,120 steps".equals(past[0]), past[0]);
+        String de = app.openring.core.StepCalories.compareLines(new double[] {12345}, tue, tue, Locale.GERMANY)[0];
+        check("#329 phase 2 compare: the phone's grouping", "Today so far: 12.345 steps".equals(de), de);
+        boolean plainTexts = true;
+        for (String t : app.openring.core.StepCalories.texts()) plainTexts &= plain(t) && t.length() > 0;
+        check("#329 phase 2 texts are plain (no dashes as punctuation)", plainTexts);
+        check("#329 phase 2 step goal chip read out", "10,000 steps, picked".equals(app.openring.core.StepCalories.goalChip(10000, true))
+                && "6,000 steps, tap to pick".equals(app.openring.core.StepCalories.goalChip(6000, false)));
+
+        // ---- Goal reached without a ring: the step goal stands in for the calorie target
+        LocalDate d0 = LocalDate.of(2026, 10, 1), today = d0.plusDays(40);
+        List<app.openring.core.analysis.Badges.Day> four = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 4; i++) four.add(phoneDay(d0.plusDays(i), 9000, 8000));
+        List<app.openring.core.analysis.Badges.Badge> g = goals(four, today);
+        check("#329 phase 2 badges: 4 of 7 days at the step goal earn Goal reached, with the steps in its text", g.size() == 1 && g.get(0).date.equals(d0.plusDays(3))
+                && g.get(0).value == 4 && g.get(0).usual == 8000 && g.get(0).count == 4
+                && "Step goal reached on 4 of the last 7 days (this day 9,000 of 8,000 steps with this phone)".equals(g.get(0).text), g);
+        List<app.openring.core.analysis.Badges.Day> after = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 7; i++) after.add(phoneDay(d0.plusDays(i), 5000, 8000));
+        after.add(phoneDay(d0.plusDays(7), 8000, 8000));
+        g = goals(after, today);
+        check("#329 phase 2 badges: the first goal day after 7 without (the goal itself counts)", g.size() == 1 && g.get(0).date.equals(d0.plusDays(7))
+                && g.get(0).count == 1 && "Step goal reached after 7 days without it: 8,000 of 8,000 steps with this phone".equals(g.get(0).text), g);
+        List<app.openring.core.analysis.Badges.Day> noGoal = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 4; i++) noGoal.add(phoneDay(d0.plusDays(i), 9000, Double.NaN));
+        check("#329 phase 2 badges: no step goal, no Goal reached (as before)", goals(noGoal, today).isEmpty());
+        List<app.openring.core.analysis.Badges.Day> unworn = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 4; i++) unworn.add(phoneDay(d0.plusDays(i), 9000, 8000));
+        unworn.get(1).coveredMin = 300;
+        List<app.openring.core.analysis.Badges.Day> running = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 4; i++) running.add(phoneDay(d0.plusDays(i), 9000, 8000));
+        running.get(3).running = true;
+        List<app.openring.core.analysis.Badges.Day> left = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 4; i++) left.add(phoneDay(d0.plusDays(i), 9000, 8000));
+        left.get(2).leftOut = true;
+        check("#329 phase 2 badges: a day counted under 12 hours, a running day or a left out day does not count",
+                goals(unworn, today).isEmpty() && goals(running, today).isEmpty() && goals(left, today).isEmpty());
+        List<app.openring.core.analysis.Badges.Day> below = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 4; i++) below.add(phoneDay(d0.plusDays(i), 7999, 8000));
+        check("#329 phase 2 badges: one step under the goal is no goal day", goals(below, today).isEmpty());
+        // a day with the ring's target goes by the ring's burn, whatever its steps and a step goal say
+        List<app.openring.core.analysis.Badges.Day> ring = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 4; i++) {
+            app.openring.core.analysis.Badges.Day b = phoneDay(d0.plusDays(i), 20000, 8000);
+            b.activeKcal = 300;
+            b.targetKcal = 400;
+            b.with = "the ring";
+            ring.add(b);
+        }
+        check("#329 phase 2 badges: the ring's target wins over the step goal (burn under it: no badge)", goals(ring, today).isEmpty());
+        for (app.openring.core.analysis.Badges.Day b : ring) b.activeKcal = 450;
+        g = goals(ring, today);
+        check("#329 phase 2 badges: ... and the ring's text as before", g.size() == 1 && "Activity goal reached on 4 of the last 7 days (this day 450 of 400 kcal)"
+                .equals(g.get(0).text) && g.get(0).usual == 400, g);
+        check("#329 phase 2 badges: the days that count for the step badges", app.openring.core.analysis.Badges.stepDays(unworn) == 3
+                && app.openring.core.analysis.Badges.stepDays(running) == 3 && app.openring.core.analysis.Badges.stepDays(four) == 4
+                && app.openring.core.analysis.Badges.stepDays(new ArrayList<app.openring.core.analysis.Badges.Day>()) == 0);
+        // a year: the chain (at most once in 7 days) holds with the step goal too
+        List<app.openring.core.analysis.Badges.Day> year = new ArrayList<app.openring.core.analysis.Badges.Day>();
+        for (int i = 0; i < 365; i++) year.add(phoneDay(d0.plusDays(i), i % 3 == 0 ? 6000 : 11000, 10000));
+        g = goals(year, d0.plusDays(400));
+        boolean apart = true;
+        for (int i = 1; i < g.size(); i++) apart &= g.get(i).date.toEpochDay() - g.get(i - 1).date.toEpochDay() >= 7;
+        check("#329 phase 2 badges: a year of step goal days, at most one Goal reached in 7 days", apart && g.size() >= 45 && g.size() <= 53, g.size());
+
+        // ---- the Badges page's texts follow the device; the ring's stay exactly as they are
+        boolean ringSame = true, watchSleep = true, phoneSleep = true, rules = true;
+        for (int kind = 0; kind < app.openring.core.analysis.Badges.KINDS; kind++) {
+            ringSame &= app.openring.ui.Explain.badge(kind).equals(app.openring.ui.Explain.badge(kind, -1))
+                    && app.openring.ui.Explain.badgeRule(kind).equals(app.openring.ui.Explain.badgeRule(kind, -1));
+            if (app.openring.core.analysis.Badges.fromNight(kind)) {
+                watchSleep &= app.openring.ui.Explain.badge(kind, MainDevice.WATCH).equals(app.openring.ui.Explain.badge(kind));
+                phoneSleep &= app.openring.ui.Explain.badge(kind, MainDevice.PHONE).equals(app.openring.ui.Explain.badge(kind) + " "
+                        + app.openring.ui.Explain.BADGE_NEEDS_NIGHT);
+            }
+            for (int dev : new int[] {MainDevice.WATCH, MainDevice.PHONE}) {
+                String r = app.openring.ui.Explain.badgeRule(kind, dev);
+                rules &= plain(app.openring.ui.Explain.badge(kind, dev)) && r != null && Character.isUpperCase(r.charAt(0))
+                        && !r.startsWith(app.openring.core.analysis.Badges.NAMES[kind]);
+            }
+        }
+        check("#329 phase 2 badge texts: with a ring exactly as before", ringSame);
+        check("#329 phase 2 badge texts: the watch has nights, its sleep badges read as the ring's", watchSleep);
+        check("#329 phase 2 badge texts: with only the phone each sleep badge says it needs a ring or a watch", phoneSleep);
+        check("#329 phase 2 badge texts: plain, each rule without its name in front", rules);
+        String above = app.openring.ui.Explain.badge(app.openring.core.analysis.Badges.ABOVE_USUAL, MainDevice.PHONE);
+        String goalPhone = app.openring.ui.Explain.badge(app.openring.core.analysis.Badges.GOAL, MainDevice.PHONE);
+        String goalWatch = app.openring.ui.Explain.badge(app.openring.core.analysis.Badges.GOAL, MainDevice.WATCH);
+        check("#329 phase 2 badge texts: steps and the goal as the phone and the watch count them", above.contains("days with this phone")
+                && !above.contains("ring") && goalPhone.contains("daily step goal") && goalPhone.contains("Settings, Phone") && goalWatch.contains("watch setup")
+                && app.openring.ui.Explain.badge(app.openring.core.analysis.Badges.ABOVE_USUAL, MainDevice.WATCH).contains("with the watch on"),
+                above + " | " + goalPhone);
+        check("#329 phase 2 badges wait: the ring's text as before, the watch counts its nights",
+                app.openring.ui.Explain.badgesWait(5).equals(app.openring.ui.Explain.badgesWait(5, -1, 0))
+                && app.openring.ui.Explain.badgesWait(5, MainDevice.WATCH, 0).contains("nights with your watch")
+                && app.openring.ui.Explain.badgesWait(20, MainDevice.WATCH, 0) == null && app.openring.ui.Explain.badgesWait(20, -1, 0) == null);
+        String w3 = app.openring.ui.Explain.badgesWait(0, MainDevice.PHONE, 3), w1 = app.openring.ui.Explain.badgesWait(40, MainDevice.PHONE, 1);
+        check("#329 phase 2 badges wait: only the phone counts days with steps, never nights with the ring", w3.contains("You have 3 days so far")
+                && w3.endsWith("Sleep badges need a ring or a watch.") && w1.contains("You have 1 day so far")
+                && "Sleep badges need a ring or a watch.".equals(app.openring.ui.Explain.badgesWait(0, MainDevice.PHONE, 14)) && plain(w3), w3);
     }
 
     static void mainDevice() {

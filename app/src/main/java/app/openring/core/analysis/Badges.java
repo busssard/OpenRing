@@ -38,7 +38,9 @@ import app.openring.core.Texts;
  * {@link #WORN_MIN}.</li>
  * <li><b>Goal reached</b>: active burn reached the day's activity target on {@link #GOAL_OF} of the last 7 days (at most
  * once in 7 days), or the first goal day after 7 days that all had a summary and no goal day. Never one for every
- * single goal day, so it does not reward activity every day.</li>
+ * single goal day, so it does not reward activity every day. Without a ring (issue #329, phase 2) the day's steps against
+ * the step goal ({@link Day#stepGoal}) stand in for the burn against the target, on worn days, as the activity score's
+ * "Meet daily targets" does.</li>
  * <li><b>Calm screen day</b>: screen time (left out apps not counted, the day fully read) at least {@link #CALM_UNDER}
  * under its mean of the last 28 days, with at least {@link #MIN_DAYS} fully read days in them.</li>
  * </ul>
@@ -138,6 +140,11 @@ public final class Badges {
         public double steps = Double.NaN, coveredMin = Double.NaN, restMin = Double.NaN, activeKcal = Double.NaN, targetKcal = Double.NaN;
         /** The analysis lowered the target after a low readiness day ({@link #goalLowered(boolean, double)}). */
         public boolean goalLowered;
+        /**
+         * Without a ring (issue #329, phase 2): the step goal that stands in for the calorie target, NaN with a ring. A day with
+         * the ring's target ({@link #targetKcal}) always goes by that.
+         */
+        public double stepGoal = Double.NaN;
         /** Screen time of the day as the Screen tab counts it (left out apps not counted), NaN when not fully read. */
         public double screenMin = Double.NaN;
         /** Phone minutes in the hour before the main night's start, NaN when that hour was not read or there is no night. */
@@ -201,6 +208,16 @@ public final class Badges {
     /** A worn day: the ring on for at least {@link #WORN_MIN} minutes, 12 hours ({@code covered_min + rest_min}). */
     public static boolean worn(Day d) {
         return d.coveredMin + d.restMin >= WORN_MIN;
+    }
+
+    /**
+     * Days that count for the step badges (worn, ended, no left out time): without a ring the Badges page says how many there
+     * are, as it says the nights for the sleep badges (issue #329, phase 2).
+     */
+    public static int stepDays(Collection<Day> days) {
+        int n = 0;
+        for (Day d : days) if (stepsDay(d)) n++;
+        return n;
     }
 
     /** Dates more than this many days before the newest one (or after today) are left out: about 20 years. */
@@ -495,17 +512,36 @@ public final class Badges {
 
     /** Whether the day has a summary with a target (it can say yes or no about the goal). */
     private static boolean goalKnown(Day d) {
-        return ok(d) && !d.running && d.targetKcal > 0 && !Double.isNaN(d.activeKcal);
+        return ok(d) && !d.running && (kcalGoal(d) || stepGoal(d));
+    }
+
+    /** The ring's calorie target and burn are there: the goal is the ring's. */
+    private static boolean kcalGoal(Day d) {
+        return d.targetKcal > 0 && !Double.isNaN(d.activeKcal);
+    }
+
+    /** Without the ring's target: a step goal and a worn day's steps (issue #329, phase 2). */
+    private static boolean stepGoal(Day d) {
+        return !kcalGoal(d) && d.stepGoal > 0 && stepsDay(d);
     }
 
     private static boolean goalDay(Day d) {
-        return goalKnown(d) && d.activeKcal >= d.targetKcal;
+        if (!goalKnown(d)) return false;
+        return kcalGoal(d) ? d.activeKcal >= d.targetKcal : d.steps >= d.stepGoal;
+    }
+
+    /** "412 of 400 kcal", or without a ring "10,240 of 10,000 steps with this phone". */
+    private static String goalText(Day d) {
+        if (kcalGoal(d)) return Math.round(d.activeKcal) + " of " + Math.round(d.targetKcal) + " kcal";
+        return String.format(Locale.US, "%,d of %,d steps with %s", Math.round(d.steps), Math.round(d.stepGoal), d.with);
     }
 
     private static void goal(Day[] at, int i, Badge[][] got, boolean pause) {
         Day d = at[i];
         if (!goalDay(d)) return;
-        String kcal = Math.round(d.activeKcal) + " of " + Math.round(d.targetKcal) + " kcal";
+        boolean steps = !kcalGoal(d);
+        String kcal = goalText(d), what = steps ? "Step goal" : "Activity goal";
+        double target = steps ? d.stepGoal : d.targetKcal;
         int days = 0, lowered = 0;
         for (int j = Math.max(0, i - WEEK + 1); j <= i; j++) {
             if (goalDay(at[j])) {
@@ -516,15 +552,15 @@ public final class Badges {
         if (days >= GOAL_OF && !(pause && recentBadge(got, i, GOAL))) {
             String note = lowered == 0 ? "" : lowered == days ? "; each goal lowered after a low readiness day"
                     : "; on " + lowered + " of them the goal was lowered after a low readiness day";
-            String text = "Activity goal reached on " + days + " of the last " + WEEK + " days (this day " + kcal + note + ")";
-            got[i][GOAL] = new Badge(d.date, GOAL, days, d.targetKcal, days, null, text);
+            String text = what + " reached on " + days + " of the last " + WEEK + " days (this day " + kcal + note + ")";
+            got[i][GOAL] = new Badge(d.date, GOAL, days, target, days, null, text);
             return;
         }
         if (i < WEEK) return;
         for (int j = i - WEEK; j < i; j++) if (!goalKnown(at[j]) || goalDay(at[j])) return;
-        String text = "Activity goal reached after " + WEEK + " days without it: " + kcal;
+        String text = what + " reached after " + WEEK + " days without it: " + kcal;
         if (d.goalLowered) text += " (goal lowered after a low readiness day)";
-        got[i][GOAL] = new Badge(d.date, GOAL, 1, d.targetKcal, 1, null, text);
+        got[i][GOAL] = new Badge(d.date, GOAL, 1, target, 1, null, text);
     }
 
     private static boolean screenDay(Day d) {

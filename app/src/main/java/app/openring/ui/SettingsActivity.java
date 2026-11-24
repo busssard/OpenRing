@@ -1279,6 +1279,32 @@ public final class SettingsActivity extends Activity implements RingManager.List
         return p.demo() || app.openring.sync.PhoneReader.counting(this);
     }
 
+    /**
+     * The daily step goal as the watch setup offers it (the same four chips), for a person without a watch (issue #329, phase 2):
+     * the activity score, the step charts and Goal reached use it. Stored in the setting the watch setup uses, nothing new.
+     */
+    void stepGoalChips(LinearLayout card, final Prefs p) {
+        card.addView(Ui.gap(this, 10));
+        card.addView(Ui.text(this, app.openring.core.StepCalories.GOAL_LABEL, 12, Ui.TEXT_3, Ui.REGULAR));
+        LinearLayout goals = Ui.hbox(this);
+        for (final int g : app.openring.core.withings.WatchSetup.GOALS) {
+            TextView chip = Ui.smallButton(this, String.format(java.util.Locale.getDefault(), "%,d", g), p.watchGoal() == g ? Ui.OXY : Ui.TEXT_3);
+            chip.setContentDescription(app.openring.core.StepCalories.goalChip(g, p.watchGoal() == g));
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    p.setWatchGoal(g);
+                    fillPhoneCard();
+                }
+            });
+            LinearLayout.LayoutParams l = Ui.weight(1);
+            l.setMargins(0, Ui.dp(this, 4), Ui.dp(this, 4), 0);
+            goals.addView(chip, l);
+        }
+        card.addView(goals, Ui.matchWrap());
+        card.addView(Ui.text(this, app.openring.core.StepCalories.GOAL_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+    }
+
     /** The Phone block's section (issue #329). */
     LinearLayout phoneCard() {
         phoneCard = Ui.vbox(this); // a section of the Phone block, whose header says Phone
@@ -1337,6 +1363,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.addView(Ui.gap(this, 6));
         card.addView(Ui.text(this, app.openring.core.PhoneSteps.ABOUT, 12, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.text(this, Explain.PHONE_STEPS, 12, Ui.TEXT_3, Ui.REGULAR));
+        // the step goal with neither a ring nor a watch (issue #329, phase 2); with a watch its setup sets it and sends it to the watch
+        if (!demo && p.watchAddress() == null && !ringThere(p)) stepGoalChips(card, p);
         card.addView(Ui.gap(this, 10));
         boolean ring = ringThere(p), watch = demo || p.watchAddress() != null, phone = phoneThere(p);
         if (phone && app.openring.core.MainDevice.present(ring, watch, true).length >= 2) mainDeviceChoice(card, p);
