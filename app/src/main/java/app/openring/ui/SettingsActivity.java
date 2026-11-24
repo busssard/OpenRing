@@ -308,7 +308,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             root.addView(watchBlock.view);
             phoneBlock = block(app.openring.core.SettingsBlocks.PHONE);
             phoneBlock.add(phoneCard());
-        phoneBlock.add(soundsCard());
+            phoneBlock.add(soundsCard());
             root.addView(phoneBlock.view);
             addPeriodFold();
             addScreenFold(p);

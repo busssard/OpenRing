@@ -36,7 +36,7 @@ import app.openring.core.analysis.SoundDetector;
  * night") takes it and closes the night, so nothing is written after it returns, not a row and not a file.</li>
  * </ul>
  */
-public final class SoundNight {
+public final class SoundNight implements SoundQueue.Feed {
     /** Writes one clip's samples (16 kHz mono) as a file. */
     public interface Writer {
         /** The file name's ending, ".m4a" or ".wav". */
@@ -165,16 +165,21 @@ public final class SoundNight {
     }
 
     /**
-     * Delete all of the real history (review of #450): runs {@code delete} under the lock every write of the night takes, so the
-     * night listening now writes nothing meanwhile, and closes it only once {@code delete} returned. When {@code delete} throws
-     * (nothing was deleted), the night is left as it was and goes on.
+     * Delete all of the real history (review of #450): runs {@code history} (the history's tables) and then {@code rest} (the
+     * copies and the clip folder) under the lock every write of the night takes, so the night listening now writes nothing
+     * meanwhile. When {@code history} throws (nothing of it was deleted), the night is left as it was and goes on. Once it
+     * worked, the night is closed, also when {@code rest} throws, so it never writes into the emptied history.
      */
-    static void deleteHolding(Runnable delete) {
+    static void deleteHolding(Runnable history, Runnable rest) {
         synchronized (LOCK) {
-            delete.run();
-            if (running != null) {
-                running.closed = true;
-                running = null;
+            history.run();
+            try {
+                rest.run();
+            } finally {
+                if (running != null) {
+                    running.closed = true;
+                    running = null;
+                }
             }
         }
     }
@@ -229,6 +234,7 @@ public final class SoundNight {
      * Feeds {@code len} samples of {@code s} from {@code off}; {@code now} is the clock (unix seconds) when the piece's last sample
      * came. Saves the clips that are ready, writes the marks and gaps. Returns false once the night is closed (nothing done).
      */
+    @Override
     public boolean feed(short[] s, int off, int len, double now) {
         synchronized (LOCK) {
             if (closed) return false;

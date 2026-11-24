@@ -986,6 +986,9 @@ public class PipelineTest {
         soundUsual1b380();
         soundEdges1b380();
         soundFailures1b380();
+        // review of #450: the hand off between the microphone's thread and the night's worker, the demo night without its clip folder
+        soundQueue1b450();
+        soundDemoNoFolder1b450();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -17823,6 +17826,213 @@ public class PipelineTest {
         realDb = Db.get(c);
         check("#380 1b: the real sounds and files are untouched by the demo's", soundRows380(realDb).equals(realRows)
                 && files380(app.openring.data.Sounds.folder(c, false)).equals(realFiles), null);
+        clean254();
+    }
+
+    /** Offers {@code s} through {@code q} in pieces of 100 ms, as the reading thread does; the pieces the queue took. */
+    static int offer450(app.openring.data.SoundQueue q, short[] s, double start) {
+        int piece = RATE1B / 10, took = 0;
+        for (int i = 0; i < s.length; i += piece) {
+            int len = Math.min(piece, s.length - i);
+            if (q.offer(Arrays.copyOfRange(s, i, i + len), len, start + (i + len) / (double) RATE1B)) took++;
+        }
+        return took;
+    }
+
+    static boolean waitFor450(java.util.concurrent.Callable<Boolean> done) throws Exception {
+        long until = System.currentTimeMillis() + 20000;
+        while (!done.call()) {
+            if (System.currentTimeMillis() > until) return false;
+            Thread.sleep(2);
+        }
+        return true;
+    }
+
+    /**
+     * Review of #450 (Must fix and Should fix): the hand off between the reading thread and the night's worker
+     * ({@code data/SoundQueue}). The end never blocks for good when the worker stopped early with a full queue (Delete all while
+     * the worker waited), an error in the worker stops the reading and the night is still finished (not left "listening"), a
+     * full queue drops pieces instead of waiting, and a night fed through the queue stores what a night fed directly stores.
+     */
+    static void soundQueue1b450() throws Exception {
+        final short[] piece = new short[RATE1B / 10];
+        // the worker held up on its first piece (as behind a long Delete all), the queue fills, then the night refuses
+        final java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicInteger fedCount = new java.util.concurrent.atomic.AtomicInteger();
+        final app.openring.data.SoundQueue full = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, new app.openring.data.SoundQueue.Feed() {
+            @Override
+            public boolean feed(short[] s, int off, int len, double now) {
+                fedCount.incrementAndGet();
+                try {
+                    hold.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return false;
+            }
+        });
+        full.offer(piece, piece.length, T1B);
+        check("#450 (test setup): the worker holds its first piece", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return fedCount.get() == 1;
+            }
+        }), null);
+        int took = 0;
+        for (int i = 0; i < app.openring.data.SoundQueue.QUEUE + 50; i++) if (full.offer(piece, piece.length, T1B + 0.1 * (i + 2))) took++;
+        check("#450: a full queue takes 600 pieces (60 s) and drops the rest at once, the reading never waits", took == app.openring.data.SoundQueue.QUEUE
+                && full.waiting() == app.openring.data.SoundQueue.QUEUE, took);
+        hold.countDown();
+        check("#450: the night refused a piece (Delete all): the worker stops, the reading is told to stop", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return full.stopped();
+            }
+        }) && full.closed() && !full.failed() && full.waiting() == app.openring.data.SoundQueue.QUEUE, full.waiting());
+        long t0 = System.currentTimeMillis();
+        boolean ended = full.end(120000);
+        long ms = System.currentTimeMillis() - t0;
+        check("#450 Must fix: the end with a full queue and a stopped worker comes at once (it used to wait for good)", ended && ms < 5000
+                && full.waiting() <= 1 && !full.offer(piece, piece.length, T1B + 100), ms + " ms, " + full.waiting());
+        // the worker stops only after the end began: the end mark waits for room at most the given time, then goes in anyway
+        final java.util.concurrent.CountDownLatch hold2 = new java.util.concurrent.CountDownLatch(1);
+        final app.openring.data.SoundQueue late = new app.openring.data.SoundQueue(4, new app.openring.data.SoundQueue.Feed() {
+            @Override
+            public boolean feed(short[] s, int off, int len, double now) {
+                try {
+                    hold2.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return false;
+            }
+        });
+        for (int i = 0; i < 10; i++) late.offer(piece, piece.length, T1B + i);
+        final boolean[] lateEnded = {false};
+        Thread ender = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    lateEnded[0] = late.end(300);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        ender.start();
+        Thread.sleep(50);
+        hold2.countDown();
+        ender.join(20000);
+        check("#450 Must fix: the worker stops while the end waits for room: the end still comes", !ender.isAlive() && lateEnded[0] && late.closed(), null);
+
+        // an error in the worker
+        final RuntimeException boom = new IllegalStateException("made up error in the night");
+        final app.openring.data.SoundQueue broken = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, new app.openring.data.SoundQueue.Feed() {
+            int n;
+
+            @Override
+            public boolean feed(short[] s, int off, int len, double now) {
+                if (++n == 3) throw boom;
+                return true;
+            }
+        });
+        for (int i = 0; i < 10; i++) broken.offer(piece, piece.length, T1B + 0.1 * (i + 1));
+        check("#450 Should fix: an error in the worker is told apart from a closed night, and stops the reading", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return broken.stopped();
+            }
+        }) && broken.failed() && !broken.closed() && broken.error() == boom && !broken.offer(piece, piece.length, T1B + 5), broken.error());
+        check("#450: the end after an error comes at once", broken.end(120000), null);
+
+        // a real night through the queue: the same rows as fed directly; an error in its worker still ends the night
+        Context c = phone254("openring450-queue");
+        Db db = Db.get(c);
+        final File real = app.openring.data.Sounds.folder(c, false);
+        short[] s = audio1b(60, 7, new double[] {10, 2, 0, 3000}, new double[] {30, 2, 0, 3000}, new double[] {50, 2, 0, 3000});
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        try {
+            app.openring.data.SoundQueue q = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, n);
+            int pieces = offer450(q, s, T1B);
+            boolean done = q.end(120000);
+            if (!n.closed()) n.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#450: a night fed through the queue stores its 3 marks with their clips, ended by hand", pieces == 600 && done && !q.stopped()
+                    && "60 3 hand".equals(night1b(db, T1B)) && consistent1b(db, real) == null && !app.openring.data.SoundNight.isRunning(),
+                    pieces + " " + night1b(db, T1B) + " " + consistent1b(db, real));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        final app.openring.data.SoundNight m = app.openring.data.SoundNight.start(c, T1B + 7200, 10, new Writer1b());
+        try {
+            app.openring.data.SoundQueue q = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, new app.openring.data.SoundQueue.Feed() {
+                int k;
+
+                @Override
+                public boolean feed(short[] a, int off, int len, double now) {
+                    if (++k > 250) throw new IllegalStateException("made up error in the night");
+                    return m.feed(a, off, len, now);
+                }
+            });
+            offer450(q, s, T1B + 7200);
+            q.end(120000);
+            // as the service's finally does: an error is no Delete all, so the night is still finished (as "system")
+            boolean wasOpen = !m.closed();
+            if (q.failed() && !m.closed()) m.finish(app.openring.data.Sounds.ENDED_SYSTEM);
+            String row = night1b(db, T1B + 7200);
+            check("#450 Should fix: after an error in the worker the night is finished as system and no longer listening", q.failed() && wasOpen
+                    && m.closed() && !app.openring.data.SoundNight.isRunning() && row != null && row.endsWith(" system") && consistent1b(db, real) == null, row);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        // Delete all while the queue feeds the night: the worker stops, the end comes, nothing is written afterwards
+        final app.openring.data.SoundNight d = app.openring.data.SoundNight.start(c, T1B + 14400, 10, new Writer1b());
+        try {
+            final app.openring.data.SoundQueue q = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, d);
+            offer450(q, Arrays.copyOf(s, 25 * RATE1B), T1B + 14400);
+            check("#450 (test setup): the queue fed the night's first clip", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+                @Override
+                public Boolean call() {
+                    return q.waiting() == 0 && !files380(real).isEmpty();
+                }
+            }), files380(real));
+            app.openring.data.DeleteAll.run(c);
+            offer450(q, Arrays.copyOfRange(s, 25 * RATE1B, s.length), T1B + 14425);
+            boolean done = q.end(120000);
+            d.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#450: Delete all while the queue feeds the night: the worker stops as closed, the end comes, no row and no file", done && q.closed()
+                    && !q.failed() && soundCount380(db) == 0 && files380(real).isEmpty() && !app.openring.data.SoundNight.isRunning(), soundRows380(db) + files380(real));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        String svc = new String(Files.readAllBytes(new File("app/src/main/java/app/openring/sync/SoundService.java").toPath()), "UTF-8");
+        int lock = svc.indexOf("wl.release()");
+        check("#450: the service hands off through SoundQueue (no put that can wait for good) and releases the wake lock in its own finally", svc.contains("new SoundQueue(")
+                && !svc.contains(".put(") && lock > 0 && svc.lastIndexOf("} finally {", lock) > svc.lastIndexOf("night.finish(why)", lock)
+                && svc.contains("queue.failed()"), null);
+        clean254();
+    }
+
+    /** Review of #450: the demo night when its clip folder cannot be made: every mark and the night are there, the marks without sound. */
+    static void soundDemoNoFolder1b450() throws Exception {
+        Context c = phone254("openring450-demo-nofolder");
+        java.lang.reflect.Method demo = app.openring.data.Sounds.class.getDeclaredMethod("demo", Context.class, Db.class, LocalDate.class, ZoneId.class);
+        demo.setAccessible(true);
+        app.openring.data.Prefs.of(c).setDemo(true);
+        File nb = new File(c.dir, "no_backup");
+        try {
+            Db d = Db.get(c);
+            rmTree(nb);
+            Files.write(nb.toPath(), new byte[] {1});
+            demo.invoke(null, c, d, LocalDate.now(Z58), Z58);
+            app.openring.data.Sounds.Night n = app.openring.data.Sounds.forDay(d, LocalDate.now(Z58), Z58);
+            boolean none = n != null;
+            if (n != null) for (int i = 0; i < n.clips.size(); i++) none &= !n.clips.get(i).sound();
+            check("#450: no demo clip folder: the demo night still has its 4 marks, all without sound, and its 12 minutes of silence", n != null && n.clips.size() == 4
+                    && none && n.silent == 720 && d.count("SELECT COUNT(*) FROM sound_nights WHERE clips = 0") == 1, n == null ? null : n.clips.size());
+        } finally {
+            nb.delete();
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
         clean254();
     }
 }
