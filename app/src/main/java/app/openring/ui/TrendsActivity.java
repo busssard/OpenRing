@@ -286,7 +286,10 @@ public final class TrendsActivity extends Activity {
                         // only the time and how many steps, never a value
                         if (ms > 300) app.openring.ble.RingManager.get(ctx).log("trends: looking for a change took " + ms + " ms (" + c.steps.size() + " steps)");
                     }
-                    return new Object[] {Trends.of(ds, m, p, t), Trends.compare(ds, m, t, l), c, TrendChange.events(ds, m, t, ev)};
+                    Trends.View view = Trends.of(ds, m, p, t);
+                    List<TrendChange.Event> marks = TrendChange.events(ds, m, t, ev);
+                    // where the lines and marks go, worked out here once, so drawing and touching only scale them
+                    return new Object[] {view, Trends.compare(ds, m, t, l), c, marks, TrendChange.drawn(view, c, marks)};
                 } catch (Throwable e) {
                     try {
                         // the error's kind only, never a value
@@ -310,7 +313,7 @@ public final class TrendsActivity extends Activity {
                 }
                 @SuppressWarnings("unchecked")
                 List<TrendChange.Event> marks = (List<TrendChange.Event>) r[3];
-                show((Trends.View) r[0], (Trends.Compare) r[1], (TrendChange.Result) r[2], marks);
+                show((Trends.View) r[0], (Trends.Compare) r[1], (TrendChange.Result) r[2], marks, (TrendChange.Drawn) r[4]);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
@@ -319,7 +322,8 @@ public final class TrendsActivity extends Activity {
      * The page with enough history: the demo note, the chips, the chart of {@code view} with the steps of {@code change} and the
      * {@code marks}, "Did something change?" and the comparison {@code compared}.
      */
-    void show(final Trends.View view, Trends.Compare compared, final TrendChange.Result change, final List<TrendChange.Event> marks) {
+    void show(final Trends.View view, Trends.Compare compared, final TrendChange.Result change, final List<TrendChange.Event> marks,
+            TrendChange.Drawn drawn) {
         body.removeAllViews();
         if (demo) {
             LinearLayout banner = Ui.card(this);
@@ -370,7 +374,7 @@ public final class TrendsActivity extends Activity {
         card.addView(Ui.gap(this, 8));
         final TextView readout = Ui.text(this, "", 13, Ui.TEXT, Ui.REGULAR);
         final Locale l = Locale.getDefault();
-        Charts.Months chart = new Charts.Months(this, view, c).marks(change, marks);
+        Charts.Months chart = new Charts.Months(this, view, c).marks(drawn);
         chart.setContentDescription("Trends chart, " + Trends.NAMES[measure]);
         chart.pick(new Charts.Months.Pick() {
             @Override

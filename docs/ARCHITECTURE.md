@@ -613,19 +613,26 @@ DEVELOPMENT.md), which Re analyse all keeps (`Db.clearResults(keepUntil)`, demo 
 history (the same in Weeks, Months and Years; not for regularity, a spread): the split with the largest
 `sqrt(k (n - k) / n) |mean before - mean after|`, 21 values or more on each side, then 999 shuffles of whole calendar weeks
 (at least 8 with values). What is shuffled is each day's distance from the mean with the part carried over from the day
-before taken out (estimated from the part, 0 to 0.9) and put back after the shuffle: plain week shuffles lose that carry at
-every week's edge and gave 2 false alarms in 100 instead of 1 on made up data with a carry of 0.3. A step is shown when at
-most 9 shuffles give one as big (1 in 100); a second only when the same test finds one on one side and the first still holds
-between it and the far end. Seeded from the values, so every opening gives the same answer; a shuffle stops once 10 are as
-big. Its size has a 90 % range from the standard error with weeks as groups and Student's t. Measured on made up year long
-histories (`TrendChangeTest`): 1.0 false alarms in 100 measures (about 1 history in 8 with one somewhere among the 12
-measures); a step of 1.5 day to day spreads found every time, within a week of its date in 44 of 48. Events on the time axis,
-only what is stored: a lasting switch of the device a measure comes from (7 values in a row), a change of the stage detail
-level between stored nights, a week or more without values, a change of time zone that moved the clock (`Trends.Day.zone`,
-the ring night's zone, else the one noted), and from `TrendDays.events` the left out times, the first day of each logged
-period, the watch's workouts and, when the stored nights were worked out with "Count phone use as awake" (`kv screen_awake`),
-the first day with screen data. When a setting was switched is not stored, so it is not marked. The page works it out once
-per measure and read, off the main thread (3 years, every measure with a step: about 0.25 s on the JVM). Nothing is stored.
+before taken out (estimated between days that follow each other, 0 to 0.9) and put back after the shuffle: plain week
+shuffles lose that carry at every week's edge and gave 2 false alarms in 100 instead of 1 with a carry of 0.3. A step is
+shown when at most 9 shuffles give one as big (1 in 100) and its range is on one side of zero; a second only when the same
+test finds one on one side and the first still holds between it and the far end. The shuffles are seeded by the measure and
+the test, not by the values, so every opening gives the same answer and one more day changes only the data; a shuffle run
+stops once 10 are as big. Levels are means, medians for screen time (its typical day, "on a typical day"). The size's 90 %
+range draws whole weeks of each side again (1000 times), Student's t for the fewer weeks, widened by 1.1 (`WIDER`: 88 % of
+made up steps held without it, 91 % with it). A step of at least one day to day spread (pooled around the two levels) is
+clear and named by its day ("From about 12 June 2026"); a smaller one only by the part of its month ("From around mid June
+2026"), and "Around ..." looks six weeks around it instead of two. Measured on made up year long histories
+(`TrendChangeTest`): 1.2 false alarms in 100 measures (22 of 150 histories with one somewhere among the 12 measures), 0.4
+with no carry, 1.9 with a carry of 0.7; a step of 1.5 spreads found 48 of 48, within a week in 44 and then alone; 0.75 spreads
+found 42 of 48, within six weeks in 40, named by its day in 6. Events on the time axis, only what is stored: a lasting
+switch of the device a measure comes from (7 values in a row), a change of the stage detail level between stored nights, a
+week or more without values, a trip that moved the clock ("Trip, clock moved (New York)", from `Trends.Day.zone`, the ring
+night's zone, else the one noted), and from `TrendDays.events` the left out times, the first day of each logged period, the
+watch's workouts (not named around a step) and, when the stored nights were worked out with "Count phone use as awake"
+(`kv screen_awake`), the first day with screen data. When a setting was switched is not stored, so it is not marked. The page
+works it out once per measure and read, off the main thread, with the places of every line and mark (`TrendChange.drawn`), so
+drawing only scales them (3 years, every measure with a step: about 0.25 s on the JVM). Nothing is stored.
 
 ### Today's Your day line (owner's wish of 16 November)
 

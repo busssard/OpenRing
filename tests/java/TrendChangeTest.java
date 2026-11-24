@@ -36,6 +36,7 @@ public class TrendChangeTest {
 
     public static void main(String[] args) {
         knownStep();
+        typicalDay();
         falseAlarms();
         sameEveryTime();
         twoSteps();
@@ -66,7 +67,13 @@ public class TrendChangeTest {
 
     /** As above, {@code illness} false for none. */
     static List<Trends.Day> history(long seed, int days, int measure, LocalDate stepFrom, double step, boolean illness) {
+        return history(seed, days, measure, stepFrom, step, illness, 0.3);
+    }
+
+    /** As above with {@code carry} of each day's noise carried into the next (0.3 above), the day to day spread kept. */
+    static List<Trends.Day> history(long seed, int days, int measure, LocalDate stepFrom, double step, boolean illness, double carryOver) {
         Random r = new Random(seed);
+        double keep = Math.sqrt(1 - carryOver * carryOver) / Math.sqrt(1 - 0.09);
         List<Trends.Day> out = new ArrayList<Trends.Day>();
         double[] carry = new double[Trends.COUNT];
         LocalDate first = TODAY.minusDays(days);
@@ -81,7 +88,7 @@ public class TrendChangeTest {
             boolean weekend = d.getDayOfWeek().getValue() >= 6, sick = illness && i >= ill && i < ill + 7;
             for (int m = 0; m < Trends.COUNT; m++) {
                 if (m == Trends.REGULARITY) continue;
-                carry[m] = 0.3 * carry[m] + r.nextGaussian() * SD[m];
+                carry[m] = carryOver * carry[m] + r.nextGaussian() * SD[m] * keep;
                 double v = LEVEL[m] + carry[m];
                 if (weekend) v += m == Trends.ASLEEP ? 35 : m == Trends.BEDTIME ? 40 : m == Trends.WAKE ? 60 : m == Trends.STEPS ? -1500 : m == Trends.SCREEN ? 60 : 0;
                 if (sick) v += m == Trends.TEMP ? 0.6 : m == Trends.RHR ? 5 : m == Trends.HRV ? -12 : m == Trends.STEPS ? -4000 : m == Trends.READINESS ? -20 : 0;
@@ -102,11 +109,11 @@ public class TrendChangeTest {
     }
 
     /**
-     * Known steps in every measure at four dates: {found, within {@code days} of the date, true size in the 90 % range of
-     * those}, and the farthest off.
+     * Known steps in every measure at four dates: {found, within {@code days} of the date, true size in the range of those,
+     * the farthest off, exactly one step and that one within {@code days}, named as clear}.
      */
     static int[] steps(double size, int days) {
-        int found = 0, near = 0, inRange = 0, worst = 0;
+        int found = 0, near = 0, inRange = 0, worst = 0, single = 0, clear = 0;
         for (int m = 0; m < Trends.COUNT; m++) {
             if (m == Trends.REGULARITY) continue;
             for (int k = 0; k < 4; k++) {
@@ -121,43 +128,96 @@ public class TrendChangeTest {
                 TrendChange.Step s = r.in(at.minusDays(days), at.plusDays(days));
                 if (s == null) continue;
                 near++;
+                if (r.steps.size() == 1) single++;
+                if (s.clear) clear++;
                 if (s.lo <= st && st <= s.hi) inRange++;
             }
         }
-        return new int[] {found, near, inRange, worst};
+        return new int[] {found, near, inRange, worst, single, clear};
     }
 
-    /** A known step is found within a week of its date, in each measure, and its size is in the range. */
+    /** A known step is found within a week of its date, in each measure, alone, and its size is in the range. */
     static void knownStep() {
         int tries = 4 * (Trends.COUNT - 1);
-        // a clear step (one and a half spreads): within a week of its date
+        // a clear step (one and a half spreads): within a week of its date, the only step, named by its day
         int[] c = steps(1.5, 7);
         System.out.println("    known step of 1.5 spreads: found in " + c[0] + " of " + tries + ", within a week of its date in " + c[1]
-                + " (the farthest " + c[3] + " days off), true size in the 90 % range in " + c[2] + " of " + c[1]);
+                + " (the farthest " + c[3] + " days off), alone in " + c[4] + ", named by its day in " + c[5] + ", true size in the range in " + c[2] + " of " + c[1]);
         check("a step of 1.5 spreads is found in every measure", c[0] == tries);
         check("found within a week of its date (at least 9 in 10)", c[1] * 10 >= tries * 9);
-        check("its true size inside the 90 % range (at least 8 in 10 of those)", c[2] * 10 >= c[1] * 8);
-        // a smaller step (one spread, about the demo's 25 min of sleep): still found, its date rougher
+        check("one step stays one, in its place (at least 9 in 10)", c[4] * 10 >= tries * 9);
+        check("a step of 1.5 spreads is named by its day (at least 9 in 10 of those)", c[5] * 10 >= c[1] * 9);
+        // a smaller step (one spread): still found, its date rougher
         int[] s1 = steps(1.0, 14);
         System.out.println("    known step of 1 spread: found in " + s1[0] + " of " + tries + ", within two weeks of its date in " + s1[1]
-                + " (the farthest " + s1[3] + " days off), true size in the 90 % range in " + s1[2] + " of " + s1[1]);
+                + " (the farthest " + s1[3] + " days off), alone in " + s1[4] + ", true size in the range in " + s1[2] + " of " + s1[1]);
         check("a step of one spread is found in every measure", s1[0] == tries);
         check("found within two weeks of its date (at least 8 in 10)", s1[1] * 10 >= tries * 8);
+        // steps under one spread (review of #468): found less often, and their date only roughly (named by the part of the month)
+        int[] s75 = steps(0.75, 42), s50 = steps(0.5, 42);
+        System.out.println("    known step of 0.75 spreads: found in " + s75[0] + " of " + tries + ", within six weeks in " + s75[1] + " (the farthest "
+                + s75[3] + " days off), named by its day in " + s75[5] + "; 0.5 spreads: found in " + s50[0] + ", within six weeks in " + s50[1]
+                + ", named by its day in " + s50[5]);
+        check("0.75 spreads: found in at least 3 in 4", s75[0] * 4 >= tries * 3);
+        check("0.75 spreads: within six weeks in at least 3 in 4 of those found", s75[1] * 4 >= s75[0] * 3);
+        check("0.5 spreads: a found step is mostly named roughly (its day at most in 1 in 4)", s50[5] * 4 <= Math.max(1, s50[1]));
+        // the range: about 9 in 10 hold the true size, for clear and small steps together
+        int held = c[2] + s1[2] + s75[2], of = c[1] + s1[1] + s75[1];
+        System.out.printf(L, "    the range holds the true size in %d of %d steps found near their date (%.0f %%)%n", held, of, 100.0 * held / of);
+        check("the range holds the true size in at least 85 in 100", held * 100 >= of * 85);
         // the date in the sentence, and the levels drawn on both sides
         LocalDate at = LocalDate.parse("2026-06-15");
-        TrendChange.Result r = TrendChange.of(history(7, 365, Trends.ASLEEP, at, 30), Trends.ASLEEP, TODAY, L);
+        TrendChange.Result r = TrendChange.of(history(7, 365, Trends.ASLEEP, at, 50), Trends.ASLEEP, TODAY, L);
         check("one step", r.steps.size() == 1 && r.looked);
         eq("two levels", r.levels.size(), 2);
         TrendChange.Step s = r.steps.get(0);
-        check("the step goes up by about 30 min", s.after - s.before > 15 && s.after - s.before < 45);
+        check("the step goes up by about 50 min", s.after - s.before > 35 && s.after - s.before < 65);
         check("its range holds the step", s.lo < s.after - s.before && s.after - s.before < s.hi);
-        check("the sentence starts with the date: " + r.text, r.text.startsWith("From about " + TrendChange.date(s.date) + " you sleep "));
+        check("a clear step: the sentence starts with its day: " + r.text, s.clear && r.text.startsWith("From about " + TrendChange.date(s.date) + " you sleep "));
         check("no more than 1 in 100 shuffles as big", s.asBig <= TrendChange.MAX_AS_BIG);
         check("levels meet at the step", r.levels.get(1).from.equals(s.date) && r.levels.get(0).to.isBefore(s.date));
+        // a small step: the part of the month
+        TrendChange.Result small = null;
+        for (int k = 0; k < 20 && (small == null || small.steps.isEmpty() || small.steps.get(0).clear); k++) {
+            small = TrendChange.of(history(300 + k, 365, Trends.ASLEEP, at, 28), Trends.ASLEEP, TODAY, L);
+        }
+        check("a small step: the part of the month: " + small.text, !small.steps.isEmpty() && !small.steps.get(0).clear
+                && small.text.startsWith("From around " + TrendChange.roughDate(small.steps.get(0).date) + " you sleep "));
+    }
+
+    /** Screen time is shown as a typical day (the median), its levels and sentence too (review of #468). */
+    static void typicalDay() {
+        LocalDate at = TODAY.minusDays(150);
+        List<Trends.Day> h = history(91, 365, Trends.SCREEN, at, 90, false);
+        // a few very long days before the step pull a mean up, not the median
+        for (Trends.Day d : h) if (!Double.isNaN(d.v[Trends.SCREEN]) && d.date.isBefore(at) && d.date.getDayOfMonth() == 5) d.v[Trends.SCREEN] = 900;
+        TrendChange.Result r = TrendChange.of(h, Trends.SCREEN, TODAY, L);
+        check("screen time step found: " + r.text, r.steps.size() >= 1 && r.text.contains("on a typical day") && !r.text.contains("on average"));
+        TrendChange.Level first = r.levels.get(0);
+        List<Double> v = new ArrayList<Double>();
+        for (Trends.Day d : h) if (!Double.isNaN(d.v[Trends.SCREEN]) && !d.date.isBefore(first.from) && !d.date.isAfter(first.to) && d.date.isBefore(TODAY)) v.add(d.v[Trends.SCREEN]);
+        double[] a = new double[v.size()];
+        for (int i = 0; i < a.length; i++) a[i] = v.get(i);
+        check("the level before is the median of its days", Math.abs(first.value - app.openring.core.analysis.Stats.median(a)) < 1e-9);
+        check("its range holds the true 90 min", r.steps.get(0).lo <= 90 && 90 <= r.steps.get(0).hi);
     }
 
     /** Made up histories without any change: across all 12 measures about 1 in 100 shows a step that is not there. */
     static void falseAlarms() {
+        // decision 1 of #468 pinned: the same limit with no carry over and with a strong one
+        for (double carry : new double[] {0, 0.7}) {
+            int t = 0, a = 0;
+            for (int h = 0; h < 60; h++) {
+                List<Trends.Day> days = history(70000 + h, 365, -1, null, 0, true, carry);
+                for (int m = 0; m < Trends.COUNT; m++) {
+                    if (m == Trends.REGULARITY) continue;
+                    t++;
+                    if (!TrendChange.of(days, m, TODAY, L).steps.isEmpty()) a++;
+                }
+            }
+            System.out.printf(L, "    no change, carry %.1f: %d false alarms in %d measures (%.1f %%)%n", carry, a, t, 100.0 * a / t);
+            check("carry " + carry + ": false alarms at most 2 in 100 measures", a * 100 <= 2 * t);
+        }
         int tests = 0, alarms = 0, anyAlarm = 0, histories = 150, quiet = 0;
         int[] perMeasure = new int[Trends.COUNT];
         for (int h = 0; h < histories; h++) {
@@ -186,14 +246,20 @@ public class TrendChangeTest {
         eq("every measure without a step says so, without level lines", quiet, tests - alarms);
     }
 
-    /** Seeded from the values: every opening gives the same answer; another history another seed. */
+    /** Seeded, not from the values: every opening gives the same answer, the shuffles as big included. */
     static void sameEveryTime() {
         List<Trends.Day> h = history(11, 400, Trends.STEPS, TODAY.minusDays(150), 2000);
-        String a = TrendChange.of(h, Trends.STEPS, TODAY, L).text, b = TrendChange.of(h, Trends.STEPS, TODAY, L).text;
-        eq("same history, same sentence", a, b);
-        // a value near the border of the test: the count of shuffles as big is the same too
+        TrendChange.Result a = TrendChange.of(h, Trends.STEPS, TODAY, L), b = TrendChange.of(h, Trends.STEPS, TODAY, L);
+        eq("same history, same sentence", a.text, b.text);
+        check("a step to compare", !a.steps.isEmpty());
+        for (int i = 0; i < a.steps.size(); i++) {
+            eq("same shuffles as big", a.steps.get(i).asBig, b.steps.get(i).asBig);
+            eq("same range", a.steps.get(i).lo, b.steps.get(i).lo);
+        }
+        // a step near the limit: the same count and text on every opening
         List<Trends.Day> w = history(12, 365, Trends.HRV, TODAY.minusDays(100), 4);
         TrendChange.Result r1 = TrendChange.of(w, Trends.HRV, TODAY, L), r2 = TrendChange.of(w, Trends.HRV, TODAY, L);
+        eq("same text near the limit", r1.text, r2.text);
         eq("same steps", r1.steps.size(), r2.steps.size());
     }
 
@@ -269,13 +335,18 @@ public class TrendChangeTest {
 
     static void texts() {
         LocalDate d = LocalDate.parse("2026-06-12");
-        eq("sentence on one side", t(TrendChange.sentence(Trends.ASLEEP, d, 25, 15, 35, L)),
+        eq("sentence on one side", t(TrendChange.sentence(Trends.ASLEEP, d, true, 25, 15, 35, L)),
                 "From about 12 June 2026 you sleep 25 min longer on average than before (15 min to 35 min longer).");
-        eq("sentence down", t(TrendChange.sentence(Trends.STEPS, d, -1500, -2100, -900, L)),
+        eq("sentence down", t(TrendChange.sentence(Trends.STEPS, d, true, -1500, -2100, -900, L)),
                 "From about 12 June 2026 you walk 1,500 steps a day fewer on average than before (900 steps a day to 2,100 steps a day fewer).");
-        eq("sentence across zero", t(TrendChange.sentence(Trends.HRV, d, 3, -1, 7, L)),
+        eq("sentence across zero", t(TrendChange.sentence(Trends.HRV, d, true, 3, -1, 7, L)),
                 "From about 12 June 2026 your HRV is 3 ms higher on average than before (could be 1 ms lower to 7 ms higher), so about the same.");
-        eq("too small for its unit", t(TrendChange.sentence(Trends.TEMP, d, 0.001, 0.0005, 0.002, L)).substring(0, 52), "From about 12 June 2026 your temperature is slightly");
+        eq("too small for its unit", t(TrendChange.sentence(Trends.TEMP, d, true, 0.001, 0.0005, 0.002, L)).substring(0, 52), "From about 12 June 2026 your temperature is slightly");
+        eq("a small step: the part of the month", t(TrendChange.sentence(Trends.ASLEEP, d, false, 20, 8, 32, L)),
+                "From around mid June 2026 you sleep 20 min longer on average than before (8 min to 32 min longer).");
+        eq("screen time: a typical day", t(TrendChange.sentence(Trends.SCREEN, LocalDate.parse("2026-06-03"), false, -30, -45, -15, L)),
+                "From around early June 2026 your screen time is 30 min shorter on a typical day than before (15 min to 45 min shorter).");
+        eq("late", TrendChange.roughDate(LocalDate.parse("2026-06-21")), "late June 2026");
         t(TrendChange.NONE);
         t(TrendChange.TOO_FEW);
         t(TrendChange.NOT_SPREAD);
@@ -328,7 +399,7 @@ public class TrendChangeTest {
         check("a lasting switch to the watch: " + all, all.contains("Watch nights from here (6 Mar 2026)"));
         check("one stray watch night is no switch", !all.contains("25 Jan 2026"));
         check("ten days without nights: " + all, all.contains("No nights (14 to 23 Feb 2026)"));
-        check("a trip there and back", all.contains("Time zone America/New_York (4 Feb 2026)") && all.contains("Time zone Europe/Zurich (9 Feb 2026)"));
+        check("a trip there and back", all.contains("Trip, clock moved (New York) (4 Feb 2026)") && all.contains("Trip, clock moved (Zurich) (9 Feb 2026)"));
         check("stage detail changed", all.contains("Stage detail Calm from here (16 Mar 2026)"));
         check("left out time on every chart", all.contains("Time left out (10 to 11 Jan 2026)"));
         check("phone use on sleep", all.contains("Phone use counted as awake from here (13 Jan 2026)"));
@@ -338,7 +409,7 @@ public class TrendChangeTest {
         // on temperature (here no values): the period, not the detail level nor phone use
         List<TrendChange.Event> temp = TrendChange.events(d, Trends.TEMP, LocalDate.parse("2026-06-01"), known);
         String ts = TrendChange.list(temp, first, first.plusDays(100));
-        check("temperature: period and trip: " + ts, ts.contains("Period started (8 Jan 2026)") && ts.contains("Time zone") && !ts.contains("Stage") && !ts.contains("Phone"));
+        check("temperature: period and trip: " + ts, ts.contains("Period started (8 Jan 2026)") && ts.contains("Trip") && !ts.contains("Stage") && !ts.contains("Phone"));
         // steps: the workouts counted
         String ss = TrendChange.list(TrendChange.events(d, Trends.STEPS, LocalDate.parse("2026-06-01"), known), first, first.plusDays(10));
         eq("steps: workouts counted", t(ss), "Time left out (10 to 11 Jan 2026), 2 workouts");
@@ -352,6 +423,19 @@ public class TrendChangeTest {
         // an event that ends before it starts is one day
         TrendChange.Event back = new TrendChange.Event(TrendChange.LEFT_OUT, first, first.minusDays(2), "Time left out");
         eq("an end before the start is the start", back.to, first);
+        // the last few nights from another device are no lasting switch yet
+        List<Trends.Day> tail = new ArrayList<Trends.Day>();
+        for (int i = 0; i < 20; i++) tail.add(night(first.plusDays(i).toString(), 420, i < 16 ? Trends.RING : Trends.WATCH));
+        eq("three watch nights at the end: no switch yet", TrendChange.events(tail, Trends.ASLEEP, LocalDate.parse("2026-06-01"), null).size(), 0);
+        // a zone without a place keeps its id
+        List<Trends.Day> utc = new ArrayList<Trends.Day>();
+        for (int i = 0; i < 2; i++) {
+            Trends.Day x = night(first.plusDays(i).toString(), 420, Trends.RING);
+            x.zone = i == 0 ? "Europe/Zurich" : "UTC";
+            utc.add(x);
+        }
+        eq("a zone without a place", TrendChange.list(TrendChange.events(utc, Trends.ASLEEP, LocalDate.parse("2026-06-01"), null), first, first.plusDays(5)),
+                "Trip, clock moved (UTC) (6 Jan 2026)");
         // a clock change in one zone is no trip
         List<Trends.Day> dst = new ArrayList<Trends.Day>();
         for (int i = 0; i < 4; i++) {
@@ -385,6 +469,18 @@ public class TrendChangeTest {
         check("around two steps: two lines: " + a2, tr.steps.size() == 2 && a2.indexOf("Around") != a2.lastIndexOf("Around"));
         check("around: the near event only: " + around, around.startsWith("Around ") && around.contains("Watch nights") && !around.contains("Tokyo"));
         check("around: never because", !around.toLowerCase(Locale.ROOT).contains("because"));
+        // workouts stay under the chart, not in the line around a step
+        List<TrendChange.Event> work = new ArrayList<TrendChange.Event>();
+        work.add(new TrendChange.Event(TrendChange.WORKOUT, sd.plusDays(1), sd.plusDays(1), "Workout"));
+        eq("around: no workouts", TrendChange.around(r, work), "");
+        // a step that is not clear looks six weeks around it, a clear one two
+        TrendChange.Step rough = new TrendChange.Step(sd, 0, 1, 0.5, 1.5, 0, false, "x");
+        TrendChange.Result rr = new TrendChange.Result();
+        rr.steps.add(rough);
+        List<TrendChange.Event> far = new ArrayList<TrendChange.Event>();
+        far.add(new TrendChange.Event(TrendChange.LEFT_OUT, sd.plusDays(30), sd.plusDays(30), "Time left out"));
+        check("around a rough step: a month off is named, with the part of the month", TrendChange.around(rr, far).startsWith("Around " + TrendChange.roughDate(sd) + ": Time left out"));
+        eq("around a clear step: a month off is not", TrendChange.around(r, far), "");
         eq("around without events", TrendChange.around(r, new ArrayList<TrendChange.Event>()), "");
     }
 
@@ -398,6 +494,17 @@ public class TrendChangeTest {
             check("place of " + v.dayDates.get(i), Math.abs(p - dot) < 1e-9);
         }
         check("outside the chart", Double.isNaN(TrendChange.place(v, TODAY.plusYears(2))));
+        // what the chart draws, worked out once: the same places
+        TrendChange.Result r = TrendChange.of(history(7, 365, Trends.ASLEEP, LocalDate.parse("2026-06-15"), 50), Trends.ASLEEP, TODAY, L);
+        Trends.View rv = Trends.of(history(7, 365, Trends.ASLEEP, LocalDate.parse("2026-06-15"), 50), Trends.ASLEEP, Trends.WEEKS, TODAY);
+        List<TrendChange.Event> ev = new ArrayList<TrendChange.Event>();
+        ev.add(new TrendChange.Event(TrendChange.LEFT_OUT, LocalDate.parse("2026-03-02"), LocalDate.parse("2026-03-04"), "Time left out"));
+        ev.add(new TrendChange.Event(TrendChange.PERIOD, TODAY.minusYears(3), TODAY.minusYears(3), "Period started"));
+        TrendChange.Drawn dr = TrendChange.drawn(rv, r, ev);
+        check("drawn: the step where place puts it", dr.steps.length == 1 && dr.steps[0] == TrendChange.place(rv, r.steps.get(0).date));
+        check("drawn: the levels", dr.levelFrom.length == 2 && dr.levelFrom[1] == TrendChange.place(rv, r.levels.get(1).from) && dr.levelValue[0] == r.levels.get(0).value);
+        check("drawn: a span and an event outside the chart", !dr.eventDay[0] && dr.eventTo[0] > dr.eventFrom[0] && dr.eventDay[1] && Double.isNaN(dr.eventFrom[1]));
+        check("drawn: nothing", TrendChange.drawn(rv, null, null).steps.length == 0);
         // a month with one night: the middle of its column
         List<Trends.Day> one = new ArrayList<Trends.Day>();
         one.add(night("2026-01-10", 400, Trends.RING));

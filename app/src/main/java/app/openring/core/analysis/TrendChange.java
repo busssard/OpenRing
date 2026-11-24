@@ -61,10 +61,13 @@ public final class TrendChange {
         public final double before, after, lo, hi;
         /** Shuffles that gave as big a step (0 to {@link #MAX_AS_BIG}). */
         public final int asBig;
+        /** A clear step (at least one day to day spread): its day is named; else only the part of the month ("mid June"). */
+        public final boolean clear;
         public final String text;
 
-        Step(LocalDate date, double before, double after, double lo, double hi, int asBig, String text) {
+        public Step(LocalDate date, double before, double after, double lo, double hi, int asBig, boolean clear, String text) {
             this.date = date;
+            this.clear = clear;
             this.before = before;
             this.after = after;
             this.lo = lo;
@@ -200,11 +203,15 @@ public final class TrendChange {
         // what is shuffled: each day's distance from the mean with the part carried over from the day before taken out
         // (sleep debt, a cold: a day is like the one before it), put back after the shuffle. Without this a shuffle loses
         // the carry over at every week's edge, and steps "as big" became too rare (2 in 100 false alarms where 1 was meant)
+        // The carry is estimated only between days that follow each other (not across a day without a value), from each
+        // day's distance to the mean of the part. Distances to the two levels around the split found were tried (review of
+        // #468): they take the slow part of the noise for a step, so the carry came out smaller and false alarms rose
+        // (2.6 in 100 instead of 1.8 with a carry of 0.7, 150 made up histories of 12 measures)
         double m = mean(s.x, a, b), num = 0, den = 0;
         for (int i = a; i < b; i++) {
             double d = s.x[i] - m;
             den += d * d;
-            if (i > a) num += d * (s.x[i - 1] - m);
+            if (i > a && s.dates[i - 1].plusDays(1).equals(s.dates[i])) num += d * (s.x[i - 1] - m);
         }
         t.carry = den > 0 ? Math.max(0, Math.min(MAX_CARRY, num / den)) : 0;
         double[] e = new double[n];
@@ -239,11 +246,14 @@ public final class TrendChange {
         return t;
     }
 
-    /** The seed of a test: from the values, the measure and the part, so one history always gives the same answer. */
-    static long seed(Series s, int measure, int a, int b) {
-        long seed = 374;
-        for (int i = a; i < b; i++) seed = seed * 31 + Double.doubleToLongBits(s.x[i]);
-        return seed * 17 + measure * 7919L + a * 104729L + b;
+    /**
+     * The seed of a test: from the measure and which test it is (0 the whole history, 1 the left side, 2 the right, 3 the
+     * first again), never from the values, so the shuffles are the same every day and one more day changes only the data
+     * (review of #468: a seed from the values let an answer near the limit flip from one day to the next). Deterministic:
+     * the same history always gives the same answer.
+     */
+    static long seed(int measure, int which) {
+        return 374L * 7919 + measure * 104729L + which;
     }
 
     // ------------------------------------------------------------------ the answer
@@ -257,7 +267,7 @@ public final class TrendChange {
         }
         Series s = series(days, measure, today);
         int n = s.x.length;
-        Test first = test(s, 0, n, seed(s, measure, 0, n));
+        Test first = test(s, 0, n, seed(measure, 0));
         if (!first.enough) {
             out.text = TOO_FEW;
             return out;
@@ -268,15 +278,15 @@ public final class TrendChange {
         splits.add(first.split);
         asBig.add(first.asBig);
         // a second step: the stronger of the two sides, and the first must still hold between it and the far end
-        Test left = test(s, 0, first.split, seed(s, measure, 0, first.split));
-        Test right = test(s, first.split, n, seed(s, measure, first.split, n));
+        Test left = test(s, 0, first.split, seed(measure, 1));
+        Test right = test(s, first.split, n, seed(measure, 2));
         Test second = null;
         if (left.holds() && (!right.holds() || left.asBig < right.asBig || left.asBig == right.asBig && left.stat >= right.stat)) second = left;
         else if (right.holds()) second = right;
         if (second != null && MOST > 1) {
             boolean onLeft = second == left;
             int a = onLeft ? second.split : 0, b = onLeft ? n : second.split;
-            Test again = test(s, a, b, seed(s, measure, a, b));
+            Test again = test(s, a, b, seed(measure, 3));
             if (again.holds()) {
                 Test early = second.split < again.split ? second : again, late = early == second ? again : second;
                 splits.clear();
@@ -287,7 +297,8 @@ public final class TrendChange {
                 asBig.add(late.asBig);
             }
         }
-        // the levels between the steps, and each step with its range
+        // the levels between the steps (the median for a measure shown as a typical day, as its dots), each step with its range
+        boolean median = Trends.KIND[measure] == Trends.MEDIAN;
         List<int[]> parts = new ArrayList<int[]>();
         int from = 0;
         for (int k : splits) {
@@ -295,48 +306,105 @@ public final class TrendChange {
             from = k;
         }
         parts.add(new int[] {from, n});
-        for (int[] p : parts) out.levels.add(new Level(s.dates[p[0]], s.dates[p[1] - 1], mean(s.x, p[0], p[1])));
-        StringBuilder text = new StringBuilder();
+        List<Step> steps = new ArrayList<Step>();
+        List<Integer> kept = new ArrayList<Integer>();
         for (int i = 0; i < splits.size(); i++) {
             int[] pa = parts.get(i), pb = parts.get(i + 1);
-            double before = mean(s.x, pa[0], pa[1]), after = mean(s.x, pb[0], pb[1]), diff = after - before;
-            double[] sa = se2(s, pa[0], pa[1]), sb = se2(s, pb[0], pb[1]);
-            int df = (int) Math.min(sa[1], sb[1]) - 1;
-            double half = t90(df) * Math.sqrt(sa[0] + sb[0]);
+            double before = level(s.x, pa[0], pa[1], median), after = level(s.x, pb[0], pb[1], median), diff = after - before;
+            double half = half(s, pa, pb, median, seed(measure, 10 + i));
+            // a range that holds no change is no step to draw (review of #468): the shuffles and the range disagree
+            if (diff - half <= 0 && diff + half >= 0) continue;
+            boolean clear = Math.abs(diff) >= spread(s, pa, pb);
             LocalDate date = s.dates[pb[0]];
-            String t = sentence(measure, date, diff, diff - half, diff + half, l);
-            out.steps.add(new Step(date, before, after, diff - half, diff + half, asBig.get(i), t));
+            steps.add(new Step(date, before, after, diff - half, diff + half, asBig.get(i), clear, sentence(measure, date, clear, diff, diff - half, diff + half, l)));
+            kept.add(splits.get(i));
+        }
+        if (steps.isEmpty()) return out;
+        // the levels between the steps kept
+        int at = 0;
+        for (int k : kept) {
+            out.levels.add(new Level(s.dates[at], s.dates[k - 1], level(s.x, at, k, median)));
+            at = k;
+        }
+        out.levels.add(new Level(s.dates[at], s.dates[n - 1], level(s.x, at, n, median)));
+        StringBuilder text = new StringBuilder();
+        for (Step st : steps) {
+            out.steps.add(st);
             if (text.length() > 0) text.append(' ');
-            text.append(t);
+            text.append(st.text);
         }
         out.text = text.toString();
         return out;
+    }
+
+    /** The level of {@code x[a, b)}: its mean, or its median for a measure shown as a typical day. */
+    static double level(double[] x, int a, int b, boolean median) {
+        if (!median) return mean(x, a, b);
+        return Stats.median(java.util.Arrays.copyOfRange(x, a, b));
+    }
+
+    /** Draws of whole weeks for the range of a step's size. */
+    public static final int DRAWS = 1000;
+    /**
+     * The range is widened by this much: drawing weeks again alone held the true size of made up steps in 112 of 128 ranges
+     * (88 %; the day of the step is the one where it looks biggest, and days carry over into the next week); with it in 117
+     * of 128 (91 %, {@code TrendChangeTest.knownStep}, steps of 0.75 to 1.5 spreads found near their date).
+     */
+    public static final double WIDER = 1.1;
+
+    /**
+     * Half the 90 % range of {@code level(after) - level(before)}: whole weeks of each side drawn again {@link #DRAWS} times,
+     * the spread of the differences, Student's t for the fewer weeks, widened by {@link #WIDER}.
+     */
+    static double half(Series s, int[] pa, int[] pb, boolean median, long seed) {
+        List<double[]> wa = weeks(s, pa[0], pa[1]), wb = weeks(s, pb[0], pb[1]);
+        Random r = new Random(seed);
+        double[] d = new double[DRAWS];
+        for (int k = 0; k < DRAWS; k++) d[k] = drawn(wb, r, median) - drawn(wa, r, median);
+        int df = Math.min(wa.size(), wb.size()) - 1;
+        return t90(df) * Stats.sd(d) * WIDER;
+    }
+
+    /** The values of {@code [a, b)} by calendar week. */
+    static List<double[]> weeks(Series s, int a, int b) {
+        List<double[]> out = new ArrayList<double[]>();
+        int start = a;
+        for (int i = a + 1; i <= b; i++) {
+            if (i == b || s.week[i] != s.week[i - 1]) {
+                out.add(java.util.Arrays.copyOfRange(s.x, start, i));
+                start = i;
+            }
+        }
+        return out;
+    }
+
+    /** The level of as many weeks drawn at random (with repeats) as there are. */
+    static double drawn(List<double[]> weeks, Random r, boolean median) {
+        int n = 0;
+        int[] pick = new int[weeks.size()];
+        for (int i = 0; i < pick.length; i++) {
+            pick[i] = r.nextInt(pick.length);
+            n += weeks.get(pick[i]).length;
+        }
+        double[] v = new double[n];
+        int at = 0;
+        for (int p : pick) for (double x : weeks.get(p)) v[at++] = x;
+        return level(v, 0, n, median);
+    }
+
+    /** The day to day spread around the two levels (pooled standard deviation): a step at least this big is clear. */
+    static double spread(Series s, int[] pa, int[] pb) {
+        double ma = mean(s.x, pa[0], pa[1]), mb = mean(s.x, pb[0], pb[1]), sum = 0;
+        for (int i = pa[0]; i < pa[1]; i++) sum += (s.x[i] - ma) * (s.x[i] - ma);
+        for (int i = pb[0]; i < pb[1]; i++) sum += (s.x[i] - mb) * (s.x[i] - mb);
+        int n = pa[1] - pa[0] + pb[1] - pb[0];
+        return n > 2 ? Math.sqrt(sum / (n - 2)) : 0;
     }
 
     static double mean(double[] x, int a, int b) {
         double s = 0;
         for (int i = a; i < b; i++) s += x[i];
         return s / (b - a);
-    }
-
-    /**
-     * The squared standard error of the mean of {@code [a, b)} with its weeks as groups (values of one week move together),
-     * with the small sample correction g / (g - 1), and the number of weeks g: {se², g}.
-     */
-    static double[] se2(Series s, int a, int b) {
-        double m = mean(s.x, a, b), sum = 0, g = 0, cur = 0;
-        for (int i = a; i < b; i++) {
-            if (i > a && s.week[i] != s.week[i - 1]) {
-                sum += cur * cur;
-                cur = 0;
-            }
-            if (i == a || s.week[i] != s.week[i - 1]) g++;
-            cur += s.x[i] - m;
-        }
-        sum += cur * cur;
-        int n = b - a;
-        double v = g > 1 ? sum / ((double) n * n) * g / (g - 1) : 0;
-        return new double[] {v, g};
     }
 
     /** Student's t for a two sided 90 % range: the table up to 10 degrees of freedom, then 1.645 + 1.6 / df (within 0.01). */
@@ -357,14 +425,22 @@ public final class TrendChange {
     }
 
     /**
-     * "From about 12 June 2026 you sleep 25 min longer on average than before (15 min to 35 min longer)." A step too small to
-     * show in the unit says "slightly".
+     * "From about 12 June 2026 you sleep 25 min longer on average than before (15 min to 35 min longer)." A step that is not
+     * clear names only the part of its month: "From around mid June 2026 ...". A measure shown as a typical day says "on a
+     * typical day". A step too small to show in the unit says "slightly".
      */
-    public static String sentence(int measure, LocalDate date, double diff, double lo, double hi, Locale l) {
-        StringBuilder s = new StringBuilder("From about ").append(date(date)).append(' ').append(Trends.SUBJECT[measure]).append(' ');
+    public static String sentence(int measure, LocalDate date, boolean clear, double diff, double lo, double hi, Locale l) {
+        StringBuilder s = new StringBuilder(clear ? "From about " + date(date) : "From around " + roughDate(date)).append(' ')
+                .append(Trends.SUBJECT[measure]).append(' ');
         s.append(Trends.none(measure, diff, l) ? "slightly" : Trends.amount(measure, diff, l)).append(' ').append(Trends.word(measure, diff));
-        s.append(" on average than before ").append(Trends.bracket(measure, lo, hi, l));
+        s.append(Trends.KIND[measure] == Trends.MEDIAN ? " on a typical day" : " on average").append(" than before ").append(Trends.bracket(measure, lo, hi, l));
         return s.toString();
+    }
+
+    /** "early June 2026" (days 1 to 10), "mid June 2026" (11 to 20), "late June 2026". */
+    public static String roughDate(LocalDate d) {
+        String part = d.getDayOfMonth() <= 10 ? "early" : d.getDayOfMonth() <= 20 ? "mid" : "late";
+        return part + " " + d.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + d.getYear();
     }
 
     // ------------------------------------------------------------------ events
@@ -433,7 +509,7 @@ public final class TrendChange {
         for (int i = 0; i < with.size(); ) {
             int src = with.get(i).src[col], j = i;
             while (j < with.size() && with.get(j).src[col] == src) j++;
-            if (j - i >= LASTING || j == with.size() && j - i >= 3) {
+            if (j - i >= LASTING) {
                 if (lastSource >= 0 && src != lastSource && src > 0) {
                     String name = Trends.SOURCE_NAMES[Math.min(Trends.SOURCE_NAMES.length - 1, src)];
                     String what = src == Trends.HAND ? "Nights entered by hand" : capital(name) + " " + unit;
@@ -479,7 +555,7 @@ public final class TrendChange {
             if (z == null) continue;
             if (last != null && !z.equals(last)) {
                 java.time.Instant noon = d.date.atTime(12, 0).atZone(z).toInstant();
-                if (!z.getRules().getOffset(noon).equals(last.getRules().getOffset(noon))) out.add(new Event(ZONE, d.date, d.date, "Time zone " + z.getId()));
+                if (!z.getRules().getOffset(noon).equals(last.getRules().getOffset(noon))) out.add(new Event(ZONE, d.date, d.date, "Trip, clock moved (" + place(z) + ")"));
             }
             last = z;
         }
@@ -487,6 +563,13 @@ public final class TrendChange {
     }
 
     /** "Watch" from "watch" (a source's name is never empty). */
+    /** The place of a zone for people: "New York" from America/New_York, the id itself for one without a place. */
+    static String place(ZoneId z) {
+        String id = z.getId();
+        int slash = id.lastIndexOf('/');
+        return slash < 0 ? id : id.substring(slash + 1).replace('_', ' ');
+    }
+
     static String capital(String s) {
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
@@ -532,17 +615,21 @@ public final class TrendChange {
         return s.append("Touch a period to read them.").toString();
     }
 
-    /** Days around a step whose events are named with it. */
-    public static final int AROUND_DAYS = 14;
+    /** Days around a clear step whose events are named with it; around a step that is not clear, six weeks (its day is rough). */
+    public static final int AROUND_DAYS = 14, AROUND_ROUGH_DAYS = 42;
 
     /** "Around then: Watch nights from here (10 Jun 2026)." for the events within two weeks of the steps; "" without any. */
     public static String around(Result r, List<Event> events) {
         StringBuilder s = new StringBuilder();
         for (Step st : r.steps) {
-            String near = list(events, st.date.minusDays(AROUND_DAYS), st.date.plusDays(AROUND_DAYS));
+            int w = st.clear ? AROUND_DAYS : AROUND_ROUGH_DAYS;
+            // workouts are many and everywhere: they stay under the chart, not here
+            List<Event> some = new ArrayList<Event>();
+            for (Event e : events) if (e.kind != WORKOUT) some.add(e);
+            String near = list(some, st.date.minusDays(w), st.date.plusDays(w));
             if (near.isEmpty()) continue;
             if (s.length() > 0) s.append(' ');
-            s.append("Around ").append(shortDate(st.date)).append(": ").append(near).append('.');
+            s.append("Around ").append(st.clear ? shortDate(st.date) : roughDate(st.date)).append(": ").append(near).append('.');
         }
         return s.toString();
     }
@@ -550,20 +637,94 @@ public final class TrendChange {
     /**
      * Where {@code d} sits on the chart of {@code view}, in columns: its period's index plus 0.5 plus its place in the column,
      * as the small dots ({@code Trends.View.dayOffset}: from the period's first day with a value at -0.4 to its last at 0.4,
-     * days outside them at the edge). NaN outside the chart.
+     * days outside them at the edge). NaN outside the chart. For many dates build {@link Columns} once.
      */
     public static double place(Trends.View view, LocalDate d) {
-        int b = view.indexOf(d);
-        if (b < 0) return Double.NaN;
-        long a = Long.MAX_VALUE, z = Long.MIN_VALUE;
-        for (int i = 0; i < view.dayDates.size(); i++) {
-            if (view.dayBucket.get(i) != b) continue;
-            long e = view.dayDates.get(i).toEpochDay();
-            a = Math.min(a, e);
-            z = Math.max(z, e);
+        return new Columns(view).place(d);
+    }
+
+    /** Each period's first and last day with a value, read once from a view, so a date's place is a search, not a walk. */
+    public static final class Columns {
+        final long[] start, end, first, last;
+
+        public Columns(Trends.View view) {
+            int nb = view.buckets.size();
+            start = new long[nb];
+            end = new long[nb];
+            first = new long[nb];
+            last = new long[nb];
+            for (int i = 0; i < nb; i++) {
+                start[i] = view.buckets.get(i).start.toEpochDay();
+                end[i] = view.buckets.get(i).end.toEpochDay();
+                first[i] = Long.MAX_VALUE;
+                last[i] = Long.MIN_VALUE;
+            }
+            for (int i = 0; i < view.dayDates.size(); i++) {
+                int b = view.dayBucket.get(i);
+                long e = view.dayDates.get(i).toEpochDay();
+                first[b] = Math.min(first[b], e);
+                last[b] = Math.max(last[b], e);
+            }
         }
-        if (a == Long.MAX_VALUE || z == a) return b + 0.5;
-        double off = 0.4 * (2.0 * (d.toEpochDay() - a) - (z - a)) / (z - a);
-        return b + 0.5 + Math.max(-0.4, Math.min(0.4, off));
+
+        public double place(LocalDate d) {
+            long e = d.toEpochDay();
+            int lo = 0, hi = start.length - 1, b = -1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >>> 1;
+                if (e < start[mid]) hi = mid - 1;
+                else if (e > end[mid]) lo = mid + 1;
+                else {
+                    b = mid;
+                    break;
+                }
+            }
+            if (b < 0) return Double.NaN;
+            long a = first[b], z = last[b];
+            if (a == Long.MAX_VALUE || z == a) return b + 0.5;
+            double off = 0.4 * (2.0 * (e - a) - (z - a)) / (z - a);
+            return b + 0.5 + Math.max(-0.4, Math.min(0.4, off));
+        }
+    }
+
+    /**
+     * What the chart draws for phase 2, in columns (worked out off the main thread once per chart, so drawing and touching
+     * only scale them to pixels; review of #468): each level from, to and value, each step, each event from and to (NaN
+     * outside the chart) and whether it is one day.
+     */
+    public static final class Drawn {
+        public final double[] levelFrom, levelTo, levelValue, steps, eventFrom, eventTo;
+        public final boolean[] eventDay;
+
+        Drawn(int levels, int stepCount, int events) {
+            levelFrom = new double[levels];
+            levelTo = new double[levels];
+            levelValue = new double[levels];
+            steps = new double[stepCount];
+            eventFrom = new double[events];
+            eventTo = new double[events];
+            eventDay = new boolean[events];
+        }
+    }
+
+    /** {@link Drawn} of {@code change} and {@code events} on {@code view}. */
+    public static Drawn drawn(Trends.View view, Result change, List<Event> events) {
+        Columns c = new Columns(view);
+        int nl = change == null ? 0 : change.levels.size(), ns = change == null ? 0 : change.steps.size(), ne = events == null ? 0 : events.size();
+        Drawn out = new Drawn(nl, ns, ne);
+        for (int i = 0; i < nl; i++) {
+            Level lv = change.levels.get(i);
+            out.levelFrom[i] = c.place(lv.from);
+            out.levelTo[i] = c.place(lv.to);
+            out.levelValue[i] = lv.value;
+        }
+        for (int i = 0; i < ns; i++) out.steps[i] = c.place(change.steps.get(i).date);
+        for (int i = 0; i < ne; i++) {
+            Event e = events.get(i);
+            out.eventFrom[i] = c.place(e.from);
+            out.eventTo[i] = c.place(e.to);
+            out.eventDay[i] = e.from.equals(e.to);
+        }
+        return out;
     }
 }
