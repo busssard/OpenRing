@@ -31,6 +31,9 @@ java $JAVA_OPTS -cp "$OUT" LifeTest
 java $JAVA_OPTS -cp "$OUT" RingsTest
 java $JAVA_OPTS -cp "$OUT" LayoutTest
 java $JAVA_OPTS -cp "$OUT" TrendsTest
+# Trends, phase 2 (issue #374): did something change, the events on the time axis, on lines of their own
+javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/TrendChangeTest.java
+java $JAVA_OPTS -cp "$OUT" TrendChangeTest
 # the emulator CI scripts: publishing the screenshots, the identical shot check (issues #57, #160)
 bash tests/test_ci_scripts.sh
 # the sleep sound detector (issue #380), compiled on its own line so other new suites never touch the same line

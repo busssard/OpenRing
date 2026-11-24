@@ -609,6 +609,24 @@ change that was not there) and needs 3 whole weeks and 7 days on each side. Befo
 days there are. Nothing is stored. Demo mode has a made up year of results before its five weeks (`Demo.olderYear`, see
 DEVELOPMENT.md), which Re analyse all keeps (`Db.clearResults(keepUntil)`, demo file only).
 
+**Did something change (phase 2):** `core/analysis/TrendChange` looks for a step in a measure's daily values over the whole
+history (the same in Weeks, Months and Years; not for regularity, a spread): the split with the largest
+`sqrt(k (n - k) / n) |mean before - mean after|`, 21 values or more on each side, then 999 shuffles of whole calendar weeks
+(at least 8 with values). What is shuffled is each day's distance from the mean with the part carried over from the day
+before taken out (estimated from the part, 0 to 0.9) and put back after the shuffle: plain week shuffles lose that carry at
+every week's edge and gave 2 false alarms in 100 instead of 1 on made up data with a carry of 0.3. A step is shown when at
+most 9 shuffles give one as big (1 in 100); a second only when the same test finds one on one side and the first still holds
+between it and the far end. Seeded from the values, so every opening gives the same answer; a shuffle stops once 10 are as
+big. Its size has a 90 % range from the standard error with weeks as groups and Student's t. Measured on made up year long
+histories (`TrendChangeTest`): 1.0 false alarms in 100 measures (about 1 history in 8 with one somewhere among the 12
+measures); a step of 1.5 day to day spreads found every time, within a week of its date in 44 of 48. Events on the time axis,
+only what is stored: a lasting switch of the device a measure comes from (7 values in a row), a change of the stage detail
+level between stored nights, a week or more without values, a change of time zone that moved the clock (`Trends.Day.zone`,
+the ring night's zone, else the one noted), and from `TrendDays.events` the left out times, the first day of each logged
+period, the watch's workouts and, when the stored nights were worked out with "Count phone use as awake" (`kv screen_awake`),
+the first day with screen data. When a setting was switched is not stored, so it is not marked. The page works it out once
+per measure and read, off the main thread (3 years, every measure with a step: about 0.25 s on the JVM). Nothing is stored.
+
 ### Today's Your day line (owner's wish of 16 November)
 
 `core/DayLine` goes down a fixed tree and stops at the first branch that fits: data out of date (today only, no sync for

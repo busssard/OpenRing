@@ -507,6 +507,12 @@ launch --ei tab 1 --es card YOUR_MONTHS;    shot sleep-trends-card
 launch --ei trends 0;                       shot trends-sleep 4
 if touch_desc "Trends chart" 45; then shot trends-touch 1
 else echo "::warning::issue #374 step: the Trends chart was not on screen to touch it"; shot trends-touch 1; fi
+# Trends, phase 2 (issue #374): did something change. Time asleep by month opened at the month four months ago (the demo's
+# longer nights start then): the dashed line with the average before and after and that month's readout with the step, then
+# scrolled to the card "Did something change?" with its sentence and what it cannot say
+launch --ei trends 0 --es day "$(date -d '4 months ago' +%F)"; shot trends-change 4
+if scroll_to "DID SOMETHING CHANGE?" 4; then shot trends-change-card 1
+else echo "::warning::issue #374 phase 2 step: the card DID SOMETHING CHANGE? was not found"; shot trends-change-card 1; fi
 launch --ei trends 2 --ei trends_measure 10 --ei trends_period 2; shot trends-steps-year 4
 launch --ei trends 0 --ei devices 1;        shot trends-watch-only 4
 launch --es settings top;                   shot settings

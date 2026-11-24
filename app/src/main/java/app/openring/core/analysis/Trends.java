@@ -85,6 +85,8 @@ public final class Trends {
         public final double[] v = new double[COUNT];
         public final byte[] src = new byte[COUNT];
         public int detail = -1;
+        /** The day's time zone id (its night's, else the one noted then), null when unknown: a trip marked on the chart (phase 2). */
+        public String zone;
 
         public Day(LocalDate date) {
             this.date = date;
@@ -688,7 +690,15 @@ public final class Trends {
         StringBuilder s = new StringBuilder("This month ").append(SUBJECT[measure]).append(' ');
         if (none(measure, diff, l)) s.append("about the same").append(avg.isEmpty() ? "" : " " + avg).append(" as in ");
         else s.append(amount(measure, diff, l)).append(' ').append(word(measure, diff)).append(avg.isEmpty() ? "" : " " + avg).append(" than in ");
-        s.append(lastName).append(" (");
+        return s.append(lastName).append(' ').append(bracket(measure, lo, hi, l)).toString();
+    }
+
+    /**
+     * The range in brackets with the sentence's end: "(10 min to 40 min longer)." when it is on one side, else "(could be 4 min
+     * shorter to 28 min longer), so about the same." (also the steps of {@link TrendChange}).
+     */
+    static String bracket(int measure, double lo, double hi, Locale l) {
+        StringBuilder s = new StringBuilder("(");
         boolean loNone = none(measure, lo, l), hiNone = none(measure, hi, l);
         if (lo > 0 && !loNone || hi < 0 && !hiNone) {
             double a = lo > 0 ? lo : hi, b = lo > 0 ? hi : lo;

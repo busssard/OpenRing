@@ -1618,6 +1618,34 @@ public final class Charts {
             return this;
         }
 
+        private app.openring.core.analysis.TrendChange.Result change;
+        private java.util.List<app.openring.core.analysis.TrendChange.Event> events = new java.util.ArrayList<app.openring.core.analysis.TrendChange.Event>();
+        private final Paint stepLine = new Paint(Paint.ANTI_ALIAS_FLAG), level = new Paint(Paint.ANTI_ALIAS_FLAG), mark = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        /**
+         * Phase 2 of #374: the steps found (a dashed line at each, the average before and after as lines over the days they
+         * come from) and the events as small marks under the chart (a span as a bar). Only drawn, never changes a number.
+         */
+        public Months marks(app.openring.core.analysis.TrendChange.Result change, java.util.List<app.openring.core.analysis.TrendChange.Event> events) {
+            this.change = change;
+            this.events = events == null ? new java.util.ArrayList<app.openring.core.analysis.TrendChange.Event>() : events;
+            stepLine.setColor(Ui.TEXT);
+            stepLine.setStrokeWidth(Ui.dp(getContext(), 1.5f));
+            stepLine.setStyle(Paint.Style.STROKE);
+            stepLine.setPathEffect(new DashPathEffect(new float[] {Ui.dp(getContext(), 5), Ui.dp(getContext(), 4)}, 0));
+            level.setColor(Ui.alpha(color, 0.9f));
+            level.setStrokeWidth(Ui.dp(getContext(), 2));
+            mark.setColor(Ui.TEXT_2);
+            mark.setStrokeWidth(Ui.dp(getContext(), 1.5f));
+            return this;
+        }
+
+        /** The x of {@code d} on the chart ({@code TrendChange.place}: where its small dot is), NaN outside it. */
+        private float xOf(java.time.LocalDate d, float left, float slot) {
+            double p = app.openring.core.analysis.TrendChange.place(view, d);
+            return Double.isNaN(p) ? Float.NaN : left + slot * (float) p;
+        }
+
         private String label(double v) {
             return app.openring.core.analysis.Trends.value(view.measure, v, Locale.getDefault());
         }
@@ -1693,6 +1721,29 @@ public final class Charts {
                 int m = bs.size() / 2;
                 txt.setTextAlign(Paint.Align.CENTER);
                 cv.drawText(app.openring.core.analysis.Trends.axisLabel(bs.get(m).start, view.period), xs[m], base, txt);
+            }
+            // phase 2: the average before and after each step over the days it comes from, the step as a dashed line, the events
+            // as marks under the chart (a tick for a day, a bar for a span)
+            if (change != null) {
+                for (app.openring.core.analysis.TrendChange.Level lv : change.levels) {
+                    float a = xOf(lv.from, left, slot), b = xOf(lv.to, left, slot);
+                    if (Float.isNaN(a) || Float.isNaN(b)) continue;
+                    float yy = y(lv.value, lo, hi, top, bottom);
+                    cv.drawLine(a, yy, Math.max(b, a + 1), yy, level);
+                }
+                for (app.openring.core.analysis.TrendChange.Step st : change.steps) {
+                    float x = xOf(st.date, left, slot);
+                    if (!Float.isNaN(x)) cv.drawLine(x, top - Ui.dp(getContext(), 4), x, bottom, stepLine);
+                }
+            }
+            float tick = Ui.dp(getContext(), 5);
+            for (app.openring.core.analysis.TrendChange.Event e : events) {
+                float a = xOf(e.from, left, slot), b = xOf(e.to, left, slot);
+                if (Float.isNaN(a) && Float.isNaN(b)) continue;
+                if (Float.isNaN(a)) a = left;
+                if (Float.isNaN(b)) b = w;
+                if (e.from.equals(e.to) || b - a < 2) cv.drawLine(a, bottom - tick, a, bottom, mark);
+                else cv.drawRect(a, bottom - Ui.dp(getContext(), 3), b, bottom, mark);
             }
             // the touch, or the period it opens at
             if (Float.isNaN(scrubX) && pending >= 0 && pending < bs.size()) scrubX = xs[pending];
