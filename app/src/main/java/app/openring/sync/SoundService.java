@@ -243,6 +243,9 @@ public final class SoundService extends Service {
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
+                    if (queue.droppedAtEnd() > 0) {
+                        log(c, "sleep sounds: the night took nothing for 2 minutes, its last " + queue.droppedAtEnd() + " pieces were dropped");
+                    }
                     if (queue.failed()) {
                         log(c, "sleep sounds: the night stopped by an error (" + queue.error().getClass().getSimpleName() + ")");
                         why = Sounds.ENDED_SYSTEM;
