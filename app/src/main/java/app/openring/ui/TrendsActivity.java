@@ -391,8 +391,8 @@ public final class TrendsActivity extends Activity {
         card.addView(readout);
         card.addView(Ui.gap(this, 6));
         card.addView(Ui.text(this, Trends.note(measure, period), 12, Ui.TEXT_3, Ui.REGULAR));
-        String drawn = TrendChange.chartNote(change, marks);
-        if (!drawn.isEmpty()) card.addView(Ui.text(this, drawn, 12, Ui.TEXT_3, Ui.REGULAR));
+        String drawnNote = TrendChange.chartNote(change, marks);
+        if (!drawnNote.isEmpty()) card.addView(Ui.text(this, drawnNote, 12, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(this, 4));
         card.addView(Ui.text(this, Trends.explain(measure, view.detail), 12, Ui.TEXT_2, Ui.REGULAR));
         body.addView(card);
