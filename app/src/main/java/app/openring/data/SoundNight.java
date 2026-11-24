@@ -255,18 +255,23 @@ public final class SoundNight implements SoundQueue.Feed {
     /**
      * The end of the night ({@code why}: {@code Sounds.ENDED_HAND}, {@code ENDED_TIME}, {@code ENDED_LIMIT} or
      * {@code ENDED_SYSTEM}): the detector decides what is left, the last clips are saved and everything is written (waiting for a
-     * running analysis). Nothing when it was closed already.
+     * running analysis). Nothing when it was closed already. The night is closed afterwards also when this throws.
      */
     public void finish(String why) {
         synchronized (LOCK) {
             if (closed) return;
-            det.finish();
-            collect();
-            ended = why;
-            nightDirty = true;
-            write(true);
-            closed = true;
-            if (running == this) running = null;
+            try {
+                det.finish();
+                collect();
+                ended = why;
+                nightDirty = true;
+                write(true);
+            } finally {
+                // also when the end could not be written (a lasting error): the night no longer listens; its row keeps "ended"
+                // empty and the next start closes it as system (review of #450)
+                closed = true;
+                if (running == this) running = null;
+            }
         }
     }
 

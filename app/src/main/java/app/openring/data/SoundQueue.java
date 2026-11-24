@@ -35,6 +35,7 @@ public final class SoundQueue {
     private final ArrayBlockingQueue<Object[]> queue;
     private final AtomicBoolean closed = new AtomicBoolean(), failed = new AtomicBoolean();
     private volatile Throwable error;
+    private volatile int droppedAtEnd;
     private final Thread worker;
 
     /** A queue of {@code capacity} pieces feeding {@code feed}; its worker starts at once. */
@@ -107,11 +108,17 @@ public final class SoundQueue {
         if (stopped() || !worker.isAlive()) queue.clear();
         if (!queue.offer(END, waitMs, TimeUnit.MILLISECONDS)) {
             // the worker took nothing for that long: what waits is dropped, the end mark goes in
+            droppedAtEnd = queue.size();
             queue.clear();
             queue.offer(END);
         }
         worker.join(waitMs);
         return !worker.isAlive();
+    }
+
+    /** Pieces {@link #end} dropped because the worker took nothing for the whole wait (0 for none), for the log. */
+    public int droppedAtEnd() {
+        return droppedAtEnd;
     }
 
     /** Pieces waiting now (for the tests). */

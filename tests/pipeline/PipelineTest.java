@@ -989,6 +989,7 @@ public class PipelineTest {
         // review of #450: the hand off between the microphone's thread and the night's worker, the demo night without its clip folder
         soundQueue1b450();
         soundDemoNoFolder1b450();
+        soundFinishFails1b450();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -17899,6 +17900,7 @@ public class PipelineTest {
         final app.openring.data.SoundQueue late = new app.openring.data.SoundQueue(4, new app.openring.data.SoundQueue.Feed() {
             @Override
             public boolean feed(short[] s, int off, int len, double now) {
+                fedCount.incrementAndGet();
                 try {
                     hold2.await();
                 } catch (InterruptedException e) {
@@ -17907,7 +17909,16 @@ public class PipelineTest {
                 return false;
             }
         });
-        for (int i = 0; i < 10; i++) late.offer(piece, piece.length, T1B + i);
+        fedCount.set(0);
+        late.offer(piece, piece.length, T1B);
+        // the worker holds its first piece, then the queue fills (4 waiting): the end mark has no room
+        check("#450 (test setup): the second worker holds its first piece", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return fedCount.get() == 1;
+            }
+        }), null);
+        for (int i = 1; i < 10; i++) late.offer(piece, piece.length, T1B + i);
         final boolean[] lateEnded = {false};
         Thread ender = new Thread(new Runnable() {
             @Override
@@ -17923,7 +17934,8 @@ public class PipelineTest {
         Thread.sleep(50);
         hold2.countDown();
         ender.join(20000);
-        check("#450 Must fix: the worker stops while the end waits for room: the end still comes", !ender.isAlive() && lateEnded[0] && late.closed(), null);
+        check("#450 Must fix: the worker stops while the end waits for room: the end still comes, its 4 waiting pieces counted as dropped for the log", !ender.isAlive() && lateEnded[0] && late.closed()
+                && late.droppedAtEnd() == 4, late.droppedAtEnd());
 
         // an error in the worker
         final RuntimeException boom = new IllegalStateException("made up error in the night");
@@ -18032,6 +18044,102 @@ public class PipelineTest {
         } finally {
             nb.delete();
             app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        clean254();
+    }
+
+    /** A clip writer whose {@code ext} throws once {@code broken} is set: an error {@code SoundNight.save} does not catch. */
+    static final class BrokenWriter450 implements app.openring.data.SoundNight.Writer {
+        volatile boolean broken;
+
+        @Override
+        public String ext() {
+            if (broken) throw new IllegalStateException("made up lasting error");
+            return ".m4a";
+        }
+
+        @Override
+        public void write(File f, short[] pcm, int off, int len) throws Exception {
+            Files.write(f.toPath(), app.openring.core.SleepSounds.wav(pcm, off, len, RATE1B));
+        }
+    }
+
+    /**
+     * Independent review of #450: the end of a night that cannot be written (a lasting error) still stops it listening, its row
+     * keeps "ended" empty and the next start closes it as system; Delete all's two failure paths ({@code SoundNight.deleteHolding}).
+     */
+    static void soundFinishFails1b450() throws Exception {
+        Context c = phone254("openring450-finish");
+        Db db = Db.get(c);
+        // a sound at 28 s of 30: its clip is only ready when the night ends
+        short[] s = audio1b(30, 11, new double[] {28, 1, 0, 3000});
+        BrokenWriter450 w = new BrokenWriter450();
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, w);
+        Throwable got = null;
+        try {
+            feed1b(n, s, T1B);
+            w.broken = true;
+            try {
+                n.finish(app.openring.data.Sounds.ENDED_SYSTEM);
+            } catch (RuntimeException e) {
+                got = e;
+            }
+            String row = night1b(db, T1B);
+            check("#450: the end of the night throws (a lasting error): the night is closed and no longer listening, its row not ended", got != null
+                    && n.closed() && !app.openring.data.SoundNight.isRunning() && row != null && row.endsWith(" null"), got + " " + row);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        app.openring.data.SoundNight next = app.openring.data.SoundNight.start(c, T1B + 7200, 10, null);
+        try {
+            String row = night1b(db, T1B);
+            check("#450: the next start closes that night as system", row != null && row.endsWith(" system"), row);
+        } finally {
+            next.finish(app.openring.data.Sounds.ENDED_HAND);
+        }
+        // Delete all's two parts: the history's delete throws (nothing deleted, the night goes on), a later part throws (closed)
+        java.lang.reflect.Method holding = app.openring.data.SoundNight.class.getDeclaredMethod("deleteHolding", Runnable.class, Runnable.class);
+        holding.setAccessible(true);
+        final boolean[] restRan = {false};
+        app.openring.data.SoundNight h = app.openring.data.SoundNight.start(c, T1B + 14400, 10, null);
+        try {
+            got = null;
+            try {
+                holding.invoke(null, new Runnable() {
+                    @Override
+                    public void run() {
+                        throw new IllegalStateException("made up history failure");
+                    }
+                }, new Runnable() {
+                    @Override
+                    public void run() {
+                        restRan[0] = true;
+                    }
+                });
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                got = e.getCause();
+            }
+            check("#450: Delete all, the history's delete throws: the rest does not run, the night goes on listening", got instanceof IllegalStateException
+                    && !restRan[0] && !h.closed() && app.openring.data.SoundNight.isRunning(), got);
+            got = null;
+            try {
+                holding.invoke(null, new Runnable() {
+                    @Override
+                    public void run() {
+                    }
+                }, new Runnable() {
+                    @Override
+                    public void run() {
+                        throw new IllegalStateException("made up clip folder failure");
+                    }
+                });
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                got = e.getCause();
+            }
+            check("#450: Delete all, a later part throws after the history went: the night is closed all the same", got instanceof IllegalStateException
+                    && h.closed() && !app.openring.data.SoundNight.isRunning(), got);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
         }
         clean254();
     }
