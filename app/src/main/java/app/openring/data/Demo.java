@@ -181,11 +181,8 @@ public final class Demo {
         // the night of that day with the screen test's extra hand_night
         HandNights.demo(db, today, zone, now);
         // made up sleep sounds of last night (issue #380, phase 1b): tones made in code, in the demo file and its own clip folder
-        try {
-            Sounds.demo(c, db, today, zone);
-        } catch (java.io.IOException e) {
-            // the demo shows its marks without sound; the rest of the demo is not held up by a clip file
-        }
+        // a clip file that cannot be written leaves its mark without sound (Sounds.demo), the rest of the demo is not held up
+        Sounds.demo(c, db, today, zone);
         watch(db, today, now, zone);
         phone(db, today, now, zone);
         ringBattery(db, today, now, zone);

@@ -7,7 +7,8 @@ import android.content.Context;
  * is deleted, everything below runs under the lock every write of a night listening for sleep sounds takes
  * ({@link SoundNight#deleteHolding}, phase 1b): the night writes nothing meanwhile, and only once all of it is done the night is
  * closed, so not a row and not a clip file of it is written afterwards and the listening service ends by itself. When the
- * delete fails, the night goes on as before (review of #450). In this order:
+ * history's delete fails (nothing deleted), the night goes on as before (review of #450); once it worked, the night is closed
+ * also when a later step fails. In this order:
  * <ol>
  * <li>the history in use ({@link Analyzer#deleteAll}: every table in one transaction, waiting for a running analysis; when it
  * fails nothing was deleted and nothing below runs),</li>
@@ -23,16 +24,25 @@ public final class DeleteAll {
 
     public static void run(final Context c) {
         final Db db = Db.get(c);
-        Runnable delete = new Runnable() {
+        Runnable history = new Runnable() {
             @Override
             public void run() {
                 Analyzer.deleteAll(db);
+            }
+        };
+        Runnable rest = new Runnable() {
+            @Override
+            public void run() {
                 BeforeUpdate.deleteAll(c);
                 Sounds.deleteTree(Sounds.folder(c, db));
             }
         };
         // the night listens into the real file and folder: held, then closed, when those are deleted (the demo's keeps it)
-        if (Db.DEMO.equals(db.fileName)) delete.run();
-        else SoundNight.deleteHolding(delete);
+        if (Db.DEMO.equals(db.fileName)) {
+            history.run();
+            rest.run();
+        } else {
+            SoundNight.deleteHolding(history, rest);
+        }
     }
 }
