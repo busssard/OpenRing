@@ -1004,10 +1004,10 @@ public final class Pages {
 
     /** Loads the averages for the selected period in the background and shows them in {@code result}. */
     static void loadAnalysis(final Context c, final DayData d, final LinearLayout result) {
-        // the period keeps ending today while the shown day is in it, as the charts (owner, 23 November)
-        final int days = analysisPeriod == 0 ? 7 : analysisPeriod == 1 ? 30 : analysisPeriod == 2 ? 365 : 1;
-        final java.time.LocalDate to = analysisPeriod == 3 ? (d.today.isAfter(d.date) ? d.today : d.date) : d.end(days);
-        final java.time.LocalDate from = analysisPeriod == 3 ? java.time.LocalDate.of(2000, 1, 1) : to.minusDays(days - 1);
+        // the period ends on the shown day, as on dev: these are averages, and a display window never changes a number (review of #455)
+        final java.time.LocalDate to = d.date;
+        final java.time.LocalDate from = analysisPeriod == 0 ? to.minusDays(6) : analysisPeriod == 1 ? to.minusDays(29)
+                : analysisPeriod == 2 ? to.minusDays(364) : java.time.LocalDate.of(2000, 1, 1);
         final int period = analysisPeriod;
         final int load = analysisLoad.incrementAndGet();
         // without a ring the watch's nights (owner's report of 13 November), worked out from its rows
