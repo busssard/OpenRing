@@ -31,6 +31,11 @@ public final class DayData {
     public app.openring.data.ScreenDays.Info screen;
     /** The zone this day is shown in: its main night's, else the zone noted then, else the phone's (issue #22). */
     public java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+    /** Sleep sounds (issue #380, phase 1b): the night shown on this day's Sleep tab, null for none; its clip folder. */
+    public app.openring.data.Sounds.Night soundNight;
+    public java.io.File soundFolder;
+    /** False when the sleep sounds could not be read (the card says so). */
+    public boolean soundsOk = true;
     /**
      * The times left out because someone else wore the ring (issue #254) that reach this day or the day before (its night),
      * merged, oldest first, each {start, stop}. Empty for nearly everyone.
@@ -51,8 +56,16 @@ public final class DayData {
     public app.openring.core.LifeTags.Known life;
     /** Every day with a life factor in force, its tags by key. A few thousand rows even after years, read in the background. */
     public final java.util.TreeMap<LocalDate, List<String>> lifeDays = new java.util.TreeMap<LocalDate, List<String>>();
+    /** The logged times of the life factors (issue #435): each day in force with a time, for the bands on the day's charts. */
+    public final List<app.openring.core.LifeTimes.Entry> lifeTimes = new ArrayList<app.openring.core.LifeTimes.Entry>();
     /** False when the life factors could not be read (the cards say so; the screens' other numbers are unaffected). */
     public boolean lifeOk = true;
+    /**
+     * Life factors phase 2 (issue #292): how the nights went after each factor, in the card's order ({@code data/LifeEffects},
+     * worked out here in the background, kept while nothing changed). Empty without a ring or without factors; null when it
+     * could not be worked out (the card says so).
+     */
+    public List<app.openring.core.analysis.FactorEffect.Result> lifeEffects = new ArrayList<app.openring.core.analysis.FactorEffect.Result>();
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
     /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
@@ -423,13 +436,27 @@ public final class DayData {
             // life factors (issue #292): the person's own tags, the same in every file; demo mode reads the demo's
             d.life = app.openring.data.LifeLog.known(db);
             d.lifeDays.putAll(app.openring.data.LifeLog.all(db));
+            d.lifeTimes.addAll(app.openring.data.LifeLog.times(db));
         } catch (RuntimeException e) {
             // the cards say they could not be read. Not through failed(): the Data check names nothing of the tags, and the log
             // gets the error's kind only, never a tag, a name or a date
             d.life = null;
             d.lifeDays.clear();
+            d.lifeTimes.clear();
             d.lifeOk = false;
             app.openring.ble.RingManager.get(c).log("day load: the life factors could not be read: " + e.getClass().getSimpleName());
+        }
+        if (d.lifeOk && d.has.ring) {
+            try {
+                // the effect for you (issue #292, phase 2): the ring's nights of the last 12 months against each factor, with the
+                // period tracker's two factors when it shows; reads only
+                d.lifeEffects = app.openring.data.LifeEffects.read(db, LocalDate.now(), java.time.ZoneId.systemDefault(), d.life, d.lifeDays,
+                        d.periodShown ? d.periods : null);
+            } catch (RuntimeException e) {
+                // the card says it could not be worked out; the error's kind only, never a tag, a name or a value
+                d.lifeEffects = null;
+                app.openring.ble.RingManager.get(c).log("day load: the effect of the life factors: " + e.getClass().getSimpleName());
+            }
         }
         try {
             // the Recent badges row on Today (issue #265): one read of the 7 days and the weeks before them
@@ -444,7 +471,8 @@ public final class DayData {
             d.badges.clear();
             d.ok = failed(c, date, "badges", e);
         }
-        for (String[] r : db.daysJson(date.minusDays(29).toString(), key)) {
+        // the 30 days before the shown day and, for the charts' windows, up to 29 after it (at most today, owner 23 November)
+        for (String[] r : db.daysJson(date.minusDays(29).toString(), d.end(30).toString())) {
             JSONObject o = Json.parse(r[1]);
             if (o != null && !hideRing) d.history.put(r[0], o);
         }
@@ -459,6 +487,16 @@ public final class DayData {
             d.handReplacedBy = -1;
             d.handOk = false;
             d.ok = failed(c, date, "nights by hand", e);
+        }
+        try {
+            // sleep sounds (issue #380): the night of this day in the file shown (the demo has its own), and its clip folder
+            d.soundNight = app.openring.data.Sounds.forDay(db, date, d.zone);
+            d.soundFolder = app.openring.data.Sounds.folder(c, db);
+        } catch (RuntimeException e) {
+            // the card says it could not be read; the log gets the error's kind only, never a time or a kind of sound
+            d.soundNight = null;
+            d.soundsOk = false;
+            app.openring.ble.RingManager.get(c).log("day load: sleep sounds could not be read: " + e.getClass().getSimpleName());
         }
         try {
             d.batteries(c, db, System.currentTimeMillis() / 1000);
@@ -647,31 +685,80 @@ public final class DayData {
         return Double.isNaN(v) ? null : app.openring.core.DeviceScores.version(v);
     }
 
-    /** Values of a day field for the {@code n} days ending at the selected date (NaN if missing). */
+    /** Today when this day was loaded: the charts' windows end here while the shown day is inside them (owner, 23 November). */
+    public LocalDate today = LocalDate.now();
+
+    /** The last day of a chart of {@code n} days: today while the shown day is within them, else moved back ({@link app.openring.core.DayWindow}). */
+    public LocalDate end(int n) {
+        return app.openring.core.DayWindow.end(date, today, n);
+    }
+
+    /** The shown day's place in a chart of {@code n} days ending {@link #end}: its bar or dot is highlighted. */
+    public int pickedIndex(int n) {
+        return app.openring.core.DayWindow.index(date, end(n), n);
+    }
+
+    /** "" when a chart of {@code n} days ends on the shown day, else " in the n days up to the day you picked", for the averages under it. */
+    public String upTo(int n) {
+        return app.openring.core.DayWindow.upTo(date, end(n), n);
+    }
+
+    /** A day field of the stored day summaries, NaN where missing. */
+    app.openring.core.DayWindow.Value field(final String field) {
+        return new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(LocalDate day) {
+                return Json.d(history.get(day.toString()), field);
+            }
+        };
+    }
+
+    /** A score's value from the nested score object of the stored day summaries, NaN where missing. */
+    app.openring.core.DayWindow.Value scoreValue(final String field) {
+        return new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(LocalDate day) {
+                JSONObject o = history.get(day.toString());
+                JSONObject s = o == null ? null : o.optJSONObject(field);
+                return s == null || !s.has("value") ? Double.NaN : s.optDouble("value");
+            }
+        };
+    }
+
+    /**
+     * Values of a day field for the {@code n} days ending at the shown day (NaN if missing), for numbers worked out for that day
+     * (averages, usual values). Charts draw {@link #chartSeries} instead (code review of #455: a display window never changes a number).
+     */
     public double[] series(String field, int n) {
-        double[] out = new double[n];
-        for (int i = 0; i < n; i++) {
-            JSONObject o = history.get(date.minusDays(n - 1 - i).toString());
-            out[i] = Json.d(o, field);
-        }
-        return out;
+        return app.openring.core.DayWindow.values(date, n, field(field));
     }
 
-    /** Score value from a nested score object of a day summary, or NaN. */
+    /** Values of a day field for the {@code n} days a chart draws, ending at {@link #end} (NaN if missing). Only for drawing. */
+    public double[] chartSeries(String field, int n) {
+        return app.openring.core.DayWindow.values(end(n), n, field(field));
+    }
+
+    /** Score values (nested score objects) for the {@code n} days ending at the shown day, NaN where missing. */
     public double[] scoreSeries(String field, int n) {
-        double[] out = new double[n];
-        for (int i = 0; i < n; i++) {
-            JSONObject o = history.get(date.minusDays(n - 1 - i).toString());
-            JSONObject s = o == null ? null : o.optJSONObject(field);
-            out[i] = s == null || !s.has("value") ? Double.NaN : s.optDouble("value");
-        }
-        return out;
+        return app.openring.core.DayWindow.values(date, n, scoreValue(field));
     }
 
+    /** Score values for the {@code n} days a chart draws, ending at {@link #end}. Only for drawing. */
+    public double[] chartScoreSeries(String field, int n) {
+        return app.openring.core.DayWindow.values(end(n), n, scoreValue(field));
+    }
+
+    /** The shown day's usual value of a field: the mean of the 14 days before it ({@link app.openring.core.DayWindow#usual}). */
+    public double usual(String field) {
+        return app.openring.core.DayWindow.usual(date, field(field));
+    }
+
+    /** The weekday letters under a chart of {@code n} days, ending at {@link #end}. */
     public String[] weekdayLabels(int n) {
         String[] l = new String[n];
+        LocalDate end = end(n);
         for (int i = 0; i < n; i++) {
-            String s = date.minusDays(n - 1 - i).getDayOfWeek().getDisplayName(java.time.format.TextStyle.NARROW, java.util.Locale.getDefault());
+            String s = end.minusDays(n - 1 - i).getDayOfWeek().getDisplayName(java.time.format.TextStyle.NARROW, java.util.Locale.getDefault());
             l[i] = s;
         }
         return l;

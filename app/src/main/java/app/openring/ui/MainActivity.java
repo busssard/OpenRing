@@ -71,6 +71,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
             syncAsked = b.getBoolean("syncAsked", false);
             permissionBlocked = b.getBoolean("permissionBlocked", false);
             quietDenial = b.getBoolean("quietDenial", false);
+            // the tour's step through a turn of the phone (issue #453)
+            tourPending = b.getInt("tour_step", -1);
+            tourFirst = b.getBoolean("tour_first", false);
+            tourQuiet = b.getBoolean("tour_quiet", false);
         } else {
             // only on a fresh start: a turned screen keeps its tab and date and does not start
             // the demo or open Settings again (issue #29)
@@ -110,18 +114,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
                 stepDay(date.plusDays(1));
             }
         }));
-        header.addView(iconButton(R.drawable.ic_sync, new View.OnClickListener() {
+        header.addView(TourOverlay.mark(iconButton(R.drawable.ic_sync, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 sync();
             }
-        }));
-        header.addView(iconButton(R.drawable.ic_settings, new View.OnClickListener() {
+        }), app.openring.core.Tour.SYNC));
+        header.addView(TourOverlay.mark(iconButton(R.drawable.ic_settings, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 startActivity(new Intent(MainActivity.this, SettingsActivity.class));
             }
-        }));
+        }), app.openring.core.Tour.SETTINGS));
         root.addView(header);
         // the edit session's header (owner's wish of 20 November): Reset and Save where Sync and Settings are
         editBar = editBar();
@@ -150,8 +154,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         nav.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 6));
         navPx = -1;
         for (int i = 0; i < ICONS.length; i++) nav.addView(navItem(i), Ui.weight(1));
-        root.addView(nav);
+        root.addView(TourOverlay.mark(nav, app.openring.core.Tour.TABS));
         setContentView(root);
+        syncedBefore = synced(Prefs.of(this));
         showEditing();
         if (demoRun.running) {
             // a preparation started before the phone was turned: show its progress again
@@ -249,6 +254,11 @@ public final class MainActivity extends Activity implements RingManager.Listener
     /** Back in the edit session leaves it; with changes not saved it asks first. */
     @Override
     public void onBackPressed() {
+        // the tour (issue #453): Back goes a step back, on its first step it closes
+        if (tour != null) {
+            tour.back();
+            return;
+        }
         if (!Tiles.editing()) {
             super.onBackPressed();
             return;
@@ -339,11 +349,27 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * phone_ask (boolean, demo mode only) shows Activity's card that asks for Physical activity instead of the demo's phone steps
      * (issue #329; nothing is asked without a tap, and demo mode never asks),
      * hand_night (boolean, demo mode only) shows today and the day before yesterday as without a device night, hand_entry
-     * (boolean, demo mode only) opens the entry of a night by hand for last night with two wake marks (issue #427).
+     * (boolean, demo mode only) opens the entry of a night by hand for last night with two wake marks (issue #427),
+     * sounds (string, demo mode only: consent, test or list) opens the sleep sounds' consent, the microphone test's made up
+     * result or the clip list of the demo's night (issue #380; demo mode never records), sounds_start (boolean, the bedtime
+     * notification's Start) starts listening,
+     * life_time (boolean, demo mode only) opens "When and how long?" for Sauna on Today's row (issue #435; nothing is saved),
+     * life_effect (string, demo mode only, a factor's key such as alcohol) opens its row of Body's Life factors and your nights, its chart touched
+     * (issue #292, phase 2).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
         if (i.hasExtra("tab")) tab = i.getIntExtra("tab", tab);
+        // the short tour (issue #453): tour (int) opens it at a step (0 to 6, 7 the demo's ending; Settings' Show the tour again
+        // sends 0), -1 keeps it from starting by itself on this start (the screen test sends it with every launch)
+        if (i.hasExtra("tour")) {
+            int t = i.getIntExtra("tour", -1);
+            if (t < 0) tourQuiet = true;
+            else {
+                tourPending = Math.min(t, app.openring.core.Tour.END);
+                tourFirst = false; // asked for: step 1 never says "Your first sync worked" again
+            }
+        }
         // Settings, Rearrange tiles (owner's wish of 20 November): the tabs open in the edit session
         if (i.getBooleanExtra("edit_layout", false) && !Tiles.editing()) Tiles.startEditing(this);
         // screen test, demo mode only: every tab in the standard layout (owner's wish of 18 November), before anything below
@@ -395,8 +421,13 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("battery_open", false) && Prefs.of(this).demo()) BatteryViews.open[0] = true;
         // the life factors row's More opened on Today (issue #292), for the screen test, demo mode only
         if (i.getBooleanExtra("life_more", false) && Prefs.of(this).demo()) LifeCard.moreOpen[0] = true;
+        // "When and how long?" opened on Today's row (issue #435), for the screen test, demo mode only; nothing saved without a tap
+        LifeCard.timePending = i.getBooleanExtra("life_time", false) && Prefs.of(this).demo();
         // Body's life factors month view with a past day read (issue #292): days before today, demo mode only
         LifeCard.readPending = Prefs.of(this).demo() ? Math.max(-1, i.getIntExtra("life_read", -1)) : -1;
+        // Body's Life factors and your nights with the row of this factor opened and its chart touched (issue #292, phase 2), demo
+        // mode only
+        LifeCard.effectPending = Prefs.of(this).demo() ? i.getStringExtra("life_effect") : null;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
         if (i.getBooleanExtra("drip", false) && Prefs.of(this).demo()) {
             startActivity(new Intent(this, DripImportActivity.class).putExtra("demo_file", true)
@@ -432,6 +463,15 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     .putExtra("demo_ring", i.getBooleanExtra("device_ring", false)) // the made up QRing ring's result (issue #418)
                     .putExtra("demo_oura", i.getBooleanExtra("device_oura", false))); // the made up Oura ring, left alone (issue #458)
         }
+        // the bedtime notification's Start (issue #380): listening starts from here, a screen in front, as Android requires
+        if (i.getBooleanExtra("sounds_start", false)) {
+            i.removeExtra("sounds_start");
+            SoundViews.listen(this);
+        }
+        // screen test: sleep sounds (issue #380), demo mode only, which never records: the consent ("consent"), the microphone
+        // test's made up result ("test") or the clip list of the demo's night ("list")
+        String sounds = i.getStringExtra("sounds");
+        if (sounds != null && Prefs.of(this).demo()) startActivity(new Intent(this, SoundsActivity.class).putExtra(SoundsActivity.MODE, sounds));
         // screen test: the Badges page (issue #265); it only reads, so it needs no demo mode
         if (i.getBooleanExtra("badges", false)) startActivity(new Intent(this, BadgesActivity.class));
         // screen test: Trends (issue #374) at a group, with trends_measure and trends_period; it only reads, so no demo mode needed
@@ -634,6 +674,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
         out.putBoolean("syncAsked", syncAsked);
         out.putBoolean("permissionBlocked", permissionBlocked);
         out.putBoolean("quietDenial", quietDenial);
+        out.putInt("tour_step", tour != null ? tour.step : tourPending);
+        out.putBoolean("tour_first", tour != null ? tour.firstSync : tourFirst);
+        out.putBoolean("tour_quiet", tourQuiet);
     }
 
     @Override
@@ -681,6 +724,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         app.openring.sync.BackupJob.schedule(this);
         // the reminder before the expected period (issue #252): planned again from the person's own log, in the background
         app.openring.sync.PeriodReminder.planLater(this);
+        // the bedtime notification for sleep sounds (issue #380): planned again from the usual bedtime, in the background
+        app.openring.sync.SoundReminder.planLater(this);
         RingManager.get(this).addListener(this);
         wasBusy = RingManager.get(this).busy();
         updateStatus();
@@ -698,6 +743,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     protected void onPause() {
         super.onPause();
         RingManager.get(this).removeListener(this);
+        // a sleep sound clip stops with its screen (issue #380)
+        SoundViews.stopPlaying();
     }
 
     void setDate(LocalDate d) {
@@ -885,6 +932,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     cardPending = null;
                 }
                 if (tab == Pages.TODAY && np.demo()) firstScreen(shown);
+                tourCheck();
             }
         });
         for (int i = 0; i < nav.getChildCount(); i++) {
@@ -908,6 +956,103 @@ public final class MainActivity extends Activity implements RingManager.Listener
         android.util.Log.i("OpenRing", "today first screen (" + preview + "): the line ends at " + bottom + " of " + scroll.getHeight() + " px, "
                 + (bottom <= scroll.getHeight() ? "fits" : "cut"));
     }
+
+    // ---- the short tour (issue #453) ----
+    /** The tour on screen, null when none. */
+    private TourOverlay tour;
+    /** A step to open after the next build of the page (a turned phone, the extra tour, Show the tour again), -1 for none. */
+    private int tourPending = -1;
+    /** The tour started after the first sync; the tour does not start by itself on this start (screen test, extra tour -1). */
+    private boolean tourFirst, tourQuiet;
+    /** The newest good sync (ring or watch) this screen knew at its last look, 0 for none: the first sync starts the tour. */
+    private long syncedBefore;
+
+    static long synced(Prefs p) {
+        return Math.max(p.lastSync(), p.watchLastOk());
+    }
+
+    /** After each build of the page: the tour follows it, or opens as asked, or starts by itself ({@code core/Tour.autoStart}). */
+    void tourCheck() {
+        if (isFinishing() || isDestroyed()) return;
+        // Rearrange tiles opened while the tour shows (the gear, then Settings, from its last step or the demo's ending): the tour
+        // closes and counts as seen, so it never sits over the edit session
+        if (tour != null && Tiles.editing()) tour.close();
+        if (tour != null && tourPending < 0) {
+            tour.pageChanged();
+            return;
+        }
+        // Show the tour again while the demo's ending still waits (the gear opened Settings): the new tour replaces it
+        if (tour != null) tour.close();
+        Prefs p = Prefs.of(this);
+        long now = synced(p);
+        int pending = tourPending;
+        tourPending = -1;
+        int why = pending >= 0 ? app.openring.core.Tour.NONE
+                : app.openring.core.Tour.autoStart(p.demo(), p.tourSeen(), Tiles.editing() || tourQuiet, syncedBefore, now);
+        boolean first = pending >= 0 ? tourFirst : why == app.openring.core.Tour.FIRST_SYNC;
+        syncedBefore = now;
+        if (pending < 0 && why == app.openring.core.Tour.NONE) return;
+        if (Tiles.editing()) {
+            android.widget.Toast.makeText(this, "Save or leave Rearrange tiles first.", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (why != app.openring.core.Tour.NONE) {
+            android.util.Log.i("OpenRing", "tour: started by itself (" + (why == app.openring.core.Tour.DEMO ? "demo" : "first sync") + ")");
+        }
+        tourFirst = first;
+        tour = TourOverlay.start(this, tourHost, pending >= 0 ? pending : 0, first);
+    }
+
+    private final TourOverlay.Host tourHost = new TourOverlay.Host() {
+        @Override
+        public int tab() {
+            return MainActivity.this.tab;
+        }
+
+        @Override
+        public void goTab(int t) {
+            go(t);
+        }
+
+        @Override
+        public ScrollView scroll() {
+            return scroll;
+        }
+
+        @Override
+        public boolean demo() {
+            return Prefs.of(MainActivity.this).demo();
+        }
+
+        @Override
+        public boolean hasDevice() {
+            Prefs p = Prefs.of(MainActivity.this);
+            return p.hasKey() || p.withoutRing();
+        }
+
+        @Override
+        public void seen() {
+            Prefs.of(MainActivity.this).setTourSeen();
+        }
+
+        @Override
+        public boolean leaveDemo() {
+            // as Settings' Leave the demo: the main screen again, which opens Getting started when nothing is set up
+            if (!app.openring.data.Demo.leave(MainActivity.this)) return false;
+            startActivity(new Intent(MainActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            return true;
+        }
+
+        @Override
+        public String leaveRefused() {
+            return app.openring.core.SyncError.plain(app.openring.core.SyncError.REANALYSING, app.openring.core.SyncError.Task.ACTION);
+        }
+
+        @Override
+        public void closed() {
+            tour = null;
+        }
+    };
 
     String syncLine() {
         Prefs p = Prefs.of(this);

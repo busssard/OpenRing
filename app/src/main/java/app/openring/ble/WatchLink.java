@@ -236,7 +236,6 @@ public final class WatchLink {
      * Switches notifications (or indications) on for every characteristic that sends and is not a standard one: the
      * standard ones are documented, and the heart rate one would switch on the sensor. Returns how many are on.
      */
-    @SuppressWarnings("deprecation")
     private int listenAll(WatchCheck.Report r, long end, Stop stop) throws InterruptedException {
         int on = 0;
         for (WatchCheck.Service ws : r.services) {
@@ -255,13 +254,7 @@ public final class WatchLink {
                 if (ok && d != null) {
                     byte[] val = (wc.props & 0x10) != 0 ? BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE : BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
                     descAcks.clear();
-                    boolean started;
-                    if (Build.VERSION.SDK_INT >= 33) {
-                        started = gatt.writeDescriptor(d, val) == 0;
-                    } else {
-                        d.setValue(val);
-                        started = gatt.writeDescriptor(d);
-                    }
+                    boolean started = Gatt.startDescriptorWrite(gatt, d, val);
                     Integer st = started ? descAcks.poll(Math.min(3000, left(end)), TimeUnit.MILLISECONDS) : null;
                     ok = st != null && st == BluetoothGatt.GATT_SUCCESS;
                 }
@@ -273,15 +266,7 @@ public final class WatchLink {
     }
 
     private void close() {
-        try {
-            if (gatt != null) {
-                gatt.disconnect();
-                SystemClock.sleep(200);
-                gatt.close();
-            }
-        } catch (RuntimeException ignored) {
-            // Bluetooth was switched off meanwhile: the link is gone already
-        }
+        Gatt.close(gatt);
         connected = false;
         gatt = null;
     }

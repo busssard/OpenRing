@@ -209,9 +209,11 @@ public final class WatchPageActivity extends Activity {
         card.addView(Ui.statRow(c, Ui.stat(c, "Calories", Double.isNaN(kcal) ? "--" : String.format(Locale.getDefault(), "%,d", (int) kcal), "kcal", Ui.ACTIVE,
                 "Burned by moving, as the watch counted it"), Ui.stat(c, "Climbed", Double.isNaN(up) ? "--" : String.valueOf((int) up), "m", Ui.ACTIVE,
                 "Metres up, the watch's own estimate")));
+        // the 30 days keep ending today while the shown day is in them (owner, 23 November)
+        LocalDate end30 = app.openring.core.DayWindow.end(d, LocalDate.now(), 30);
         TS ts = new TS();
         for (java.util.Map.Entry<LocalDate, Integer> e : per.entrySet()) {
-            if (e.getKey().isAfter(d) || e.getKey().isBefore(d.minusDays(29))) continue;
+            if (e.getKey().isAfter(end30) || e.getKey().isBefore(end30.minusDays(29))) continue;
             ts.add(e.getKey().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + 43200, e.getValue());
         }
         // the day per hour, touch readable (owner's report of 11 November); the hours add up to the day's count above
@@ -225,7 +227,7 @@ public final class WatchPageActivity extends Activity {
         }
         card.addView(Ui.gap(c, 8));
         card.addView(Ui.text(c, "Last 30 days", 12, Ui.TEXT_3, Ui.REGULAR));
-        card.addView(new Charts.LineChart(c, ts, Double.NaN, Double.NaN, Ui.ACTIVE).daily(d, 30).unit(" steps").empty("No steps synced yet"), Ui.sized(c, -1, 120));
+        card.addView(new Charts.LineChart(c, ts, Double.NaN, Double.NaN, Ui.ACTIVE).daily(end30, 30).pick(d).unit(" steps").empty("No steps synced yet"), Ui.sized(c, -1, 120));
         card.addView(Ui.text(c, Explain.WATCH_STEPS, 12, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.text(c, Explain.WATCH_DISTANCE + " " + Explain.WATCH_CALORIES + " " + Explain.WATCH_CLIMB, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
@@ -308,12 +310,14 @@ public final class WatchPageActivity extends Activity {
         double drop = index.dropPerDay(upTo - 7 * 86400L);
         card.addView(Ui.statRow(c, Ui.stat(c, "Now", now == null ? "--" : String.valueOf(now.pct), "%", Ui.READY, "At the last sync"),
                 Ui.stat(c, "Per day", Double.isNaN(drop) ? "--" : Ui.fmt(drop, 1), "%", Ui.READY, "How much it fell per day in the last 7 days")));
+        // the 30 days keep ending today while the shown day is in them (owner, 23 November)
+        LocalDate end30 = app.openring.core.DayWindow.end(d, LocalDate.now(), 30);
         TS ts = new TS();
         for (java.util.Map.Entry<LocalDate, Integer> e : index.battery.entrySet()) {
-            if (e.getKey().isAfter(d) || e.getKey().isBefore(d.minusDays(29))) continue;
+            if (e.getKey().isAfter(end30) || e.getKey().isBefore(end30.minusDays(29))) continue;
             ts.add(e.getKey().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() + 43200, e.getValue());
         }
-        card.addView(new Charts.LineChart(c, ts, Double.NaN, Double.NaN, Ui.READY).daily(d, 30).range(0, 100).unit("%").noFill().empty("No battery reading yet"), Ui.sized(c, -1, 110));
+        card.addView(new Charts.LineChart(c, ts, Double.NaN, Double.NaN, Ui.READY).daily(end30, 30).pick(d).range(0, 100).unit("%").noFill().empty("No battery reading yet"), Ui.sized(c, -1, 110));
         card.addView(Ui.text(c, Explain.WATCH_BATTERY + " " + Explain.WATCH_DROP, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
     }

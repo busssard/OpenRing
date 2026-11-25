@@ -395,7 +395,6 @@ public final class WatchSync {
         }
 
         /** Connects, finds the channel, asks for the MTU and switches its notifications on; null when ready, else the sentence. */
-        @SuppressWarnings("deprecation")
         String open(Context ctx, BluetoothDevice device) throws InterruptedException {
             long t0 = SystemClock.elapsedRealtime();
             ring.log("watch: connecting");
@@ -425,13 +424,7 @@ public final class WatchSync {
             BluetoothGattDescriptor cccd = channel.getDescriptor(Protocol.CCCD);
             if (ok && cccd != null) {
                 acks.clear();
-                boolean started;
-                if (Build.VERSION.SDK_INT >= 33) {
-                    started = gatt.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == 0;
-                } else {
-                    cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-                    started = gatt.writeDescriptor(cccd);
-                }
+                boolean started = Gatt.startDescriptorWrite(gatt, cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                 Integer ack = started ? acks.poll(STEP_MS, TimeUnit.MILLISECONDS) : null;
                 ok = ack != null && ack == BluetoothGatt.GATT_SUCCESS;
             }
@@ -440,20 +433,12 @@ public final class WatchSync {
         }
 
         @Override
-        @SuppressWarnings("deprecation")
         public void send(byte[] msg) throws IOException, InterruptedException {
             List<byte[]> pieces = Frame.pieces(msg, mtu - 3);
             for (byte[] piece : pieces) {
                 if (!connected || gatt == null) throw new IOException("link gone");
                 writes.clear();
-                boolean started;
-                if (Build.VERSION.SDK_INT >= 33) {
-                    started = gatt.writeCharacteristic(channel, piece, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == 0;
-                } else {
-                    channel.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-                    channel.setValue(piece);
-                    started = gatt.writeCharacteristic(channel);
-                }
+                boolean started = Gatt.startWrite(gatt, channel, piece);
                 if (!started) throw new IOException("write refused");
                 Integer st = writes.poll(STEP_MS, TimeUnit.MILLISECONDS);
                 if (st == null || st != BluetoothGatt.GATT_SUCCESS) throw new IOException(st == null ? "write not confirmed" : "write status " + st);
@@ -472,16 +457,7 @@ public final class WatchSync {
         }
 
         void close() {
-            try {
-                if (gatt != null) {
-                    gatt.disconnect();
-                    SystemClock.sleep(200);
-                    gatt.close();
-                    ring.log("watch: closed" + (assembler.dropped > 0 ? ", " + assembler.dropped + " pieces dropped" : ""));
-                }
-            } catch (RuntimeException ignored) {
-                // Bluetooth was switched off meanwhile: the link is gone already
-            }
+            if (gatt != null && Gatt.close(gatt)) ring.log("watch: closed" + (assembler.dropped > 0 ? ", " + assembler.dropped + " pieces dropped" : ""));
             connected = false;
             gatt = null;
         }

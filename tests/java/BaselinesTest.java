@@ -248,10 +248,17 @@ public class BaselinesTest {
         check("usual: none from 2 nights with a value", Double.isNaN(Baselines.usual(of(1, nan, 3, nan))), null);
         check("usual: the median of 3", Baselines.usual(of(5, 1, 3)) == 3, Baselines.usual(of(5, 1, 3)));
         check("usual: the median of 4 is the middle two's mean", Baselines.usual(of(4, 1, 3, 2)) == 2.5, null);
-        double[] v = filled(40, 10);
-        for (int i = 30; i < 40; i++) v[i] = nan;
-        check("usual: a night without the value still counts as one of the 30 (here 20 values in the window)", Baselines.usual(v) == 10, null);
-        check("usual: values more than 30 nights back do not count", Double.isNaN(Baselines.usual(filledTail(1000, 2, 30))), null);
+        // 15 nights of 0, then 15 of 10, then 15 without the value: the window of 30 holds the 10s and the empty nights,
+        // so the median is 10; skipping the empty nights would reach back to the 0s and give 5 (issue #442)
+        double[] v = filled(45, 10);
+        for (int i = 0; i < 15; i++) v[i] = 0;
+        for (int i = 30; i < 45; i++) v[i] = nan;
+        check("usual: a night without the value still counts as one of the 30 (here 15 values in the window, older ones 0)",
+                Baselines.usual(v) == 10, Baselines.usual(v));
+        // values 31, 30 and 29 nights back: only 2 of them lie in the window, too few; a window of 31 would count 3 (issue #442)
+        check("usual: values more than 30 nights back do not count", Double.isNaN(Baselines.usual(filledTail(1000, 3, 28))),
+                Baselines.usual(filledTail(1000, 3, 28)));
+        check("usual: values 30, 29 and 28 nights back all count", Baselines.usual(filledTail(1000, 3, 27)) == 1000, null);
         double[] t = new double[45];
         for (int i = 0; i < t.length; i++) t[i] = 36 + (i % 7) * 0.1;
         check("usual: is the temperature baseline of readiness, bit for bit", same(36.4 - Baselines.usual(t),
@@ -259,9 +266,33 @@ public class BaselinesTest {
         double[] input = of(3, 1, 2);
         Baselines.usual(input);
         check("usual: leaves the array it reads as it was", input[0] == 3 && input[1] == 1 && input[2] == 2, null);
+        usualMinimum();
     }
 
-    /** {@code head} values, then {@code tail} missing nights: the values lie just outside a window of {@code tail}. */
+    /**
+     * Phase 2 (#292) and the open question #443: the usual of the life factors has its own minimum (FactorEffect.USUAL_MIN, one
+     * line for the owner's answer), and readiness's temperature baseline keeps 3 values through usual(double[]) whatever that
+     * answer is, bit for bit.
+     */
+    static void usualMinimum() {
+        double nan = Double.NaN;
+        Random r = new Random(443);
+        boolean same = true;
+        for (int k = 0; k < 2000; k++) {
+            double[] v = new double[r.nextInt(50)];
+            for (int i = 0; i < v.length; i++) v[i] = r.nextInt(4) == 0 ? nan : 35.5 + r.nextGaussian() * 0.3;
+            same &= same(Baselines.usual(v), Baselines.usual(v, Baselines.MIN_NIGHTS));
+        }
+        check("usual: usual(v) is usual(v, 3) bit for bit on 2000 made up windows", same, null);
+        double[] three = of(36.1, nan, 36.3, 36.2);
+        check("usual: 3 values give a usual with the minimum 3", Baselines.usual(three, 3) == 36.2, null);
+        check("usual: 3 values give none with a minimum of 7 (an answer of 7 on #443)", Double.isNaN(Baselines.usual(three, 7)), null);
+        check("usual: readiness's temperature still has its baseline from 3 nights (it never reads FactorEffect.USUAL_MIN)",
+                same(36.5 - 36.2, Baselines.readiness(new double[0], new double[0], three, nan, 36.5, nan, 0, 0).tempDev), null);
+        check("usual: phase 2's minimum is one constant, 3 until #443 is answered", app.openring.core.analysis.FactorEffect.USUAL_MIN == 3, null);
+    }
+
+    /** {@code head} values, then {@code tail} missing nights (newest last): the newest value is {@code tail + 1} nights back. */
     static double[] filledTail(double value, int head, int tail) {
         double[] out = new double[head + tail];
         for (int i = 0; i < out.length; i++) out[i] = i < head ? value : Double.NaN;
