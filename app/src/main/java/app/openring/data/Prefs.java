@@ -487,6 +487,13 @@ public final class Prefs {
     public boolean demo() { return sp.getBoolean("demo", false); }
     public void setDemo(boolean b) { sp.edit().putBoolean("demo", b).commit(); }
 
+    /**
+     * The short tour was done or skipped once (issue #453): it never starts by itself again, in demo mode or with a device.
+     * One flag for both; not in backups (a hint, not data, so the backup format stays as it is).
+     */
+    public boolean tourSeen() { return sp.getBoolean("tour_seen", false); }
+    public void setTourSeen() { sp.edit().putBoolean("tour_seen", true).apply(); }
+
     // ---- automatic backups (issue #242) ----
     /** The version code noted at the last start, 0 when none was noted yet. */
     public int notedVersion() { return sp.getInt("version_noted", 0); }

@@ -516,6 +516,41 @@ public final class LifeLog {
         });
     }
 
+    /**
+     * The made up tags over the demo's made up year (issue #292, phase 2, {@code core/LifeTags.demoYear}), after
+     * {@code Demo.olderYear} stored its nights: Alcohol placed by each night's HRV against its usual (worked out by
+     * {@code core/analysis/FactorEffect.points} from the stored day summaries), the week of illness as one several day entry.
+     * Only into {@code db}, the demo file, in one transaction; nothing without the made up year.
+     */
+    static void demoYear(final Db db, LocalDate today, java.time.ZoneId zone, final double now) {
+        String until = db.kv(Demo.YEAR_UNTIL, null);
+        if (until == null) return;
+        LocalDate last = LocalDate.parse(until), first = last.minusDays(Demo.YEAR_DAYS - 1);
+        Map<LocalDate, Double> hrv = new java.util.HashMap<LocalDate, Double>();
+        for (app.openring.core.analysis.FactorEffect.Point p : app.openring.core.analysis.FactorEffect.points(
+                LifeEffects.nights(db, today, zone, app.openring.core.analysis.LeftOut.NONE), today)) {
+            double x = p.diff[app.openring.core.analysis.FactorEffect.HRV];
+            if (!Double.isNaN(x)) hrv.put(p.tagDay, x);
+        }
+        java.util.Set<LocalDate> ill = new java.util.HashSet<LocalDate>();
+        LocalDate illFrom = Demo.illFrom(today);
+        for (int i = 0; i < Demo.ILL_DAYS; i++) ill.add(illFrom.plusDays(i));
+        final TreeMap<LocalDate, List<String>> tags = LifeTags.demoYear(first, last, hrv, ill);
+        final long span = (long) (now * 1000) + 10;
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                SQLiteDatabase w = db.getWritableDatabase();
+                for (Map.Entry<LocalDate, List<String>> e : tags.entrySet()) {
+                    for (String t : e.getValue()) {
+                        w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, NULL, NULL, ?, ?, 0)",
+                                new Object[] {e.getKey().toString(), t, LifeTags.ILLNESS.equals(t) ? (Object) span : null, now});
+                    }
+                }
+            }
+        });
+    }
+
     // ------------------------------------------------------------------------------------- the restore merge (Db.replaceWith)
 
     /** Every row of both tables of one file, as read before a restore's swap. */

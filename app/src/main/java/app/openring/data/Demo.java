@@ -190,6 +190,8 @@ public final class Demo {
         Analyzer.runAll(c, null);
         // the year before the ring's five weeks, as results only (Trends, issue #374); a second or two, no step of its own
         olderYear(db, today, zone);
+        // made up life factors over that year (issue #292, phase 2), so the card of their effect has enough days to show
+        LifeLog.demoYear(db, today, zone, now);
         db.put(BUILT, today.toString());
         return true;
     }

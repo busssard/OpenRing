@@ -39,3 +39,14 @@ java $JAVA_OPTS -cp "$OUT" SoundTest
 # nights entered by hand (issue #427), compiled on its own line so other new suites never touch the same line
 javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/HandTest.java
 java $JAVA_OPTS -cp "$OUT" HandTest
+# the short tour (issue #453), compiled on its own line so other new suites never touch the same line
+javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/TourTest.java
+java $JAVA_OPTS -cp "$OUT" TourTest
+# ble/Gatt, the Bluetooth write and close calls the ring and watch links share, with stand ins for Android's classes
+# (tests/ble/shim); its own output folder, so the stand ins never reach the other suites
+mkdir -p "$OUT/ble"
+javac -source 8 -target 8 -Xlint:-options -d "$OUT/ble" $(find tests/ble/shim -name '*.java') app/src/main/java/app/openring/ble/Gatt.java tests/ble/GattTest.java
+java $JAVA_OPTS -cp "$OUT/ble" app.openring.ble.GattTest
+# life factors phase 2, the effect for you (issue #292), compiled on its own line so other new suites never touch the same line
+javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/EffectTest.java
+java $JAVA_OPTS -cp "$OUT" EffectTest

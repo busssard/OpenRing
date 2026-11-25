@@ -44,6 +44,7 @@ public final class Pages {
         void reload();
     }
 
+    // core/Tour.TODAY and SLEEP use these numbers (issue #453, TourTest checks 0 and 1): change them together
     public static final int TODAY = 0, SLEEP = 1, READINESS = 2, ACTIVITY = 3, BODY = 4, SCREEN = 5;
 
     // ======================================================================== TODAY
@@ -95,12 +96,19 @@ public final class Pages {
             }
             // the tiles (owner's wish of 18 November): Today's own keys, so a tile keeps its place whatever its caption says
             if (root.getChildCount() == before + 1) todayTile(root.getChildAt(before), k, d);
+            // the parts the short tour points at (issue #453)
+            if (root.getChildCount() == before + 1) TourOverlay.mark(root.getChildAt(before), tourKey(k));
         }
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
         root.addView(foot);
         return root;
+    }
+
+    /** The short tour's part for a card of Today (issue #453): the scores and the life factors, null for the others. */
+    static String tourKey(String k) {
+        return app.openring.core.TodayCards.SCORES.equals(k) ? app.openring.core.Tour.SCORES : app.openring.core.TodayCards.LIFE.equals(k) ? app.openring.core.Tour.LIFE : null;
     }
 
     /** Names a tile of Today by its {@code core/TodayCards} key, with a title where the card has no caption of its own. */
@@ -593,7 +601,7 @@ public final class Pages {
         double clockAt = Json.d(n, "clock_change_at");
         // logged times of life factors that reach into the night (issue #435): bands, read by touch
         List<app.openring.core.LifeTimes.Band> nightLife = LifeCard.bands(d, Json.d(n, "start"), Json.d(n, "end"), nz);
-        hyp.addView(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz).life(nightLife), Ui.sized(c, -1, 170));
+        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz).life(nightLife), app.openring.core.Tour.CHART), Ui.sized(c, -1, 170));
         JSONArray mv = n.optJSONArray("motion_series");
         if (mv != null && mv.length() > 0) {
             hyp.addView(Ui.gap(c, 6));
@@ -761,7 +769,7 @@ public final class Pages {
         boolean withHr = hr != null && !hr.points.isEmpty();
         // a watch that does not tell REM from light sleep shows them as one stage (owner's report of 13 November)
         boolean lightRem = !d.watchRem.tells(wn);
-        hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem)
+        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end), app.openring.core.Tour.CHART).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem)
                         .life(LifeCard.bands(d, wn.start, wn.end, nz)),
                 Ui.sized(c, -1, withHr ? 250 : 170));
         hyp.addView(Ui.gap(c, 4));
@@ -2010,8 +2018,11 @@ public final class Pages {
             // how close each prediction method was on these cycles (issue #383)
             if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
         }
-        // the life factors logged on Today, as a month (issue #292): the evidence itself, no effect worked out yet
+        // the life factors logged on Today, as a month (issue #292): the evidence itself
         root.addView(LifeCard.body(c, d));
+        // how the nights went after each factor, for you (issue #292, phase 2); only with a ring
+        View effects = LifeCard.effects(c, d);
+        if (effects != null) root.addView(effects);
         return root;
     }
 

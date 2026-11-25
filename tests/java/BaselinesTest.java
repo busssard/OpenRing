@@ -266,6 +266,30 @@ public class BaselinesTest {
         double[] input = of(3, 1, 2);
         Baselines.usual(input);
         check("usual: leaves the array it reads as it was", input[0] == 3 && input[1] == 1 && input[2] == 2, null);
+        usualMinimum();
+    }
+
+    /**
+     * Phase 2 (#292) and the open question #443: the usual of the life factors has its own minimum (FactorEffect.USUAL_MIN, one
+     * line for the owner's answer), and readiness's temperature baseline keeps 3 values through usual(double[]) whatever that
+     * answer is, bit for bit.
+     */
+    static void usualMinimum() {
+        double nan = Double.NaN;
+        Random r = new Random(443);
+        boolean same = true;
+        for (int k = 0; k < 2000; k++) {
+            double[] v = new double[r.nextInt(50)];
+            for (int i = 0; i < v.length; i++) v[i] = r.nextInt(4) == 0 ? nan : 35.5 + r.nextGaussian() * 0.3;
+            same &= same(Baselines.usual(v), Baselines.usual(v, Baselines.MIN_NIGHTS));
+        }
+        check("usual: usual(v) is usual(v, 3) bit for bit on 2000 made up windows", same, null);
+        double[] three = of(36.1, nan, 36.3, 36.2);
+        check("usual: 3 values give a usual with the minimum 3", Baselines.usual(three, 3) == 36.2, null);
+        check("usual: 3 values give none with a minimum of 7 (an answer of 7 on #443)", Double.isNaN(Baselines.usual(three, 7)), null);
+        check("usual: readiness's temperature still has its baseline from 3 nights (it never reads FactorEffect.USUAL_MIN)",
+                same(36.5 - 36.2, Baselines.readiness(new double[0], new double[0], three, nan, 36.5, nan, 0, 0).tempDev), null);
+        check("usual: phase 2's minimum is one constant, 3 until #443 is answered", app.openring.core.analysis.FactorEffect.USUAL_MIN == 3, null);
     }
 
     /** {@code head} values, then {@code tail} missing nights (newest last): the newest value is {@code tail + 1} nights back. */

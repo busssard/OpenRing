@@ -60,6 +60,12 @@ public final class DayData {
     public final List<app.openring.core.LifeTimes.Entry> lifeTimes = new ArrayList<app.openring.core.LifeTimes.Entry>();
     /** False when the life factors could not be read (the cards say so; the screens' other numbers are unaffected). */
     public boolean lifeOk = true;
+    /**
+     * Life factors phase 2 (issue #292): how the nights went after each factor, in the card's order ({@code data/LifeEffects},
+     * worked out here in the background, kept while nothing changed). Empty without a ring or without factors; null when it
+     * could not be worked out (the card says so).
+     */
+    public List<app.openring.core.analysis.FactorEffect.Result> lifeEffects = new ArrayList<app.openring.core.analysis.FactorEffect.Result>();
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
     /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
@@ -439,6 +445,18 @@ public final class DayData {
             d.lifeTimes.clear();
             d.lifeOk = false;
             app.openring.ble.RingManager.get(c).log("day load: the life factors could not be read: " + e.getClass().getSimpleName());
+        }
+        if (d.lifeOk && d.has.ring) {
+            try {
+                // the effect for you (issue #292, phase 2): the ring's nights of the last 12 months against each factor, with the
+                // period tracker's two factors when it shows; reads only
+                d.lifeEffects = app.openring.data.LifeEffects.read(db, LocalDate.now(), java.time.ZoneId.systemDefault(), d.life, d.lifeDays,
+                        d.periodShown ? d.periods : null);
+            } catch (RuntimeException e) {
+                // the card says it could not be worked out; the error's kind only, never a tag, a name or a value
+                d.lifeEffects = null;
+                app.openring.ble.RingManager.get(c).log("day load: the effect of the life factors: " + e.getClass().getSimpleName());
+            }
         }
         try {
             // the Recent badges row on Today (issue #265): one read of the 7 days and the weeks before them
