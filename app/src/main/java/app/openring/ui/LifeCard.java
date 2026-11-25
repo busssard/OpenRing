@@ -889,15 +889,17 @@ final class LifeCard {
      * Body's card "Life factors and your nights" (issue #292, phase 2): one row per factor with a night in the last 12 months
      * ({@code core/analysis/FactorEffect}, worked out by {@code DayData.load} in the background), folded with its short answer as
      * status; open, the sentence, the range as a bar, the evidence chart (touch reads a night) with a chip per measure, the other
-     * measures and the overlap. Null without a ring (nothing to compare).
+     * measures and the overlap. Null without a ring (nothing to compare), and null when the life factors could not be read: the
+     * month card above already says so (issue #475, the same error twice looked like two problems).
      */
     static View effects(final Context c, final DayData d) {
-        if (!d.has.ring) return null;
+        if (!d.has.ring || !d.lifeOk) return null;
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, app.openring.core.analysis.FactorEffect.TITLE));
         card.addView(Ui.gap(c, 4));
-        if (!d.lifeOk || d.lifeEffects == null) {
-            card.addView(Ui.body(c, d.lifeOk ? app.openring.core.analysis.FactorEffect.UNREADABLE : LifeTags.UNREADABLE));
+        if (d.lifeEffects == null) {
+            // the factors were read, but how the nights went after them could not be worked out
+            card.addView(Ui.body(c, app.openring.core.analysis.FactorEffect.UNREADABLE));
             return card;
         }
         Locale l = Locale.getDefault();

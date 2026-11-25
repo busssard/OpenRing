@@ -462,6 +462,64 @@ public class EffectTest {
                 FactorEffect.axis(FactorEffect.SCORE, -3, L));
     }
 
+    /**
+     * Issue #474: an end of a not clear range that shows as 0 is "about the same" (it said "no change to 2 % higher", which read
+     * like an increase), both ends at 0 say so once, and the touch readout's usual has its unit.
+     */
+    static void rangeTexts() {
+        int H = FactorEffect.HRV, R = FactorEffect.RHR, T = FactorEffect.TEMP, S = FactorEffect.SCORE;
+        String a = FactorEffect.unclear(H, -0.3, 2.2, L);
+        check("range 0: the low end is about the same", a.equals("It could be anything from about the same to 2 % higher, so this is not clear yet."), a);
+        String b = FactorEffect.unclear(R, -1.24, 0.04, L);
+        check("range 0: the high end is about the same", b.equals("It could be anything from 1.2 bpm lower to about the same, so this is not clear yet."), b);
+        String c = FactorEffect.unclear(H, -1.4, 2.2, L);
+        check("range: both ends with a size stay as they were", c.equals("It could be anything from 1 % lower to 2 % higher, so this is not clear yet."), c);
+        String d = FactorEffect.unclear(S, -0.4, 0.3, L);
+        check("range: both ends at 0 say it once", d.equals("Its whole range is about the same, so this is not clear yet."), d);
+        String e = FactorEffect.unclearDetail(T, -0.002, 0.12, L);
+        check("range 0: the detail line", e.equals(", could be about the same to 0.12 warmer. Not clear yet."), e);
+        String f = FactorEffect.unclearDetail(R, -0.8, 1.24, L);
+        check("range: the detail line with both ends", f.equals(", could be 0.8 lower to 1.2 higher. Not clear yet."), f);
+        String g = FactorEffect.unclearDetail(H, 0.2, -0.1, L);
+        check("range: the detail line with both ends at 0", g.equals(", about the same at both ends. Not clear yet."), g);
+        boolean no = true;
+        for (String s : new String[] {a, b, c, d, e, f, g}) no &= !s.contains("no change");
+        check("range: never \"no change\"", no, null);
+        check("usual: with its unit", FactorEffect.usual(H, 53.4, L).equals("53 ms") && FactorEffect.usual(R, 52.36, L).equals("52.4 bpm")
+                && FactorEffect.usual(T, 35.8, L).equals("35.80 °C") && FactorEffect.usual(S, 78.4, L).equals("78"),
+                FactorEffect.usual(H, 53.4, L) + " " + FactorEffect.usual(R, 52.36, L) + " " + FactorEffect.usual(T, 35.8, L));
+        // the readouts of a real comparison: every usual has its unit
+        Set<LocalDate> t = random(455, 0.2, 81);
+        FactorEffect.Result r = one(history(455, t, -0.15, 82), tag("alcohol", t, START));
+        boolean hrv = true, rhr = true, temp = true;
+        int n = 0;
+        for (int i = 0; i < r.points.size(); i++) {
+            if (Double.isNaN(r.points.get(i).usual[H])) continue;
+            n++;
+            hrv &= FactorEffect.pointText(r, i, H, TODAY, L).matches("(?s).*, your usual \\d+ ms \\(.*");
+            rhr &= FactorEffect.pointText(r, i, R, TODAY, L).matches("(?s).*, your usual \\d+\\.\\d bpm \\(.*");
+            temp &= FactorEffect.pointText(r, i, T, TODAY, L).matches("(?s).*, your usual \\d+\\.\\d\\d °C \\(.*");
+        }
+        check("usual: the touch readout of " + n + " nights says ms, bpm and °C", n > 300 && hrv && rhr && temp, FactorEffect.pointText(r, r.points.size() - 1, H, TODAY, L));
+    }
+
+    /** Issue #475: when the life factors cannot be read, Body's month card says so and the effect card is left out (not the same error twice). */
+    static void unreadableOnce() {
+        String card;
+        try {
+            card = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("app/src/main/java/app/openring/ui/LifeCard.java")), "UTF-8");
+        } catch (java.io.IOException e) {
+            check("unreadable once: LifeCard.java read", false, e);
+            return;
+        }
+        int from = card.indexOf("static View effects(");
+        int to = card.indexOf("static void fillEffect(", from);
+        String effects = from < 0 || to < 0 ? "" : card.substring(from, to);
+        check("unreadable once: the effect card is left out when the factors cannot be read",
+                effects.contains("if (!d.has.ring || !d.lifeOk) return null;") && !effects.contains("LifeTags.UNREADABLE") && effects.contains("FactorEffect.UNREADABLE"),
+                effects.length());
+    }
+
     /** Three years of nights and 15 factors (11 fixed, 2 own, 2 of the cycle) in well under a second, pure Java. */
     static void time() {
         int days = 3 * 365;
@@ -519,6 +577,8 @@ public class EffectTest {
         oldFactors();
         order();
         texts();
+        rangeTexts();
+        unreadableOnce();
         demoYear();
         time();
         System.out.println("EffectTest: " + passed + " passed, " + failed + " failed");
