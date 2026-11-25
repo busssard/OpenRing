@@ -222,6 +222,15 @@ public final class SettingsActivity extends Activity implements RingManager.List
     public void onRingStatus() {
         if (status != null) status.setText(RingManager.get(this).status());
         if (ringBlock != null) ringBlock.setStatus(ringStatus(Prefs.of(this))); // a sync that ended changes its last sync
+        // a watch sync's step and percent (issue #478): a sync that began meanwhile (the background job's) gets its line, one
+        // that ended shows how it went
+        String l = app.openring.ble.WatchSync.SHOWN.line();
+        if (watchLine != null) {
+            if (l != null) watchLine.setText(l);
+            else if (!watchSyncing && !app.openring.ble.WatchSync.running()) fillWatchCard();
+        } else if (l != null && watchCard != null) {
+            fillWatchCard();
+        }
     }
 
     /**
@@ -1087,6 +1096,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
 
     /** A watch sync started from this card runs; its sentence shows when it ends. */
     private static volatile boolean watchSyncing;
+    /** The watch card's line while a watch sync runs, null otherwise (issue #478). */
+    private TextView watchLine;
 
     void fillWatchCard() {
         final LinearLayout card = watchCard;
@@ -1158,8 +1169,13 @@ public final class SettingsActivity extends Activity implements RingManager.List
                 });
             }
         }, "watch battery").start();
+        watchLine = null;
         if (watchSyncing || app.openring.ble.WatchSync.running()) {
-            card.addView(Ui.text(this, "Syncing the watch, this takes up to two minutes.", 13, Ui.TEXT_2, Ui.REGULAR));
+            // its step and percent, kept up to date by onRingStatus (issue #478)
+            String l = app.openring.ble.WatchSync.SHOWN.line();
+            watchLine = Ui.text(this, l != null ? l : "Syncing the watch, this takes up to two minutes.", 13, Ui.TEXT_2, Ui.REGULAR);
+            card.addView(watchLine);
+            card.addView(Ui.text(this, app.openring.core.SyncProgress.WATCH_EXPLAIN, 12, Ui.TEXT_3, Ui.REGULAR));
         } else if (p.watchError() != null) {
             card.addView(Ui.text(this, p.watchError(), 13, Ui.WARN, Ui.REGULAR));
         }

@@ -1137,16 +1137,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
     void updateStatus() {
         RingManager m = RingManager.get(this);
         // only the line about an unreadable key is a button (TalkBack announces it as one, review of #281)
-        boolean tap = !m.busy() && keyState == app.openring.core.KeyState.UNREADABLE;
+        // a watch sync, by hand or the background job's, with its step and percent (issue #478); a ring task's line wins
+        String watch = app.openring.ble.WatchSync.SHOWN.line();
+        boolean tap = !m.busy() && watch == null && keyState == app.openring.core.KeyState.UNREADABLE;
         statusStrip.setOnClickListener(tap ? enterKey : null);
         statusStrip.setClickable(tap);
         boolean busy = m.busy();
         String err = Prefs.of(this).lastSyncError();
-        if (busy) {
+        if (busy || watch != null) {
             statusStrip.setVisibility(View.VISIBLE);
-            statusText.setText(m.status());
+            statusText.setText(busy ? m.status() : watch);
             statusText.setTextColor(Ui.TEXT_2);
-            double pr = m.progress();
+            double pr = busy ? m.progress() : app.openring.ble.WatchSync.SHOWN.fraction();
             statusBar.setVisibility(View.VISIBLE);
             statusBar.setIndeterminate(pr < 0);
             if (pr >= 0) statusBar.setProgress((int) (pr * 1000));

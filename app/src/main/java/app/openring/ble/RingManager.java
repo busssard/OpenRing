@@ -104,6 +104,8 @@ public final class RingManager {
     /** Syncs past their download, analysing; they no longer hold the ring (issue #21). */
     private final java.util.concurrent.atomic.AtomicInteger analysing = new java.util.concurrent.atomic.AtomicInteger();
     private volatile double progress = -1;
+    /** The sync under way is the background job's: its line says so (issue #478, display only). */
+    private volatile boolean shownBackground;
     /** Live session tokens and the blood oxygen choice (issue #153). */
     private final app.openring.core.LiveSessions live = new app.openring.core.LiveSessions();
     private volatile RingClient current;
@@ -150,6 +152,14 @@ public final class RingManager {
     /** Sync progress 0..1, or -1 when unknown. */
     public double progress() {
         return progress;
+    }
+
+    /**
+     * Tells the screens that a line they show changed, on the main thread (the watch sync's line, issue #478). Display
+     * only: it posts to the listeners and touches nothing else.
+     */
+    public void showChanged() {
+        notifyListeners();
     }
 
     public List<String> logLines() {
@@ -541,6 +551,7 @@ public final class RingManager {
                 cancelRequested = ticket.stop;
                 busy = true;
                 progress = -1;
+                shownBackground = ticket.background;
                 prefs.setLastAttempt(System.currentTimeMillis() / 1000);
                 notifyListeners();
                 download(res, key, prefs, ConnectPlan.of(ticket.background));
@@ -808,14 +819,14 @@ public final class RingManager {
                 if (leftCb != null) leftCb.left(left);
                 if (quiet) return true;
                 if (firstLeft < 0 && left > 0) firstLeft = left;
-                progress = firstLeft > 0 ? Math.max(0, Math.min(1, 1 - left / (double) firstLeft)) : -1;
-                status = left > 0 ? String.format(Locale.US, "Syncing, %s, %.0f KB left", Texts.count(total, "event", "events"), left / 1024.0)
-                        : "Syncing, " + Texts.count(total, "event", "events");
+                // display only (issue #478): the line and the bar, from what the ring reported with this batch
+                progress = app.openring.core.SyncProgress.ringFraction(left, firstLeft, progress);
+                status = app.openring.core.SyncProgress.ringLine(total, progress, shownBackground);
                 notifyListeners();
                 return true;
             }
         };
-        if (!quiet) setStatus("Syncing");
+        if (!quiet) setStatus(app.openring.core.SyncProgress.ringLine(0, -1, shownBackground));
         RingClient.DrainResult r;
         try {
             r = c.drain(cursor, sink);
