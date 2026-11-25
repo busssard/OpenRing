@@ -270,11 +270,14 @@ public class ForecastTest {
         // changed on purpose by the margin and the temperature rule (design round of #383, phase 1); before: d7a57493e6e9913b, 8f397f5e86e9fa7d
         // and the stay line under 0.1 days ("only a few hundredths of a day closer", emulator shots of #412); before: f5bd6bb4e3c11948
         // and the stay line from 0.1 days on in hundredths ("0.22 days closer", review of ce5f994); before: 26175e035f3230d3
-        {"Best for you, calendar", "24a8d85074003869"},
+        // and Settings' own form of the stay line, without the rows above, a lead of 0.1 read as 0.10 (issue #440: 174 lines reworded,
+        // 3 leads a hair below 0.1 now 0.10, nothing else); before: 24a8d85074003869
+        {"Best for you, calendar", "374273ab6cab211c"},
         // and once more by the review of #412 (the temperature line in one sentence, "as close as the calendar"); before: 4fff7f0461946475
         // and the stay line under 0.1 days; before: dc377626c5c56b08
         // and the stay line from 0.1 days on in hundredths; before: ed6948149ea3290c
-        {"Best for you, temperature", "c5c6c4d3b5fde693"},
+        // and Settings' own form of the stay line (issue #440: 34 lines reworded, 1 lead a hair below 0.1 now 0.10); before: c5c6c4d3b5fde693
+        {"Best for you, temperature", "9305403bbd59eaf0"},
         {"Follows your last cycle, calendar", "e90423cb13d5775d"},
         {"Follows your last cycle, temperature", "a973dced7a5d960a"},
         {"Learns from every cycle, calendar", "831eff51a8271cea"},
@@ -625,7 +628,7 @@ public class ForecastTest {
         check("#383 texts: no dashes as punctuation", !dashes);
         String now = app.openring.ui.Explain.periodBestNow(cy);
         check("#383 Settings names the method Best for you uses and why it stayed with Open Ring", now.equals("Best for you uses Open Ring now: "
-                + String.format(Locale.getDefault(), "%.1f", cy.backtest().of(Methods.OPEN_RING).mae) + " days off on average over 33 of your past periods. Learns from every cycle was only a few hundredths of a day closer (the days off above are rounded), too little to switch."), now);
+                + String.format(Locale.getDefault(), "%.1f", cy.backtest().of(Methods.OPEN_RING).mae) + " days off on average over 33 of your past periods. Learns from every cycle was only a few hundredths of a day closer, too little for Best for you to switch."), now);
         Cycles bayes = cy.withMethod(Methods.BAYES);
         String range = app.openring.ui.Explain.periodRange(bayes);
         check("#383 How it works on the card: the method, its range and how it did", range.startsWith("Next period: your last start plus " + bayes.step + " days from Learns from every cycle.")
@@ -899,7 +902,7 @@ public class ForecastTest {
             if (st == null) continue;
             stays++;
             double ld = cy.backtest().lead(cy.backtest().closest());
-            String want = ld < 0.1 ? "only a few hundredths of a day closer (the days off above are rounded), too little to switch."
+            String want = ld < 0.1 - 1e-9 ? "only a few hundredths of a day closer (the days off above are rounded), too little to switch."
                     : String.format(Locale.getDefault(), "%.2f", Math.min(Math.round(ld * 100), 24) / 100.0) + " days closer (the days off above are rounded), less than the quarter";
             if (ld >= Backtest.MARGIN || !st.contains(want) || st.contains(String.format(Locale.getDefault(), "%.2f", 0.25))) {
                 cut = false;
@@ -907,6 +910,25 @@ public class ForecastTest {
             }
         }
         check("#383 every stay line on 180 histories: the lead in hundredths, never a quarter, rows marked as rounded", cut && stays > 10, stays);
+        // issue #440: Settings has no rows above and no margin line, so its form of the stay line names neither
+        String setStay = app.openring.ui.Explain.periodStay(ap, false), setNow = app.openring.ui.Explain.periodBestNow(ap);
+        check("#440 Settings' stay line: the lead and Best for you's quarter of a day, no rows above", ("drip style was "
+                + String.format(Locale.getDefault(), "%.2f", 0.22) + " days closer, less than the quarter of a day Best for you needs to switch.").equals(setStay)
+                && setNow.endsWith(" " + setStay) && !setNow.contains("above") && app.openring.ui.Explain.periodStay(ap, true).equals(apStay), setNow);
+        String demoNow = app.openring.ui.Explain.periodBestNow(demo);
+        check("#440 Settings' stay line under 0.1 days: a few hundredths, no rows above", demoNow.contains(" Learns from every cycle was only a few hundredths "
+                + "of a day closer, too little for Best for you to switch.") && !demoNow.contains("above"), demoNow);
+        String tenth = String.format(Locale.getDefault(), "%.2f", 0.1);
+        check("#440 a lead of exactly 0.1 days (also 0.3 minus 0.2, a hair below) reads 0.10 on the card and in Settings, 0.0999 a few hundredths",
+                app.openring.ui.Explain.periodStayWords("drip style", 0.1, true).equals("drip style was " + tenth + " days closer (the days off above are rounded), "
+                + "less than the quarter of a day needed to switch.")
+                && app.openring.ui.Explain.periodStayWords("drip style", 0.3 - 0.2, true).equals(app.openring.ui.Explain.periodStayWords("drip style", 0.1, true))
+                && app.openring.ui.Explain.periodStayWords("drip style", 0.3 - 0.2, false).equals("drip style was " + tenth + " days closer, less than the quarter "
+                + "of a day Best for you needs to switch.")
+                && app.openring.ui.Explain.periodStayWords("drip style", 0.0999, true).equals("drip style was only a few hundredths of a day closer "
+                + "(the days off above are rounded), too little to switch.")
+                && app.openring.ui.Explain.periodStayWords("drip style", 0.0999, false).equals("drip style was only a few hundredths of a day closer, "
+                + "too little for Best for you to switch."), app.openring.ui.Explain.periodStayWords("drip style", 0.3 - 0.2, false));
         check("#383 no stay line when Best for you switched or is not chosen", app.openring.ui.Explain.periodStay(picked) == null
                 && app.openring.ui.Explain.periodStay(demo.withMethod(Methods.OPEN_RING)) == null);
         check("#383 ordinals", app.openring.ui.Explain.ordinal(1).equals("1st") && app.openring.ui.Explain.ordinal(2).equals("2nd") && app.openring.ui.Explain.ordinal(3).equals("3rd")
@@ -917,7 +939,7 @@ public class ForecastTest {
                 + "closer than Open Ring over at least 6 periods, else Open Ring. Smaller differences are luck. So it can leave Open Ring from your 10th period on at the earliest."),
                 app.openring.ui.Explain.periodAccuracyHow().get(1));
         List<String> texts = new ArrayList<String>(Arrays.asList(use, useShort, apStay, stay, Methods.line(Methods.DRIP), Methods.how(Methods.DRIP), hand.riseOff(), app.openring.ui.Explain.periodPick(demo),
-                app.openring.ui.Explain.periodBestNow(picked), app.openring.ui.Explain.periodRange(picked), app.openring.ui.Explain.periodBestNow(demo)));
+                app.openring.ui.Explain.periodBestNow(picked), app.openring.ui.Explain.periodRange(picked), app.openring.ui.Explain.periodBestNow(demo), setStay, setNow));
         texts.addAll(app.openring.ui.Explain.periodAccuracyHow());
         boolean dashes = false;
         for (String t : texts) if (t == null || t.contains(" - ") || t.contains(" – ") || t.contains("—") || t.contains("–")) {

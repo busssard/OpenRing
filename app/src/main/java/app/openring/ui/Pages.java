@@ -44,6 +44,7 @@ public final class Pages {
         void reload();
     }
 
+    // core/Tour.TODAY and SLEEP use these numbers (issue #453, TourTest checks 0 and 1): change them together
     public static final int TODAY = 0, SLEEP = 1, READINESS = 2, ACTIVITY = 3, BODY = 4, SCREEN = 5;
 
     // ======================================================================== TODAY
@@ -95,12 +96,19 @@ public final class Pages {
             }
             // the tiles (owner's wish of 18 November): Today's own keys, so a tile keeps its place whatever its caption says
             if (root.getChildCount() == before + 1) todayTile(root.getChildAt(before), k, d);
+            // the parts the short tour points at (issue #453)
+            if (root.getChildCount() == before + 1) TourOverlay.mark(root.getChildAt(before), tourKey(k));
         }
         TextView foot = Ui.text(c, syncLine, 12, Ui.TEXT_3, Ui.REGULAR);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 16));
         root.addView(foot);
         return root;
+    }
+
+    /** The short tour's part for a card of Today (issue #453): the scores and the life factors, null for the others. */
+    static String tourKey(String k) {
+        return app.openring.core.TodayCards.SCORES.equals(k) ? app.openring.core.Tour.SCORES : app.openring.core.TodayCards.LIFE.equals(k) ? app.openring.core.Tour.LIFE : null;
     }
 
     /** Names a tile of Today by its {@code core/TodayCards} key, with a title where the card has no caption of its own. */
@@ -547,6 +555,7 @@ public final class Pages {
             if (offer != null) root.addView(offer);
             // the watch's nights around this day and its statistics still show (owner's report of 13 November)
             if (!d.watchRecent.isEmpty()) root.addView(recentNights(c, d, d.watchRecent, nav));
+            root.addView(SoundViews.card(c, d, nav));
             root.addView(infoCard(c, "About sleep", Explain.SLEEP_WATCH_ONLY));
             HistoryViews.sleep(c, root, d);
             if (HistoryViews.watch(d)) root.addView(furtherAnalysis(c, d));
@@ -567,6 +576,7 @@ public final class Pages {
             // slept without the ring and the watch: enter the night by hand (issue #427)
             View offer = HandViews.offerCard(c, d, nav);
             if (offer != null) root.addView(offer);
+            root.addView(SoundViews.card(c, d, nav));
             root.addView(infoCard(c, "About sleep", Explain.SLEEP));
             LinearLayout how = Ui.card(c);
             how.addView(Ui.caption(c, "How to see your sleep"));
@@ -589,7 +599,9 @@ public final class Pages {
         hyp.addView(Ui.caption(c, "Sleep depth through the night"));
         hyp.addView(Ui.gap(c, 10));
         double clockAt = Json.d(n, "clock_change_at");
-        hyp.addView(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz), Ui.sized(c, -1, 170));
+        // logged times of life factors that reach into the night (issue #435): bands, read by touch
+        List<app.openring.core.LifeTimes.Band> nightLife = LifeCard.bands(d, Json.d(n, "start"), Json.d(n, "end"), nz);
+        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz).life(nightLife), app.openring.core.Tour.CHART), Ui.sized(c, -1, 170));
         JSONArray mv = n.optJSONArray("motion_series");
         if (mv != null && mv.length() > 0) {
             hyp.addView(Ui.gap(c, 6));
@@ -654,6 +666,8 @@ public final class Pages {
         root.addView(hyp);
 
         root.addView(timeline(c, n, nz, d.leftOut));
+        // sleep sounds of this night (issue #380): the night's marks with their clips, Listen tonight
+        root.addView(SoundViews.card(c, d, nav));
         root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors", null, n));
         root.addView(infoCard(c, "About the sleep score", Explain.SLEEP));
 
@@ -677,14 +691,17 @@ public final class Pages {
         root.addView(stats);
 
         double s = Json.d(n, "start"), e = Json.d(n, "end");
-        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz).nearestMinute(),
+        root.addView(chartCard(c, "Heart rate", new Charts.LineChart(c, Json.series(n.optJSONArray("hr_series")), s, e, Ui.HEART).markMin().unit(" bpm").zone(nz).nearestMinute()
+                        .life(nightLife),
                 "Lowest " + Ui.fmt(Json.d(n, "lowest_hr"), 0) + " bpm at " + (Double.isNaN(Json.d(n, "lowest_hr_time")) ? "--" : minute(Json.d(n, "lowest_hr_time"), nz)
                         + app.openring.core.analysis.ClockChange.repeatNote(nz, WakeUps.roundMin(Json.d(n, "lowest_hr_time"))))));
-        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz).nearestMinute(),
+        root.addView(chartCard(c, "Heart rate variability", new Charts.LineChart(c, Json.series(n.optJSONArray("hrv_series")), s, e, Ui.READY).unit(" ms").zone(nz).nearestMinute()
+                        .life(nightLife),
                 "Average " + Ui.fmt(Json.d(n, "avg_hrv"), 0) + " ms, highest " + Ui.fmt(Json.d(n, "max_hrv"), 0) + " ms"));
         JSONArray sp = n.optJSONArray("spo2_series");
         if (sp != null && sp.length() > 0) {
-            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz).nearestMinute(),
+            root.addView(chartCard(c, "Blood oxygen", new Charts.LineChart(c, Json.series(sp), s, e, Ui.OXY).range(85, 100).unit("%").zone(nz).nearestMinute()
+                            .life(nightLife),
                     "Average " + Ui.fmt(Json.d(n, "spo2"), 1) + "%"));
         }
 
@@ -704,9 +721,16 @@ public final class Pages {
         LinearLayout week = Ui.card(c);
         week.addView(Ui.caption(c, "Total sleep, last 7 days"));
         week.addView(Ui.gap(c, 8));
-        double[] asleep = d.series("asleep_min", 7);
+        double[] asleep = d.chartSeries("asleep_min", 7);
         for (int i = 0; i < asleep.length; i++) asleep[i] /= 60.0;
-        week.addView(new Charts.BarChart(c, asleep, d.weekdayLabels(7), Ui.SLEEP).valueFormat("%.1f h").target(8), Ui.sized(c, -1, 130));
+        // touch reads each day, so the newer days next to a picked one read too (code review of #455)
+        week.addView(new Charts.BarChart(c, asleep, d.weekdayLabels(7), Ui.SLEEP).valueFormat("%.1f h").target(8).highlight(d.pickedIndex(7))
+                .tips(HistoryViews.tips(d, asleep, new HistoryViews.Fmt() {
+                    @Override
+                    public String of(double v) {
+                        return Ui.hm(v * 60) + " asleep";
+                    }
+                })), Ui.sized(c, -1, 130));
         root.addView(week);
         addNaps(c, root, d);
         root.addView(furtherAnalysis(c, d));
@@ -745,7 +769,8 @@ public final class Pages {
         boolean withHr = hr != null && !hr.points.isEmpty();
         // a watch that does not tell REM from light sleep shows them as one stage (owner's report of 13 November)
         boolean lightRem = !d.watchRem.tells(wn);
-        hyp.addView(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem),
+        hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end), app.openring.core.Tour.CHART).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem)
+                        .life(LifeCard.bands(d, wn.start, wn.end, nz)),
                 Ui.sized(c, -1, withHr ? 250 : 170));
         hyp.addView(Ui.gap(c, 4));
         hyp.addView(Ui.text(c, withHr ? "Touch or slide along the chart to see the time, the stage and the nearest heart rate."
@@ -788,6 +813,7 @@ public final class Pages {
         // the night's timeline from the watch's stages, as the ring's (each wake up of a minute or more)
         app.openring.core.DeviceHistory.NightRow row = watchOnly ? d.deviceHistory.night(d.date) : null;
         if (row != null) root.addView(timeline(c, app.openring.data.WatchHistory.nightJson(row), nz, new ArrayList<double[]>()));
+        root.addView(SoundViews.card(c, d, nav));
         if (scored) {
             DeviceViews.deviceParts(c, root, d, "sleep", Ui.SLEEP);
             root.addView(infoCard(c, "About the sleep score", Explain.SLEEP_DEVICE));
@@ -997,6 +1023,7 @@ public final class Pages {
 
     /** Loads the averages for the selected period in the background and shows them in {@code result}. */
     static void loadAnalysis(final Context c, final DayData d, final LinearLayout result) {
+        // the period ends on the shown day, as on dev: these are averages, and a display window never changes a number (review of #455)
         final java.time.LocalDate to = d.date;
         final java.time.LocalDate from = analysisPeriod == 0 ? to.minusDays(6) : analysisPeriod == 1 ? to.minusDays(29)
                 : analysisPeriod == 2 ? to.minusDays(364) : java.time.LocalDate.of(2000, 1, 1);
@@ -1229,17 +1256,24 @@ public final class Pages {
         t.addView(Ui.text(c, signed(Json.d(d.day, "temp_dev")) + " \u00b0C", 26, Ui.TEXT, Ui.LIGHT));
         t.addView(Ui.body(c, "Deviation from your usual nightly skin temperature. Within about half a degree is normal."));
         t.addView(Ui.gap(c, 8));
-        t.addView(new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), Ui.sized(c, -1, 120));
+        t.addView(new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.end(30), 30).pick(d.date).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), Ui.sized(c, -1, 120));
         root.addView(t);
 
-        root.addView(chartCard(c, "HRV, last 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"),
-                "Average " + Ui.fmt(Stats.mean(d.series("hrv", 30)), 0) + " ms. Compare with yourself, not with others: HRV differs a lot between people."));
-        root.addView(chartCard(c, "Resting heart rate, last 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.date, 30).unit(" bpm"),
-                "Average " + Ui.fmt(Stats.mean(d.series("rhr", 30)), 0) + " bpm. A downward trend usually means improving fitness and recovery."));
+        root.addView(chartCard(c, "HRV, last 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.end(30), 30).pick(d.date).unit(" ms"),
+                "Average " + Ui.fmt(Stats.mean(d.series("hrv", 30)), 0) + " ms" + d.upTo(30) + ". Compare with yourself, not with others: HRV differs a lot between people."));
+        root.addView(chartCard(c, "Resting heart rate, last 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.end(30), 30).pick(d.date).unit(" bpm"),
+                "Average " + Ui.fmt(Stats.mean(d.series("rhr", 30)), 0) + " bpm" + d.upTo(30) + ". A downward trend usually means improving fitness and recovery."));
         LinearLayout week = Ui.card(c);
         week.addView(Ui.caption(c, "Readiness, last 7 days"));
         week.addView(Ui.gap(c, 8));
-        week.addView(new Charts.BarChart(c, d.scoreSeries("readiness", 7), d.weekdayLabels(7), Ui.READY), Ui.sized(c, -1, 130));
+        double[] ready = d.chartScoreSeries("readiness", 7);
+        week.addView(new Charts.BarChart(c, ready, d.weekdayLabels(7), Ui.READY).highlight(d.pickedIndex(7))
+                .tips(HistoryViews.tips(d, ready, new HistoryViews.Fmt() {
+                    @Override
+                    public String of(double v) {
+                        return "readiness " + Math.round(v);
+                    }
+                })), Ui.sized(c, -1, 130));
         root.addView(week);
         return root;
     }
@@ -1263,10 +1297,9 @@ public final class Pages {
         return card;
     }
 
+    /** The mean of the 14 days before the shown day, whatever the charts draw (code review of #455; {@code CoreTest.dayWindow}). */
     static double usual(DayData d, String field) {
-        double[] v = d.series(field, 15);
-        double[] prior = java.util.Arrays.copyOf(v, 14);
-        return Stats.countFinite(prior) >= 3 ? Stats.mean(prior) : Double.NaN;
+        return d.usual(field);
     }
 
     static View signalRow(Context c, String name, double value, double usual, String unit, int dp, boolean lowerIsBetter) {
@@ -1438,7 +1471,15 @@ public final class Pages {
             pc.addView(Ui.gap(c, 8));
             int peak = 0;
             for (int h = 0; h < 24; h++) if (!Double.isNaN(hourly[h]) && (Double.isNaN(hourly[peak]) || hourly[h] > hourly[peak])) peak = h;
-            pc.addView(new Charts.BarChart(c, hourly, labels, Ui.ACTIVE).valueFormat("%.1f").highlight(peak), Ui.sized(c, -1, 120));
+            // touch reads each hour, and the logged times of life factors show as bands over their hours (issue #435)
+            String[] hourTips = new String[24];
+            for (int h = 0; h < 24; h++) {
+                hourTips[h] = String.format(Locale.getDefault(), "%02d:00 to ", h) + (h == 23 ? "midnight  " : String.format(Locale.getDefault(), "%02d:00  ", h + 1))
+                        + (Double.isNaN(hourly[h]) ? "no reading" : String.format(Locale.getDefault(), "%.1f MET", hourly[h]));
+            }
+            Charts.BarChart met = new Charts.BarChart(c, hourly, labels, Ui.ACTIVE).valueFormat("%.1f").highlight(peak).tips(hourTips);
+            LifeCard.onHours(met, d);
+            pc.addView(met, Ui.sized(c, -1, 120));
             pc.addView(Ui.gap(c, 6));
             // the bands of Wellness.day (issue #47)
             pc.addView(Ui.text(c, "MET is how hard your body works, 1 is resting. While awake, under 1.5 counts as inactive, 1.5 to 3 low, "
@@ -1473,7 +1514,14 @@ public final class Pages {
         LinearLayout week = Ui.card(c);
         week.addView(Ui.caption(c, "Active burn, last 7 days"));
         week.addView(Ui.gap(c, 8));
-        week.addView(new Charts.BarChart(c, d.series("active_kcal", 7), d.weekdayLabels(7), Ui.ACTIVE).target(target), Ui.sized(c, -1, 130));
+        double[] burn = d.chartSeries("active_kcal", 7);
+        week.addView(new Charts.BarChart(c, burn, d.weekdayLabels(7), Ui.ACTIVE).target(target).highlight(d.pickedIndex(7))
+                .tips(HistoryViews.tips(d, burn, new HistoryViews.Fmt() {
+                    @Override
+                    public String of(double v) {
+                        return HistoryViews.whole(v) + " kcal active";
+                    }
+                })), Ui.sized(c, -1, 130));
         root.addView(week);
         return root;
     }
@@ -1873,7 +1921,14 @@ public final class Pages {
         // the middle label at noon, also when the day has 23 or 25 hours
         double noon = d.date.atTime(12, 0).atZone(d.zone).toEpochSecond();
         // a time left out because someone else wore the ring: a grey band, readable by touch (issue #254)
-        hr.addView(new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon).leftOut(d.leftOutPieces()), Ui.sized(c, -1, 140));
+        // logged times of life factors (issue #435): a band with its name, read by touch, and under the chart what the line
+        // measured during each, next to the day's average (measured values only, never a cause)
+        List<app.openring.core.LifeTimes.Band> dayLife = LifeCard.bands(d, ds, de);
+        Charts.LineChart dayChart = new Charts.LineChart(c, line, ds, de, Ui.HEART).unit(" bpm").zone(d.zone).midLabel(noon).leftOut(d.leftOutPieces()).life(dayLife);
+        dayChart.setContentDescription(dayLife.isEmpty() ? "Heart rate of the day, touch to read it" : "Heart rate of the day with your logged times, touch to read them");
+        hr.addView(dayChart, Ui.sized(c, -1, 140));
+        View during = LifeCard.during(c, d, line, dayLife, dh.avg);
+        if (during != null) hr.addView(during);
         String fromOther = d.merged == null ? null : app.openring.core.MainDevice.heartLine(d.merged, d.zone);
         if (fromOther != null) {
             hr.addView(Ui.gap(c, 4));
@@ -1954,22 +2009,25 @@ public final class Pages {
         root.addView(vo);
 
         root.addView(infoCard(c, "Night time measurements", Explain.NIGHT_SIGNALS));
-        root.addView(chartCard(c, "Resting heart rate, 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.date, 30).unit(" bpm"), null));
-        root.addView(chartCard(c, "HRV, 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.date, 30).unit(" ms"), null));
-        root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).unit("/min"), null));
-        root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.date, 30).range(88, 100).unit("%"), null));
+        root.addView(chartCard(c, "Resting heart rate, 30 days", new Charts.LineChart(c, daysSeries(d, "rhr", 30), Double.NaN, Double.NaN, Ui.HEART).daily(d.end(30), 30).pick(d.date).unit(" bpm"), null));
+        root.addView(chartCard(c, "HRV, 30 days", new Charts.LineChart(c, daysSeries(d, "hrv", 30), Double.NaN, Double.NaN, Ui.READY).daily(d.end(30), 30).pick(d.date).unit(" ms"), null));
+        root.addView(chartCard(c, "Breathing rate, 30 days", new Charts.LineChart(c, daysSeries(d, "breath", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.end(30), 30).pick(d.date).unit("/min"), null));
+        root.addView(chartCard(c, "Blood oxygen, 30 days", new Charts.LineChart(c, daysSeries(d, "spo2", 30), Double.NaN, Double.NaN, Ui.OXY).daily(d.end(30), 30).pick(d.date).range(88, 100).unit("%"), null));
         // with the period tracker and a logged period, the one temperature chart carries the cycle (owner's feedback of
         // 11 November: no second temperature chart at the end of Body); without it the chart stays as it was
         if (d.periodShown && d.periods != null && !d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.temperature(c, d));
-        else root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.date, 30).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
+        else root.addView(chartCard(c, "Temperature deviation, 30 days", new Charts.LineChart(c, daysSeries(d, "temp_dev", 30), Double.NaN, Double.NaN, Ui.TEMP).daily(d.end(30), 30).pick(d.date).empty("Appears after 3 nights, it compares with your usual").range(-1.5, 1.5).reference(0).noFill().signed().unit(" \u00b0C"), null));
         // the period tracker's analysis at the end (issue #252, phase 1a2): the cycles over time
         if (d.periodShown && d.periods != null) {
             root.addView(PeriodAnalysis.cycles(c, d));
             // how close each prediction method was on these cycles (issue #383)
             if (!d.periods.periods.isEmpty()) root.addView(PeriodAnalysis.accuracy(c, d));
         }
-        // the life factors logged on Today, as a month (issue #292): the evidence itself, no effect worked out yet
+        // the life factors logged on Today, as a month (issue #292): the evidence itself
         root.addView(LifeCard.body(c, d));
+        // how the nights went after each factor, for you (issue #292, phase 2); only with a ring
+        View effects = LifeCard.effects(c, d);
+        if (effects != null) root.addView(effects);
         return root;
     }
 
@@ -2006,7 +2064,7 @@ public final class Pages {
     }
 
     static TS daysSeries(DayData d, String field, int n) {
-        return app.openring.data.DaySeries.of(d.date, d.series(field, n));
+        return app.openring.data.DaySeries.of(d.end(n), d.chartSeries(field, n));
     }
 
     static View hero(Context c, double score, String label, int color, String sub) {

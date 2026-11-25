@@ -169,6 +169,15 @@ public final class Backup {
         Json.put(o, "watch_alarm_m", al.minute);
         Json.put(o, "watch_alarm_days", al.days);
         Json.put(o, "watch_alarm_smart", al.smart);
+        // sleep sounds (issue #380, phase 1b): how long clips keep their sound, the microphone test, the bedtime notification.
+        // Never the consent (a new phone asks again) and never a sound
+        Json.put(o, "sound_keep", p.soundKeepDays());
+        Json.put(o, "sound_threshold", p.soundThresholdX10());
+        if (p.soundTested() > 0 && p.soundMarginX10() != Integer.MIN_VALUE) {
+            Json.put(o, "sound_tested", p.soundTested());
+            Json.put(o, "sound_margin", p.soundMarginX10());
+        }
+        Json.put(o, "sound_remind", p.soundRemind());
         // the order and folds of each tab's tiles (owner's wish of 18 November): the person's own, never the demo's; a tab in the
         // standard layout is left out, an empty object means every tab is standard
         JSONObject layout = new JSONObject();
@@ -606,6 +615,13 @@ public final class Backup {
             al.smart = o.optInt("watch_alarm_smart", 0);
             p.setWatchAlarm(al);
         }
+        // sleep sounds (issue #380, phase 1b): an older backup has none and keeps the phone's; the consent is never in a backup
+        if (app.openring.core.SleepSounds.validKeep(o.optInt("sound_keep", -1))) p.setSoundKeepDays(o.optInt("sound_keep"));
+        if (o.has("sound_threshold") || o.has("sound_tested")) {
+            long tested = o.optLong("sound_tested", 0);
+            p.restoreSoundTest(tested, tested > 0 && o.has("sound_margin") ? o.optInt("sound_margin") : Integer.MIN_VALUE, o.optInt("sound_threshold", -1));
+        }
+        if (o.has("sound_remind")) p.setSoundRemind(o.optBoolean("sound_remind", true));
         // the tiles' order and folds (owner's wish of 18 November): an older backup has none and keeps the phone's layout; a
         // value that is not a key is left out (core/Layout), a tab the backup does not name is standard
         JSONObject layout = o.optJSONObject("layout");

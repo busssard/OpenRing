@@ -215,15 +215,13 @@ public final class Exporter {
             this.db = db;
             try {
                 // ordered by start, so a day's newest main night is put last, as dayZone takes it
-                Cursor c = db.getReadableDatabase().rawQuery("SELECT day, json FROM nights WHERE main=1 ORDER BY start", null);
-                try {
-                    while (c.moveToNext()) {
-                        JSONObject night = Json.parse(c.getString(1));
-                        nightZone.put(c.getString(0), night == null ? null : night.optString("zone", null));
+                db.eachMainNight(new java.util.function.BiConsumer<String, String>() {
+                    @Override
+                    public void accept(String day, String json) {
+                        JSONObject night = Json.parse(json);
+                        nightZone.put(day, night == null ? null : night.optString("zone", null));
                     }
-                } finally {
-                    c.close();
-                }
+                });
                 noted = db.zones();
             } catch (RuntimeException e) {
                 // a read that stops part way may have missed a day's newest night: every day is read on its own instead

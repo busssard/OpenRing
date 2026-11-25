@@ -28,8 +28,8 @@ import app.openring.data.Json;
  */
 public class PipelineTest {
     static int passed, failed;
-    /** The schema version of this app (issue #251 made it 9). */
-    static final int CUR = 14;
+    /** The schema version of this app (issue #251 made it 9, issue #435 15). */
+    static final int CUR = 15;
 
     static void check(String name, boolean ok, Object info) {
         if (ok) passed++;
@@ -626,6 +626,7 @@ public class PipelineTest {
         check("demo notes no time zones, so its nights look as before (#22)", demo.zones().isEmpty()
                 && demo.count("SELECT COUNT(*) FROM nights WHERE json LIKE '%\"zone\"%'") == 0, demo.zones().size());
         check("demo days have readiness", demo.count("SELECT COUNT(*) FROM days WHERE json LIKE '%readiness%'") >= 20, "");
+        dayLowRule72();
         dayHeartChecks(demo, demoNow, "demo days", 0);
         dataCheckPrivate("demo", DataCheck.run(phone2).text, demo, LocalDate.now());
         exportChecks(phone2, demo, demoToday);
@@ -952,6 +953,10 @@ public class PipelineTest {
         lifePrivacy292();
         lifeDemo292();
         lifeLarge292();
+        lifeTimes435();
+        lifeTimesRestore435();
+        lifeChips435();
+        lifeTimesLarge435();
         soundUpgrade380();
         soundRestore380();
         soundKeptTables380();
@@ -967,6 +972,25 @@ public class PipelineTest {
         handRestore427();
         handResets427();
         handLarge427();
+        // sleep sounds, phase 1b (issue #380): the night's logic of the listening service, Delete all while listening, settings
+        soundNight1b380();
+        soundEncoder1b380();
+        soundLimit1b380();
+        soundDrift1b380();
+        soundStale1b380();
+        soundDeleteAll1b380();
+        soundDeleteNight1b380();
+        soundDemoMode1b380();
+        soundSettings1b380();
+        soundRetention1b380();
+        soundDemoClips1b380();
+        soundUsual1b380();
+        soundEdges1b380();
+        soundFailures1b380();
+        // review of #450: the hand off between the microphone's thread and the night's worker, the demo night without its clip folder
+        soundQueue1b450();
+        soundDemoNoFolder1b450();
+        soundFinishFails1b450();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -3455,10 +3479,7 @@ public class PipelineTest {
             double nextStart = nightStart(db, day.plusDays(1).toString());
             double lowAt = Double.NaN;
             for (int i = 0; i < line.size(); i++) if (line.v(i) <= line.min() + 1e-9) lowAt = line.t(i); // the latest lowest point
-            // a point stands for its quarter hour (time in the middle): it counts as in the next night when its quarter reaches it
-            boolean inNext = next != null && !Double.isNaN(next) && !Double.isNaN(nextStart) && lowAt + 450 > nextStart;
-            double floor = inNext ? Math.min(night, next) : night;
-            if (low >= floor - 3 && low <= night + 3) nearNight++;
+            if (dayLowNearNight(low, lowAt, night, next == null ? Double.NaN : next, nextStart)) nearNight++;
             else bad72 += key + " (lowest " + low + " at " + clockOf(lowAt) + ", night " + night + ", next "
                     + (next == null || Double.isNaN(next) ? "none" : next + " from " + clockOf(nextStart)) + ") ";
         }
@@ -3487,6 +3508,37 @@ public class PipelineTest {
         }
         check(label + ": days with a night show the night as rest (#112)", nights >= 28 && restDays == nights && cut == wantCut,
                 restDays + " of " + nights + ", " + cut + " night cut short left out");
+    }
+
+    /**
+     * The rule of the #72 check above (issue #406): the day's lowest {@code low} at {@code lowAt} must lie within 3 bpm of
+     * the day's own night lowest {@code night}; it may go down to the next night's lowest {@code next} (NaN when there is
+     * none) only when it lies in that next night, which starts at {@code nextStart}. A point stands for its quarter hour
+     * (time in the middle): it counts as in the next night when its quarter reaches it.
+     */
+    static boolean dayLowNearNight(double low, double lowAt, double night, double next, double nextStart) {
+        boolean inNext = !Double.isNaN(next) && !Double.isNaN(nextStart) && lowAt + 450 > nextStart;
+        double floor = inNext ? Math.min(night, next) : night;
+        return low >= floor - 3 && low <= night + 3;
+    }
+
+    /** Issue #439: three pinned cases of the #72 rule, so loosening it turns a check red even when the demo days still pass. */
+    static void dayLowRule72() {
+        double day = 1_000_000, nextStart = day + 22.5 * 3600; // the next night starts at 22:30
+        // own night 55, the next night calmer at 46
+        check("#72 rule: the day's lowest in the next night may go down to that night's lowest",
+                dayLowNearNight(46, nextStart + 1800, 55, 46, nextStart), null);
+        check("#72 rule: a lowest point at 15:00 below the own night fails, even under a lower next night",
+                !dayLowNearNight(46, day + 15 * 3600, 55, 46, nextStart), null);
+        // a line shifted by one night: its morning holds the next night's low (46) instead of its own (55)
+        check("#72 rule: a line shifted by one night (the next night's low in this morning) fails",
+                !dayLowNearNight(46, day + 4 * 3600, 55, 46, nextStart), null);
+        // the quarter hour edge: a point stands for its quarter (time in the middle), so it is in the next night when its
+        // quarter reaches it (review of #445)
+        check("#72 rule: a point whose quarter hour reaches the next night counts as in it",
+                dayLowNearNight(46, nextStart - 400, 55, 46, nextStart), null);
+        check("#72 rule: a point whose quarter hour ends before the next night does not",
+                !dayLowNearNight(46, nextStart - 500, 55, 46, nextStart), null);
     }
 
     /** Start of the main night of {@code day} (unix seconds), NaN when there is none. */
@@ -10056,10 +10108,14 @@ public class PipelineTest {
         List<String> demoRows;
         try {
             setStatic("testNow", demoNow);
+            // the pin is of the analysis as it was before #435 gave the demo's saunas their heart beats (lifeTimesLarge435 checks
+            // that those change only the sauna days' summaries)
+            setField252(app.openring.data.Demo.class, "saunaBeats", false);
             app.openring.data.Demo.enter(demo, null, LocalDate.parse("2026-10-20"), demoNow);
             demoRows = fiveWeeks292(results139(Db.get(demo)), LocalDate.parse("2026-10-20"));
         } finally {
             setStatic("testNow", 0L);
+            setField252(app.openring.data.Demo.class, "saunaBeats", true);
         }
         app.openring.data.Demo.leave(demo);
         check("#292 baselines: the demo's nights and days byte for byte as before the move", digest254(demoRows).equals(DEMO_292), digest254(demoRows));
@@ -14196,6 +14252,7 @@ public class PipelineTest {
         check("#373 the watch path past About you: the app", !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
         p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
         // a backup of a watch only phone carries the choice and no key; a restore elsewhere goes on with the watch
+        p.setTourSeen(); // the short tour's flag (issue #453) is a hint, never in a backup
         byte[] full = backup252(c);
         org.json.JSONObject o = new org.json.JSONObject(new String(zipEntry(full, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
         check("#373 the backup holds the choice and the watch, no key", o.optInt("start_choice") == app.openring.core.Start.WATCH && !o.has("key")
@@ -14205,6 +14262,7 @@ public class PipelineTest {
         app.openring.data.Prefs q = app.openring.data.Prefs.of(other);
         q.clearKey();
         app.openring.data.Backup.Result r = app.openring.data.Backup.read(other, new java.io.ByteArrayInputStream(full));
+        check("#453 the tour's flag is not in the backup, the restore leaves the phone's as it was", !o.toString().contains("tour") && !q.tourSeen(), o.keySet());
         check("#373 restored: the watch, the choice, no ring, never Setup", r.ok && q.startChoice() == app.openring.core.Start.WATCH
                 && q.watchAddress() != null && q.keyState() == app.openring.core.KeyState.NO_RING
                 && !app.openring.core.Start.opensSetup(false, false, q.keyState(), false, true), r.message);
@@ -15009,12 +15067,14 @@ public class PipelineTest {
     /** Every row of both life factor tables, in key order: what upgrades, restores and pairing must keep exactly. */
     static String lifeRows292(Db db) {
         StringBuilder b = new StringBuilder();
-        String[] qs = {"SELECT day, tag, time, span, made, gone FROM life_days ORDER BY day, tag", "SELECT key, name, shown, ord, made, gone FROM life_tags ORDER BY key"};
-        for (String q : qs) {
-            android.database.Cursor c = db.getReadableDatabase().rawQuery(q, null);
+        // life_days.minutes since schema 15 (issue #435)
+        String[] qs = {"SELECT day, tag, time, span, made, gone, minutes FROM life_days ORDER BY day, tag", "SELECT key, name, shown, ord, made, gone FROM life_tags ORDER BY key"};
+        int[] cols = {7, 6};
+        for (int q = 0; q < qs.length; q++) {
+            android.database.Cursor c = db.getReadableDatabase().rawQuery(qs[q], null);
             try {
                 while (c.moveToNext()) {
-                    for (int i = 0; i < 6; i++) b.append(c.isNull(i) ? "null" : c.getString(i)).append(i < 5 ? " " : "\n");
+                    for (int i = 0; i < cols[q]; i++) b.append(c.isNull(i) ? "null" : c.getString(i)).append(i < cols[q] - 1 ? " " : "\n");
                 }
             } finally {
                 c.close();
@@ -15076,8 +15136,8 @@ public class PipelineTest {
                 schemaProblem251(db) == null && Analyzer.upToDate(c) && results252(db).equals(state), schemaProblem251(db));
         someLife292(db);
         String life = lifeRows292(db);
-        check("#292 the made up tags are stored (11 day rows, 10 tag rows: the nine fixed ones' chips and the own tag)",
-                db.count("SELECT COUNT(*) FROM life_days") == 11 && db.count("SELECT COUNT(*) FROM life_tags") == 10, null);
+        check("#292 the made up tags are stored (11 day rows, 12 tag rows: the eleven fixed ones' chips and the own tag)",
+                db.count("SELECT COUNT(*) FROM life_days") == 11 && db.count("SELECT COUNT(*) FROM life_tags") == 12, null);
         restart242();
         try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file.getPath()); java.sql.Statement st = cn.createStatement()) {
             st.execute("PRAGMA user_version = 11");
@@ -15155,10 +15215,11 @@ public class PipelineTest {
         // own tags
         String own = app.openring.data.LifeLog.addOwn(db, "  late   dinner ", 1550000000000L);
         check("#292 an own tag: cleaned name, on the card", own != null && own.equals("own:1550000000000")
-                && app.openring.data.LifeLog.known(db).name(own).equals("late dinner") && app.openring.data.LifeLog.known(db).chips().get(5).key.equals(own), own);
+                && app.openring.data.LifeLog.known(db).name(own).equals("late dinner") && app.openring.data.LifeLog.known(db).chips().get(6).key.equals(own), own);
         check("#292 the same name again (any case), a fixed tag's name, an empty one: refused", app.openring.data.LifeLog.addOwn(db, "Late Dinner", 1550000000001L) == null
                 && app.openring.data.LifeLog.addOwn(db, "Alcohol", 1550000000002L) == null && app.openring.data.LifeLog.addOwn(db, " ", 1550000000003L) == null, null);
-        String twin = app.openring.data.LifeLog.addOwn(db, "Sauna", 1550000000000L);
+        // a name that is not a fixed tag's (Sauna is one since issue #435)
+        String twin = app.openring.data.LifeLog.addOwn(db, "Cold plunge", 1550000000000L);
         check("#292 two own tags made in the same millisecond get two keys", twin != null && !twin.equals(own), twin);
         app.openring.data.LifeLog.set(db, "2019-03-05", own, true, 300);
         app.openring.data.LifeLog.removeOwn(db, own, 301);
@@ -15296,10 +15357,6 @@ public class PipelineTest {
         return app.openring.data.LifeLog.on(db, day);
     }
 
-    static Db db422(Context c) {
-        return Db.get(c);
-    }
-
     /**
      * Runs {@code write} with {@code LifeLog.failRowsAfter} at 1 (a stop after the first row of a write over several rows);
      * true when it stopped. The caller then checks every row is as before.
@@ -15322,28 +15379,28 @@ public class PipelineTest {
     }
 
     /**
-     * Issue #422: after Delete all, "Sauna" made again and an older backup with its own "Sauna" restored are one factor under
+     * Issue #422 (named "Plunge" here: Sauna is a fixed tag since issue #435): after Delete all, "Plunge" made again and an older backup with its own "Plunge" restored are one factor under
      * the older key (the backup's): one chip, the days of both, a day held by both once; the restore twice gives the same; a tap
      * off removes a day from both keys (removal marks only, Undo puts both rows back), a tap on writes the older key; the chips
-     * choice and removing the factor reach both keys, bringing it back brings both; "sauna" in other capitals joins too; a
-     * removed old "Sauna" never joins one in force. No stored row is ever deleted or rewritten by reading: the merge is as
+     * choice and removing the factor reach both keys, bringing it back brings both; "plunge" in other capitals joins too; a
+     * removed old "Plunge" never joins one in force. No stored row is ever deleted or rewritten by reading: the merge is as
      * before and every row of the phone and of the backup is still there.
      */
     static void lifeNames422() throws Exception {
         Context c = phone254("openring422-names");
         Db db = Db.get(c);
-        String older = app.openring.data.LifeLog.addOwn(db, "Sauna", 1550000000000L);
+        String older = app.openring.data.LifeLog.addOwn(db, "Plunge", 1550000000000L);
         app.openring.data.LifeLog.set(db, "2019-06-01", older, true, 1000);
         app.openring.data.LifeLog.set(db, "2019-06-02", older, true, 1001);
         app.openring.data.LifeLog.set(db, "2019-06-03", older, true, 1002);
         app.openring.data.LifeLog.set(db, "2019-06-01", app.openring.core.LifeTags.ALCOHOL, true, 1003);
-        // the old Sauna was taken off the card before the backup
+        // the old Plunge was taken off the card before the backup
         app.openring.data.LifeLog.setChips(db, Arrays.asList(app.openring.core.LifeTags.MEDITATION, app.openring.core.LifeTags.ALCOHOL), 1004);
         byte[] full = backup252(c);
         String backupRows = lifeRows292(db);
         Analyzer.deleteAll(c);
         db = Db.get(c);
-        String newer = app.openring.data.LifeLog.addOwn(db, "Sauna", 1560000000000L);
+        String newer = app.openring.data.LifeLog.addOwn(db, "Plunge", 1560000000000L);
         check("#422 after Delete all the same name gets a new key", newer != null && !newer.equals(older) && lifeCount292(db) == 1, newer);
         app.openring.data.LifeLog.set(db, "2019-06-02", newer, true, 2000);
         app.openring.data.LifeLog.set(db, "2019-06-10", newer, true, 2001);
@@ -15356,14 +15413,14 @@ public class PipelineTest {
         app.openring.core.LifeTags.Known k = app.openring.data.LifeLog.known(db);
         List<String> chips = new ArrayList<String>();
         for (app.openring.core.LifeTags.Tag t : k.chips()) if (app.openring.core.LifeTags.isOwn(t.key)) chips.add(t.key + "=" + t.name);
-        check("#422 one Sauna chip under the older key (on the card, as the newer one is), one entry in Remove one of your own", chips.equals(Arrays.asList(older + "=Sauna"))
-                && own422(db).equals("[" + older + "=Sauna chip]") && k.aliases(older).equals(Arrays.asList(newer)), chips + " " + own422(db));
+        check("#422 one Plunge chip under the older key (on the card, as the newer one is), one entry in Remove one of your own", chips.equals(Arrays.asList(older + "=Plunge"))
+                && own422(db).equals("[" + older + "=Plunge chip]") && k.aliases(older).equals(Arrays.asList(newer)), chips + " " + own422(db));
         java.util.TreeMap<LocalDate, List<String>> all = app.openring.data.LifeLog.all(db);
         check("#422 the days of both keys under the older one, the day both hold once", all.toString().equals("{2019-06-01=[alcohol, " + older + "], 2019-06-02=["
                 + older + "], 2019-06-03=[" + older + "], 2019-06-10=[" + older + "]}")
                 && app.openring.data.LifeLog.days(db, "2019-06-02", "2019-06-10").size() == 3 && on422(db, "2019-06-02").equals(Arrays.asList(older)), all);
-        check("#422 the names beside a night and the month's counts: Sauna once, on 4 days", k.names(on422(db, "2019-06-02")).equals(Arrays.asList("Sauna"))
-                && app.openring.core.LifeTags.monthLine(all, java.time.YearMonth.of(2019, 6), k).equals("This month: Sauna on 4 days, Alcohol on 1 day."),
+        check("#422 the names beside a night and the month's counts: Plunge once, on 4 days", k.names(on422(db, "2019-06-02")).equals(Arrays.asList("Plunge"))
+                && app.openring.core.LifeTags.monthLine(all, java.time.YearMonth.of(2019, 6), k).equals("This month: Plunge on 4 days, Alcohol on 1 day."),
                 app.openring.core.LifeTags.monthLine(all, java.time.YearMonth.of(2019, 6), k));
         app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
         p.setCsvLife(true);
@@ -15371,15 +15428,15 @@ public class PipelineTest {
         app.openring.data.Exporter.dailyCsv(c, csv);
         p.setCsvLife(false);
         String[] lines = new String(csv.toByteArray(), "UTF-8").split("\n");
-        int col = Arrays.asList(lines[0].split(",")).indexOf("life_own_sauna"), ones = 0;
+        int col = Arrays.asList(lines[0].split(",")).indexOf("life_own_plunge"), ones = 0;
         for (String l : lines) {
             String[] f = l.split(",", -1);
             if (l.startsWith("2019-06-") && col >= 0 && f.length > col && f[col].equals("1")) ones++;
         }
-        check("#422 the CSV: one Sauna column with the 4 days", col > 0 && !lines[0].contains("life_own_sauna_2") && ones == 4, lines[0]);
+        check("#422 the CSV: one Plunge column with the 4 days", col > 0 && !lines[0].contains("life_own_plunge_2") && ones == 4, lines[0]);
         app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
         db = Db.get(c);
-        check("#422 the same restore twice: the same rows, one Sauna", lifeRows292(db).equals(merged) && own422(db).equals("[" + older + "=Sauna chip]"), null);
+        check("#422 the same restore twice: the same rows, one Plunge", lifeRows292(db).equals(merged) && own422(db).equals("[" + older + "=Plunge chip]"), null);
         // a tap off on a day both keys hold, stopped after its first row: nothing written
         check("#422 a tap off on a day both hold, stopped after the first row: every row as it was, the day still there",
                 stopped422(() -> app.openring.data.LifeLog.set(Db.get(c), "2019-06-02", older, false, 2900)) && lifeRows292(db).equals(merged)
@@ -15405,35 +15462,35 @@ public class PipelineTest {
                 && db.count("SELECT COUNT(*) FROM life_days WHERE tag = '" + newer + "' AND day >= '2019-07-01'") == 0, null);
         // the chips choice reaches both keys
         app.openring.data.LifeLog.setChips(db, Arrays.asList(app.openring.core.LifeTags.ALCOHOL), 3005);
-        check("#422 Sauna taken off the card: off for both keys", app.openring.data.LifeLog.known(db).chips().size() == 1
+        check("#422 Plunge taken off the card: off for both keys", app.openring.data.LifeLog.known(db).chips().size() == 1
                 && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "') AND shown = 0") == 2, null);
         app.openring.data.LifeLog.setChips(db, Arrays.asList(older, app.openring.core.LifeTags.ALCOHOL), 3006);
-        check("#422 Sauna put back on the card: on for both keys, first", app.openring.data.LifeLog.known(db).chips().get(0).key.equals(older)
+        check("#422 Plunge put back on the card: on for both keys, first", app.openring.data.LifeLog.known(db).chips().get(0).key.equals(older)
                 && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "') AND shown = 1 AND ord = 0") == 2, null);
-        // a third Sauna in other capitals (as another backup could bring): it joins too
+        // a third Plunge in other capitals (as another backup could bring): it joins too
         String third = "own:1570000000000";
-        db.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES (?, ' SAUNA', 1, NULL, 4000, 0)", new Object[] {third});
+        db.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES (?, ' PLUNGE', 1, NULL, 4000, 0)", new Object[] {third});
         app.openring.data.LifeLog.set(db, "2019-06-15", third, true, 4001);
-        check("#422 \"sauna\" in other capitals joins: its day under the older key, still one Sauna", on422(db, "2019-06-15").equals(Arrays.asList(older))
-                && own422(db).equals("[" + older + "=Sauna chip]") && app.openring.data.LifeLog.known(db).aliases(older).equals(Arrays.asList(newer, third)), own422(db));
-        check("#422 a new own tag with the same name is still refused", app.openring.data.LifeLog.addOwn(db, "sauna", 1580000000000L) == null, null);
+        check("#422 \"plunge\" in other capitals joins: its day under the older key, still one Plunge", on422(db, "2019-06-15").equals(Arrays.asList(older))
+                && own422(db).equals("[" + older + "=Plunge chip]") && app.openring.data.LifeLog.known(db).aliases(older).equals(Arrays.asList(newer, third)), own422(db));
+        check("#422 a new own tag with the same name is still refused", app.openring.data.LifeLog.addOwn(db, "plunge", 1580000000000L) == null, null);
         // removing the factor removes every key of it; its days stay; bringing it back brings them all
         long days = db.count("SELECT COUNT(*) FROM life_days");
         String three = lifeRows292(db);
-        check("#422 removing Sauna, stopped after the first key: every row as it was, Sauna still there",
+        check("#422 removing Plunge, stopped after the first key: every row as it was, Plunge still there",
                 stopped422(() -> app.openring.data.LifeLog.removeOwn(Db.get(c), older, 4900)) && lifeRows292(db).equals(three)
-                && own422(db).equals("[" + older + "=Sauna chip]"), own422(db));
+                && own422(db).equals("[" + older + "=Plunge chip]"), own422(db));
         app.openring.data.LifeLog.removeOwn(db, older, 5000);
-        check("#422 removing Sauna removes all three keys (removal marks), the days stay", app.openring.data.LifeLog.known(db).own().isEmpty()
+        check("#422 removing Plunge removes all three keys (removal marks), the days stay", app.openring.data.LifeLog.known(db).own().isEmpty()
                 && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "', '" + third + "') AND gone = 1 AND shown = 0") == 3
                 && db.count("SELECT COUNT(*) FROM life_days") == days && on422(db, "2019-06-15").equals(Arrays.asList(older))
-                && app.openring.data.LifeLog.known(db).name(newer).equals("Sauna"), null);
+                && app.openring.data.LifeLog.known(db).name(newer).equals("Plunge"), null);
         String removed = lifeRows292(db);
-        check("#422 bringing Sauna back, stopped after the first key: every row as it was, all three still removed",
-                stopped422(() -> app.openring.data.LifeLog.addOwn(Db.get(c), "SAUNA", 1585000000000L)) && lifeRows292(db).equals(removed)
+        check("#422 bringing Plunge back, stopped after the first key: every row as it was, all three still removed",
+                stopped422(() -> app.openring.data.LifeLog.addOwn(Db.get(c), "PLUNGE", 1585000000000L)) && lifeRows292(db).equals(removed)
                 && app.openring.data.LifeLog.known(db).own().isEmpty(), null);
-        String back = app.openring.data.LifeLog.addOwn(db, "SAUNA", 1590000000000L);
-        check("#422 the name again brings all three back as one, under the older key", older.equals(back) && own422(db).equals("[" + older + "=Sauna chip]")
+        String back = app.openring.data.LifeLog.addOwn(db, "PLUNGE", 1590000000000L);
+        check("#422 the name again brings all three back as one, under the older key", older.equals(back) && own422(db).equals("[" + older + "=Plunge chip]")
                 && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('" + older + "', '" + newer + "', '" + third + "') AND gone = 0 AND shown = 1") == 3, back);
         int kept = 0;
         for (String[] dt : new String[][] {{"2019-06-01", older}, {"2019-06-02", older}, {"2019-06-03", older}, {"2019-06-02", newer}, {"2019-06-10", newer}}) {
@@ -15441,19 +15498,19 @@ public class PipelineTest {
         }
         check("#422 nothing deleted: the row of each day of the phone and of the backup is still there (a tap off only marks it)",
                 kept == 5 && db.count("SELECT COUNT(*) FROM life_days WHERE day = '2019-06-01' AND tag = 'alcohol' AND gone = 0") == 1, kept);
-        // a removed old Sauna never joins one in force (as a restore of a newer phone's rows could bring)
+        // a removed old Plunge never joins one in force (as a restore of a newer phone's rows could bring)
         Context c2 = phone254("openring422-removed");
         Db d2 = Db.get(c2);
-        String old2 = app.openring.data.LifeLog.addOwn(d2, "Sauna", 1550000000000L);
+        String old2 = app.openring.data.LifeLog.addOwn(d2, "Plunge", 1550000000000L);
         app.openring.data.LifeLog.set(d2, "2019-06-01", old2, true, 1000);
         app.openring.data.LifeLog.removeOwn(d2, old2, 1001);
         String new2 = "own:1560000000000";
-        d2.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES (?, 'sauna', 1, NULL, 2000, 0)", new Object[] {new2});
+        d2.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES (?, 'plunge', 1, NULL, 2000, 0)", new Object[] {new2});
         app.openring.data.LifeLog.set(d2, "2019-06-02", new2, true, 2001);
         app.openring.core.LifeTags.Known k2 = app.openring.data.LifeLog.known(d2);
         app.openring.data.LifeLog.set(d2, "2019-06-02", new2, false, 2002);
-        check("#422 a removed old Sauna does not join the one in force: two keys, each its own days, a tap off reaches only its own key",
-                own422(d2).equals("[" + new2 + "=sauna chip]") && k2.all.get(old2).removed && k2.aliases(new2).isEmpty() && k2.aliases(old2).isEmpty()
+        check("#422 a removed old Plunge does not join the one in force: two keys, each its own days, a tap off reaches only its own key",
+                own422(d2).equals("[" + new2 + "=plunge chip]") && k2.all.get(old2).removed && k2.aliases(new2).isEmpty() && k2.aliases(old2).isEmpty()
                 && on422(d2, "2019-06-01").equals(Arrays.asList(old2)) && app.openring.data.LifeLog.row(d2, "2019-06-02", old2) == null, k2.all);
         clean254();
     }
@@ -15539,14 +15596,15 @@ public class PipelineTest {
         p.setCsvLife(true);
         String[] lines = csvText292(c).split("\n");
         String head = lines[0];
+        // Sauna and Friends (#435) after every column of before, so a sheet read by place keeps working (code review of #444)
         String want = "readiness_score,activity_score,left_out_min,life_meditation,life_alcohol,life_caffeine_late,life_stress,life_hard_workout,"
-                + "life_holiday,life_illness,life_travel,life_own_zebra_secret";
+                + "life_holiday,life_illness,life_travel,life_own_zebra_secret,life_sauna,life_friends";
         check("#292 the CSV with the choice: the columns of exactly the ticked tags, Intimacy not among them", head.endsWith(want)
                 && !csvText292(c).toLowerCase(java.util.Locale.ROOT).contains("intima"), head);
         int cols = head.split(",", -1).length;
         boolean same = true;
         for (String l : lines) same &= l.split(",", -1).length == cols;
-        check("#292 the CSV with the choice: every row has every column", same && cols == 22 + 8 + 1, cols);
+        check("#292 the CSV with the choice: every row has every column", same && cols == 22 + 10 + 1, cols);
         String march5 = null, ring = null, march2 = null;
         for (String l : lines) {
             if (l.startsWith("2019-03-05,")) march5 = l;
@@ -15554,7 +15612,7 @@ public class PipelineTest {
             if (l.startsWith(ringDay + ",")) ring = l;
         }
         check("#292 a tagged day without a summary gets a row: only its date and its own tag", march5 != null
-                && march5.equals("2019-03-05" + repeat292(",", 21) + ",,,,,,,,,1"), march5);
+                && march5.equals("2019-03-05" + repeat292(",", 21) + ",,,,,,,,,1,,"), march5);
         check("#292 a tag taken off is no 1 (and a day with only that gives no row)", march2 == null, march2);
         check("#292 a day with only Intimacy, not ticked: no row with its date (review of #292)", !csvText292(c).contains("\n2019-03-04,"), null);
         check("#292 a ring day with Meditation: its numbers and a 1 under life_meditation", ring != null && ring.split(",", -1)[22].equals("1")
@@ -15568,11 +15626,11 @@ public class PipelineTest {
         String all292 = csvText292(c);
         for (String l : all292.split("\n")) if (l.startsWith("9999-99-98,")) odd = l;
         db.getWritableDatabase().execSQL("DELETE FROM days WHERE day = '9999-99-98'");
-        check("#292 a summary whose key is not a date: its row as before, no tag", odd != null && odd.endsWith(",0,,,,,,,,,"), odd);
+        check("#292 a summary whose key is not a date: its row as before, no tag", odd != null && odd.endsWith(",0,,,,,,,,,,,"), odd);
         p.setCsvIntimacy(true);
         String withI = csvText292(c);
-        check("#292 with Intimacy ticked too: its column after Hard workout, 1 on its days", withI.split("\n")[0].contains("life_hard_workout,life_intimacy,life_holiday")
-                && withI.contains("\n2019-03-04" + repeat292(",", 21) + ",,,,,,1,,,,"), withI.split("\n")[0]);
+        check("#292 with Intimacy ticked too: its column after Hard workout as before, 1 on its days", withI.split("\n")[0].contains("life_hard_workout,life_intimacy,life_holiday")
+                && withI.split("\n")[0].endsWith(",life_sauna,life_friends") && withI.contains("\n2019-03-04" + repeat292(",", 21) + ",,,,,,1,,,,,,"), withI.split("\n")[0]);
         p.setCsvIntimacy(false);
         p.setCsvLife(false);
         // the sources: the life factor screens log an error's kind only, sync/ (notifications, jobs) never reads a tag
@@ -15621,7 +15679,8 @@ public class PipelineTest {
             check("#292 demo: made up tags in the demo file, today Meditation, never Intimacy", Db.DEMO.equals(demo.fileName) && demo.count("SELECT COUNT(*) FROM life_days") > 40
                     && app.openring.data.LifeLog.on(demo, today.toString()).contains(app.openring.core.LifeTags.MEDITATION)
                     && demo.count("SELECT COUNT(*) FROM life_days WHERE tag = 'intimacy'") == 0
-                    && demo.count("SELECT COUNT(DISTINCT span) FROM life_days WHERE span IS NOT NULL") == 2, demo.count("SELECT COUNT(*) FROM life_days"));
+                    // the five weeks' illness and holiday, and (issue #292, phase 2) the made up year's week of illness
+                    && demo.count("SELECT COUNT(DISTINCT span) FROM life_days WHERE span IS NOT NULL") == 3, demo.count("SELECT COUNT(*) FROM life_days"));
             File realFile = c.getDatabasePath(Db.REAL);
             long inReal;
             try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + realFile.getPath());
@@ -15708,6 +15767,423 @@ public class PipelineTest {
         check("#292 five years of six tags a day (" + n + " rows) go through a restore row for row, in seconds", r.ok && r.history && n == 6 * 5 * 365
                 && lifeRows292(Db.get(c)).equals(rows) && s < 60 && days == 5 * 365 && read < 5, s);
         clean254();
+    }
+
+    // ---------------------------------------------------------------- issue #435: when and how long
+
+    /** A schema 14 file: life_days without minutes (every other table and row as it is). */
+    static final String[] DROP15 = {"ALTER TABLE life_days DROP COLUMN minutes"};
+
+    static boolean minutesColumn435(Db db) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("PRAGMA table_info(life_days)", null);
+        try {
+            while (c.moveToNext()) if ("minutes".equals(c.getString(1))) return true;
+            return false;
+        } finally {
+            c.close();
+        }
+    }
+
+    /** Sets the file of {@code c} (closed first) to {@code version} after {@code sql}, as an older version left it. */
+    static void downgrade435(Context c, int version, String... sql) throws Exception {
+        restart242();
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + c.getDatabasePath(Db.REAL).getPath());
+             java.sql.Statement st = cn.createStatement()) {
+            for (String x : sql) st.execute(x);
+            st.execute("PRAGMA user_version = " + version);
+        }
+    }
+
+    /** Every row of {@code q} ({@code n} columns), one line each. */
+    static String rows435(Db db, String q, int n) {
+        StringBuilder b = new StringBuilder();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery(q, null);
+        try {
+            while (c.moveToNext()) {
+                for (int i = 0; i < n; i++) b.append(c.isNull(i) ? "null" : c.getString(i)).append(i < n - 1 ? " " : "\n");
+            }
+        } finally {
+            c.close();
+        }
+        return b.toString();
+    }
+
+    /** The time and length stored for {@code tag} on {@code day}: "19:00 45", "null null" without, "none" without a row. */
+    static String time435(Db db, String day, String tag) {
+        app.openring.data.LifeLog.Row r = app.openring.data.LifeLog.row(db, day, tag);
+        return r == null ? "none" : r.time + " " + r.minutes + (r.gone ? " gone" : "");
+    }
+
+    /**
+     * Issue #435, data safety: schema 15 adds only {@code life_days.minutes}. A schema 14 history (ring, period log, life factors
+     * with a time) upgrades with every event, night, day, period and life row as before and the new column empty; the upgrade
+     * run twice (or after a stop once the column was added) changes nothing; an older history (schema 11) upgrades the same way.
+     * Saving a time: the day logged if it was not, a several day entry keeps its span, Without a time clears both and keeps the
+     * day, Undo puts the row back, a stop half way changes nothing, input that is not a time, a length or a tag of a moment is
+     * refused. A tag at 23:30 for 90 minutes reaches into the next day; a time on the night the clocks go back keeps its clock
+     * time and is 4 real hours long. Logging a time starts no analysis.
+     */
+    static void lifeTimes435() throws Exception {
+        Context c = phone254("openring435-up");
+        Db db = Db.get(c);
+        someLog252(db);
+        someLife292(db);
+        String state = results252(db);
+        List<String> before = results139(db), ev = events58(db);
+        String periods = periodRows252(db), life = lifeRows292(db);
+        check("#435 a new file has life_days.minutes, the schema check of version " + CUR + " passes", minutesColumn435(db) && schemaProblem251(db) == null,
+                schemaProblem251(db));
+        // a schema 14 file: no minutes column (and its time column empty, as every version before this one left it)
+        downgrade435(c, 14, DROP15);
+        db = Db.get(c);
+        check("#435 upgrade from schema 14 with history: version " + CUR + ", the minutes column there and empty, every event, night, day, period and life row the same",
+                db.getReadableDatabase().getVersion() == CUR && minutesColumn435(db) && db.count("SELECT COUNT(*) FROM life_days WHERE minutes IS NOT NULL") == 0
+                        && lifeRows292(db).equals(life) && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods),
+                db.getReadableDatabase().getVersion());
+        check("#435 upgrade from schema 14: the schema check passes, nothing to analyse again, the analysis state as before", schemaProblem251(db) == null
+                && Analyzer.upToDate(c) && results252(db).equals(state), schemaProblem251(db));
+        // times: a day already logged, a day not logged yet, a day of a several day entry is refused (Holiday is days)
+        app.openring.data.LifeLog.setTime(db, "2019-03-01", app.openring.core.LifeTags.MEDITATION, "07:10", 20, 1100);
+        app.openring.data.LifeLog.setTime(db, "2019-03-20", app.openring.core.LifeTags.SAUNA, "19:00", 45, 1101);
+        app.openring.data.LifeLog.setTime(db, "2019-03-21", app.openring.core.LifeTags.ALCOHOL, "20:30", null, 1102);
+        check("#435 a time on a logged day keeps the day, a time on a new day logs it, a time without a length", time435(db, "2019-03-01", "meditation").equals("07:10 20")
+                && time435(db, "2019-03-20", "sauna").equals("19:00 45") && time435(db, "2019-03-21", "alcohol").equals("20:30 null")
+                && app.openring.data.LifeLog.on(db, "2019-03-20").equals(Arrays.asList("sauna")) && app.openring.data.LifeLog.on(db, "2019-03-01").contains("meditation"), null);
+        check("#435 logging a time starts no analysis", results252(db).equals(state), null);
+        List<app.openring.core.LifeTimes.Entry> times = app.openring.data.LifeLog.times(db);
+        check("#435 the times read back, oldest first", times.toString().equals("[2019-03-01 meditation 07:10 20, 2019-03-20 sauna 19:00 45, 2019-03-21 alcohol 20:30 null]"), times);
+        // the upgrade run twice, or resumed after a stop once the column was there: nothing changes, the times stay
+        String withTimes = lifeRows292(db);
+        downgrade435(c, 14);
+        db = Db.get(c);
+        check("#435 the upgrade run twice (or resumed after the column was added): every life row with its time and length the same", db.getReadableDatabase().getVersion() == CUR
+                && lifeRows292(db).equals(withTimes) && events58(db).equals(ev) && results139(db).equals(before) && schemaProblem251(db) == null, null);
+        // a several day entry keeps its span id when one of its days gets a time; Without a time clears both and keeps the day
+        app.openring.data.LifeLog.setSpan(db, LocalDate.parse("2019-04-01"), LocalDate.parse("2019-04-03"), app.openring.core.LifeTags.WORKOUT, 4242L, 1200);
+        app.openring.data.LifeLog.setTime(db, "2019-04-02", app.openring.core.LifeTags.WORKOUT, "18:00", 60, 1201);
+        check("#435 a day of a several day entry keeps its span with a time", app.openring.data.LifeLog.row(db, "2019-04-02", "hard_workout").span == 4242L
+                && time435(db, "2019-04-02", "hard_workout").equals("18:00 60"), app.openring.data.LifeLog.row(db, "2019-04-02", "hard_workout"));
+        // the other way round (code review of #444): a several day entry over a day that has a time keeps that time and length,
+        // the days without a row are written as before (no time), a removal mark is taken back without a time
+        app.openring.data.LifeLog.setTime(db, "2019-07-02", app.openring.core.LifeTags.SAUNA, "19:00", 45, 1210);
+        db.getWritableDatabase().execSQL("INSERT INTO life_days(day, tag, time, minutes, span, made, gone) VALUES ('2019-07-03', 'sauna', '08:00', 20, NULL, 1211, 1)");
+        int spanDays = app.openring.data.LifeLog.setSpan(db, LocalDate.parse("2019-07-01"), LocalDate.parse("2019-07-03"), app.openring.core.LifeTags.SAUNA, 4343L, 1212);
+        app.openring.data.LifeLog.Row timed = app.openring.data.LifeLog.row(db, "2019-07-02", "sauna"), first = app.openring.data.LifeLog.row(db, "2019-07-01", "sauna"),
+                back = app.openring.data.LifeLog.row(db, "2019-07-03", "sauna");
+        check("#435 a several day entry over a day with a time: time and length kept, span set, in force; the other days as before, without a time", spanDays == 3
+                && time435(db, "2019-07-02", "sauna").equals("19:00 45") && timed.span == 4343L && !timed.gone && timed.made == 1212
+                && time435(db, "2019-07-01", "sauna").equals("null null") && first.span == 4343L && first.made == 1212
+                && time435(db, "2019-07-03", "sauna").equals("null null") && back.span == 4343L
+                && app.openring.data.LifeLog.on(db, "2019-07-01").contains("sauna") && app.openring.data.LifeLog.on(db, "2019-07-03").contains("sauna")
+                && app.openring.data.LifeLog.times(db).toString().contains("2019-07-02 sauna 19:00 45"), timed + " " + first + " " + back);
+        db.getWritableDatabase().execSQL("DELETE FROM life_days WHERE day >= '2019-07-01' AND day <= '2019-07-03'");
+        app.openring.data.LifeLog.Row was = app.openring.data.LifeLog.row(db, "2019-03-20", "sauna");
+        app.openring.data.LifeLog.setTime(db, "2019-03-20", app.openring.core.LifeTags.SAUNA, null, null, 1202);
+        check("#435 Without a time: time and length cleared, the day still logged", time435(db, "2019-03-20", "sauna").equals("null null")
+                && app.openring.data.LifeLog.on(db, "2019-03-20").contains("sauna") && app.openring.data.LifeLog.times(db).size() == 3, null);
+        app.openring.data.LifeLog.restore(db, "2019-03-20", "sauna", was, 1203);
+        check("#435 Undo puts the time and length back", time435(db, "2019-03-20", "sauna").equals("19:00 45") && app.openring.data.LifeLog.row(db, "2019-03-20", "sauna").made == 1101, null);
+        app.openring.data.LifeLog.restore(db, "2019-03-22", "sauna", null, 1204);
+        check("#435 Undo of a time on a day that had none leaves a removal mark", app.openring.data.LifeLog.row(db, "2019-03-22", "sauna").gone
+                && !app.openring.data.LifeLog.on(db, "2019-03-22").contains("sauna"), null);
+        // a tap off keeps the row as a removal mark; its time is no band any more; Undo of the tap brings the time back
+        app.openring.data.LifeLog.Row on = app.openring.data.LifeLog.row(db, "2019-03-21", "alcohol");
+        app.openring.data.LifeLog.set(db, "2019-03-21", "alcohol", false, 1205);
+        boolean gone = app.openring.data.LifeLog.times(db).toString().contains("alcohol");
+        app.openring.data.LifeLog.restore(db, "2019-03-21", "alcohol", on, 1206);
+        check("#435 a tap off: no time in force; Undo of it: the time back", !gone && time435(db, "2019-03-21", "alcohol").equals("20:30 null"), null);
+        // an interrupted save: nothing changes (a new time over one there, and on a day without the tag)
+        String rows = lifeRows292(db);
+        final Context fc = c;
+        check("#435 a save of a time stopped half way: every row as it was", stopped422(() -> app.openring.data.LifeLog.setTime(Db.get(fc), "2019-03-20",
+                app.openring.core.LifeTags.SAUNA, "20:00", 15, 1300)) && stopped422(() -> app.openring.data.LifeLog.setTime(Db.get(fc), "2019-05-05",
+                app.openring.core.LifeTags.FRIENDS, "18:00", 120, 1301)) && lifeRows292(db).equals(rows), null);
+        // refused input, the value never in the message
+        int refused = 0;
+        Object[][] bad = {{"2019-03-20", "sauna", "24:00", 30, "not a time"}, {"2019-03-20", "sauna", "7:00", 30, "not a time"}, {"2019-03-20", "sauna", "19:00", 0, "not a length"},
+            {"2019-03-20", "sauna", "19:00", 1441, "not a length"}, {"2019-03-20", "sauna", null, 30, "not a length"}, {"2019-03-20", "holiday", "19:00", null, "not a tag of a moment"},
+            {"2019-03-20", "stress", "08:00", 30, "not a tag of a moment"}, {"2019-02-30", "sauna", "19:00", 30, "not a date"}, {"2019-03-20", "wine", "19:00", 30, "not a tag"}};
+        for (Object[] b : bad) {
+            try {
+                app.openring.data.LifeLog.setTime(db, (String) b[0], (String) b[1], (String) b[2], (Integer) b[3], 1400);
+            } catch (IllegalArgumentException e) {
+                refused += e.getMessage().equals(b[4]) ? 1 : 0;
+            }
+        }
+        check("#435 not a time, a length, a tag of a moment, a day or a tag: refused with a plain message, nothing written", refused == bad.length && lifeRows292(db).equals(rows), refused);
+        // a tag at 23:30 for 90 minutes reaches into the next day: a band on that day's charts too
+        app.openring.data.LifeLog.setTime(db, "2019-06-14", app.openring.core.LifeTags.SAUNA, "23:30", 90, 1500);
+        ZoneId z = ZoneId.of("Europe/Zurich");
+        LocalDate next = LocalDate.parse("2019-06-15");
+        List<app.openring.core.LifeTimes.Band> nb = app.openring.core.LifeTimes.bands(app.openring.data.LifeLog.times(db), next.atStartOfDay(z).toEpochSecond(),
+                next.plusDays(1).atStartOfDay(z).toEpochSecond(), z, app.openring.data.LifeLog.known(db));
+        check("#435 23:30 for 90 minutes: stored on its day, drawn on the next day too, read as Sauna 23:30 to 01:00", nb.size() == 1
+                && app.openring.core.LifeTimes.tip(nb.get(0), z).equals("Sauna 23:30 to 01:00") && app.openring.data.LifeLog.on(db, "2019-06-15").isEmpty()
+                && time435(db, "2019-06-14", "sauna").equals("23:30 90"), nb);
+        // the night the clocks go back in Zurich (27 Oct 2019): the clock time stays as typed, 4 real hours end at 02:30
+        app.openring.data.LifeLog.setTime(db, "2019-10-26", app.openring.core.LifeTags.FRIENDS, "23:30", 240, 1501);
+        LocalDate cc = LocalDate.parse("2019-10-27");
+        List<app.openring.core.LifeTimes.Band> cb = app.openring.core.LifeTimes.bands(app.openring.data.LifeLog.times(db), cc.atStartOfDay(z).toEpochSecond(),
+                cc.plusDays(1).atStartOfDay(z).toEpochSecond(), z, app.openring.data.LifeLog.known(db));
+        check("#435 a time across the clock change night: stored as typed, Friends 23:30 to 02:30, 4 real hours", cb.size() == 1
+                && app.openring.core.LifeTimes.tip(cb.get(0), z).equals("Friends 23:30 to 02:30") && cb.get(0).stop - cb.get(0).start == 4 * 3600
+                && time435(db, "2019-10-26", "friends").equals("23:30 240"), cb);
+        check("#435 logging times started no analysis", results252(db).equals(state), null);
+        // an older history with life factors: schema 12 (life tables without minutes, no sleep sounds, no nights by hand)
+        String dayRows = rows435(db, "SELECT day, tag, time, span, made, gone FROM life_days ORDER BY day, tag", 6), tagRows = rows435(db,
+                "SELECT key, name, shown, ord, made, gone FROM life_tags ORDER BY key", 6);
+        downgrade435(c, 12, "ALTER TABLE life_days DROP COLUMN minutes", "DROP TABLE sound_nights", "DROP TABLE sound_clips", "DROP TABLE sound_gaps",
+                "DROP TABLE sleep_manual");
+        db = Db.get(c);
+        check("#435 upgrade from schema 12 with history and life factors: every event, night, day, period and life row the same, their times kept, no length",
+                db.getReadableDatabase().getVersion() == CUR && minutesColumn435(db) && schemaProblem251(db) == null
+                        && rows435(db, "SELECT day, tag, time, span, made, gone FROM life_days ORDER BY day, tag", 6).equals(dayRows)
+                        && rows435(db, "SELECT key, name, shown, ord, made, gone FROM life_tags ORDER BY key", 6).equals(tagRows)
+                        && db.count("SELECT COUNT(*) FROM life_days WHERE minutes IS NOT NULL") == 0 && time435(db, "2019-06-14", "sauna").equals("23:30 null")
+                        && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods), schemaProblem251(db));
+        // an older history: schema 11 (no life tables yet, no sleep sounds, no nights by hand)
+        downgrade435(c, 11, "DROP TABLE life_days", "DROP TABLE life_tags", "DROP TABLE sound_nights", "DROP TABLE sound_clips", "DROP TABLE sound_gaps",
+                "DROP TABLE sleep_manual");
+        db = Db.get(c);
+        check("#435 upgrade from schema 11 with history: version " + CUR + ", life tables with the minutes column, empty; every event, night, day and period row the same",
+                db.getReadableDatabase().getVersion() == CUR && minutesColumn435(db) && lifeCount292(db) == 0 && schemaProblem251(db) == null
+                        && events58(db).equals(ev) && results139(db).equals(before) && periodRows252(db).equals(periods), schemaProblem251(db));
+        clean254();
+    }
+
+    /**
+     * Issue #435, data safety: a restore keeps the times of the phone. A backup of this version: the phone's row wins with its
+     * time and length (also "Without a time"), a row only the backup has comes back with its time and length, the same restore
+     * twice gives the same. A backup of schema 14 (no minutes column) restores at this version with the phone's rows row for
+     * row and the backup's own rows with no length. A stop in the merge restores nothing.
+     */
+    static void lifeTimesRestore435() throws Exception {
+        Context c = phone254("openring435-restore");
+        Db db = Db.get(c);
+        someLife292(db);
+        app.openring.data.LifeLog.setTime(db, "2019-03-01", app.openring.core.LifeTags.MEDITATION, "07:10", 20, 1100);
+        app.openring.data.LifeLog.setTime(db, "2019-03-20", app.openring.core.LifeTags.SAUNA, "19:00", 45, 1101);
+        app.openring.data.LifeLog.setTime(db, "2019-03-21", app.openring.core.LifeTags.FRIENDS, "18:00", 180, 1102);
+        byte[] full = backup252(c);
+        String backupRows = lifeRows292(db);
+        // after the backup: one time changed, one cleared, a new one; the backup alone keeps Friends (deleted here as a lost row)
+        app.openring.data.LifeLog.setTime(db, "2019-03-20", app.openring.core.LifeTags.SAUNA, "20:00", 30, 2000);
+        app.openring.data.LifeLog.setTime(db, "2019-03-01", app.openring.core.LifeTags.MEDITATION, null, null, 2001);
+        app.openring.data.LifeLog.setTime(db, "2019-05-01", app.openring.core.LifeTags.WORKOUT, "17:30", 90, 2002);
+        db.getWritableDatabase().execSQL("DELETE FROM life_days WHERE day = '2019-03-21'");
+        long events = db.eventCount();
+        String phone = lifeRows292(db);
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        String merged = lifeRows292(db);
+        check("#435 restore of this version: the phone's times win (changed, cleared, new), the backup's own comes back with its time and length", r.ok
+                && time435(db, "2019-03-20", "sauna").equals("20:00 30") && time435(db, "2019-03-01", "meditation").equals("null null")
+                && time435(db, "2019-05-01", "hard_workout").equals("17:30 90") && time435(db, "2019-03-21", "friends").equals("18:00 180")
+                && containsRows252(merged, phone) && db.eventCount() == events, r.message);
+        app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        db = Db.get(c);
+        check("#435 the same restore twice: the same rows", lifeRows292(db).equals(merged), null);
+        // a backup of schema 14: life_days without minutes; its times come back without a length, the phone's rows win as they are
+        // (Friends of 21 March lost on the phone again, so only the backup has it)
+        db.getWritableDatabase().execSQL("DELETE FROM life_days WHERE day = '2019-03-21'");
+        phone = lifeRows292(db);
+        byte[] old = withDb(full, alter(zipEntry(full, "openring.db"), 14, DROP15));
+        r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(old));
+        db = Db.get(c);
+        check("#435 a backup of schema 14 restores at version " + CUR + ": the phone's rows row for row, the backup's own time without a length", r.ok && r.history
+                && db.getReadableDatabase().getVersion() == CUR && minutesColumn435(db) && containsRows252(lifeRows292(db), phone)
+                && time435(db, "2019-03-21", "friends").equals("18:00 null") && db.eventCount() == events, r.message);
+        // the backup restored onto a phone without life factors: its rows row for row, times and lengths included
+        Context fresh = freshDb("openring435-fresh");
+        MADE_254.add(fresh);
+        r = app.openring.data.Backup.read(fresh, new java.io.ByteArrayInputStream(full));
+        check("#435 the backup on a phone without life factors: its rows with their times and lengths", r.ok && lifeRows292(Db.get(fresh)).equals(backupRows), r.message);
+        restart242();
+        db = Db.get(c);
+        String now = lifeRows292(db);
+        for (String step : new String[] {"read", "life", "done"}) {
+            failMerge252(step);
+            try {
+                r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+            } finally {
+                failMerge252(null);
+            }
+            db = Db.get(c);
+            check("#435 a stop at the merge step " + step + ": nothing restored, the phone's times row for row", !r.ok && lifeRows292(db).equals(now) && db.eventCount() == events, r.message);
+        }
+        noTemp(c, "after the #435 restores");
+        clean254();
+    }
+
+    /**
+     * Issue #435: the chips. A new person gets Meditation, Sauna, Friends, Alcohol, Stress, Hard workout and nothing is stored
+     * for it; a person who chose the chips before Sauna and Friends existed keeps exactly them; an own "Sauna" made by an older
+     * version stays next to the built in one (two keys, two CSV columns, each its own days), a new own Sauna is refused.
+     */
+    static void lifeChips435() throws Exception {
+        Context c = phone254("openring435-chips");
+        Db db = Db.get(c);
+        List<String> keys = new ArrayList<String>();
+        for (app.openring.core.LifeTags.Tag t : app.openring.data.LifeLog.known(db).chips()) keys.add(t.key);
+        check("#435 a new person: the default chips, nothing stored", keys.equals(app.openring.core.LifeTags.DEFAULT_CHIPS) && lifeCount292(db) == 0, keys);
+        // the choice an older version stored: its nine fixed tags, Caffeine late and Travel on the card
+        String[] old = {"meditation", "alcohol", "caffeine_late", "stress", "hard_workout", "intimacy", "holiday", "illness", "travel"};
+        for (String k : old) {
+            int ord = k.equals("caffeine_late") ? 0 : k.equals("travel") ? 1 : -1;
+            db.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES (?, NULL, ?, ?, 900, 0)",
+                    new Object[] {k, ord >= 0 ? 1L : 0L, ord >= 0 ? (Object) (long) ord : null});
+        }
+        // an own Sauna and friends made by an older version (any case), with days
+        db.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES ('own:1500000000000', 'Sauna', 1, 2, 901, 0)");
+        db.getWritableDatabase().execSQL("INSERT INTO life_tags(key, name, shown, ord, made, gone) VALUES ('own:1500000000001', 'friends', 0, NULL, 902, 0)");
+        String rows = lifeRows292(db);
+        keys.clear();
+        for (app.openring.core.LifeTags.Tag t : app.openring.data.LifeLog.known(db).chips()) keys.add(t.key);
+        check("#435 a person who chose: exactly the chosen chips in their order, Sauna and Friends not added, no row written by reading",
+                keys.equals(Arrays.asList("caffeine_late", "travel", "own:1500000000000")) && lifeRows292(db).equals(rows), keys);
+        app.openring.core.LifeTags.Known k = app.openring.data.LifeLog.known(db);
+        check("#435 an own Sauna next to the built in one: two keys, both listed in All factors, each named Sauna", k.all.containsKey("sauna")
+                && k.all.containsKey("own:1500000000000") && k.name("own:1500000000000").equals("Sauna") && k.name("sauna").equals("Sauna")
+                && k.key("own:1500000000000").equals("own:1500000000000"), k.all);
+        app.openring.data.LifeLog.set(db, "2019-08-01", "sauna", true, 1000);
+        app.openring.data.LifeLog.set(db, "2019-08-01", "own:1500000000000", true, 1001);
+        app.openring.data.LifeLog.setTime(db, "2019-08-02", "own:1500000000000", "21:00", 30, 1002);
+        app.openring.data.LifeLog.set(db, "2019-08-03", "sauna", true, 1003);
+        check("#435 each Sauna keeps its own days and times", app.openring.data.LifeLog.on(db, "2019-08-01").equals(Arrays.asList("own:1500000000000", "sauna"))
+                && app.openring.data.LifeLog.on(db, "2019-08-03").equals(Arrays.asList("sauna")) && time435(db, "2019-08-02", "own:1500000000000").equals("21:00 30"), null);
+        check("#435 a new own tag named Sauna or Friends (any case) is refused", app.openring.data.LifeLog.addOwn(db, "SAUNA", 1600000000000L) == null
+                && app.openring.data.LifeLog.addOwn(db, "Friends", 1600000000001L) == null, null);
+        // a removed own Sauna comes back by its name (#422), also now that Sauna is a fixed tag (review of #444), with its days
+        app.openring.data.LifeLog.removeOwn(db, "own:1500000000000", 1004);
+        long tagRows = db.count("SELECT COUNT(*) FROM life_tags");
+        String back = app.openring.data.LifeLog.addOwn(db, " sauna ", 1600000000002L);
+        check("#435 a removed own Sauna brought back by its name: the same key, in force, its days kept, no new key",
+                "own:1500000000000".equals(back) && app.openring.data.LifeLog.known(db).own().toString().contains("own:1500000000000=Sauna")
+                && db.count("SELECT COUNT(*) FROM life_tags") == tagRows && time435(db, "2019-08-02", "own:1500000000000").equals("21:00 30"), back);
+        check("#435 the own Sauna in force again: a new one with the name is refused", app.openring.data.LifeLog.addOwn(db, "Sauna", 1600000000003L) == null, null);
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        p.setCsvLife(true);
+        String head = csvText292(c).split("\n")[0];
+        p.setCsvLife(false);
+        check("#435 the CSV: a column for the built in Sauna and Friends and one for each own tag", head.contains("life_sauna,life_friends") && head.contains("life_own_sauna")
+                && head.contains("life_own_friends"), head);
+        // the chips chosen again now store the new tags too, and a choice made then stays as made
+        app.openring.data.LifeLog.setChips(db, Arrays.asList("sauna", "meditation"), 1100);
+        keys.clear();
+        for (app.openring.core.LifeTags.Tag t : app.openring.data.LifeLog.known(db).chips()) keys.add(t.key);
+        check("#435 Sauna chosen for the card: the chips as chosen", keys.equals(Arrays.asList("sauna", "meditation"))
+                && db.count("SELECT COUNT(*) FROM life_tags WHERE key IN ('sauna', 'friends')") == 2, keys);
+        clean254();
+    }
+
+    /**
+     * Issue #435: five years of tags with a time and a length on every day (about 11,000 rows) are read in under a second or
+     * two and carried through a restore of an older backup row for row; the demo has its made up times, with a higher heart
+     * rate during yesterday's sauna than over its day, in the demo file only.
+     */
+    static void lifeTimesLarge435() throws Exception {
+        Context c = phone254("openring435-large");
+        final Db db = Db.get(c);
+        byte[] full = backup252(c);
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                LocalDate d = LocalDate.parse("2014-01-01");
+                String[] keys = {"meditation", "sauna", "friends", "hard_workout", "alcohol", "intimacy"};
+                for (int i = 0; i < 5 * 365; i++, d = d.plusDays(1)) {
+                    for (int k = 0; k < keys.length; k++) {
+                        Integer len = keys[k].equals("alcohol") ? null : (Integer) app.openring.core.LifeTimes.lengths(keys[k])[i % app.openring.core.LifeTimes.lengths(keys[k]).length];
+                        app.openring.data.LifeLog.setTime(db, d.toString(), keys[k], app.openring.core.LifeTimes.clock((i * 37 + k * 180) % 1440), len, 1e9 + i);
+                    }
+                }
+            }
+        });
+        String rows = lifeRows292(db);
+        long t = System.nanoTime();
+        List<app.openring.core.LifeTimes.Entry> all = app.openring.data.LifeLog.times(db);
+        double read = (System.nanoTime() - t) / 1e9;
+        t = System.nanoTime();
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(c, new java.io.ByteArrayInputStream(full));
+        double s = (System.nanoTime() - t) / 1e9;
+        System.out.printf("    #435 five years of times (%d rows): read in %.2f s, a restore of an older backup in %.2f s%n", all.size(), read, s);
+        check("#435 five years of six times a day (" + all.size() + " rows): read in seconds, through a restore row for row", r.ok && all.size() == 6 * 5 * 365
+                && read < 5 && s < 60 && lifeRows292(Db.get(c)).equals(rows), read + " s, " + s + " s");
+        clean254();
+        // the demo's times (demo mode only), and what its ring measured during yesterday's sauna
+        Context dc = phone254("openring435-demo");
+        final LocalDate today = LocalDate.now().minusDays(1);
+        final long now = today.atTime(14, 0).atZone(ZoneId.systemDefault()).toEpochSecond();
+        try {
+            setStatic("testNow", now);
+            app.openring.data.Demo.enter(dc, null, today, now);
+            Db demo = Db.get(dc);
+            List<app.openring.core.LifeTimes.Entry> dt = app.openring.data.LifeLog.times(demo);
+            check("#435 demo: its made up times in the demo file", Db.DEMO.equals(demo.fileName)
+                    && dt.toString().equals(sortTimes435(app.openring.core.LifeTimes.demo(today))), dt);
+            LocalDate y = today.minusDays(1);
+            String json = null;
+            android.database.Cursor cur = demo.getReadableDatabase().rawQuery("SELECT json FROM days WHERE day = ?", new String[] {y.toString()});
+            try {
+                if (cur.moveToFirst()) json = cur.getString(0);
+            } finally {
+                cur.close();
+            }
+            ZoneId z = ZoneId.systemDefault();
+            app.openring.core.analysis.TS line = app.openring.data.Json.series(json == null ? null : new JSONObject(json).optJSONArray("hr_day"));
+            double ds = y.atStartOfDay(z).toEpochSecond(), de = y.plusDays(1).atStartOfDay(z).toEpochSecond();
+            app.openring.core.analysis.DayHeart dh = app.openring.core.analysis.DayHeart.of(line, ds, de);
+            app.openring.core.LifeTimes.Band b = app.openring.core.LifeTimes.band(y, "sauna", "Sauna", "19:00", 45, z);
+            double during = app.openring.core.LifeTimes.during(line, b, app.openring.core.analysis.DayHeart.STEP_S);
+            System.out.printf("    #435 demo: heart rate during yesterday's sauna %.0f, the day's average %.0f%n", during, dh.avg);
+            check("#435 demo: the ring measured a higher heart rate during yesterday's sauna than over the day (more than 20 above)", during > dh.avg + 20 && during < 130,
+                    during + " vs " + dh.avg);
+            // the same demo without the saunas' beats: every night and every other day's summary exactly the same
+            List<String> with = results139(demo);
+            app.openring.data.Demo.leave(dc);
+            Context dc2 = phone254("openring435-demo2");
+            List<String> without;
+            try {
+                setField252(app.openring.data.Demo.class, "saunaBeats", false);
+                app.openring.data.Demo.enter(dc2, null, today, now);
+                without = results139(Db.get(dc2));
+            } finally {
+                setField252(app.openring.data.Demo.class, "saunaBeats", true);
+            }
+            app.openring.data.Demo.leave(dc2);
+            // the five weeks (the made up year before them copies some of their days, Demo.olderYear, the sauna days among them)
+            with = fiveWeeks292(with, today);
+            without = fiveWeeks292(without, today);
+            List<String> differ = new ArrayList<String>();
+            for (String row : with) if (!without.contains(row)) differ.add(row.split(" ", 3)[0] + " " + row.split(" ", 3)[1]);
+            java.util.Collections.sort(differ);
+            List<String> want = Arrays.asList("day " + today.minusDays(8), "day " + today.minusDays(1));
+            check("#435 demo: the saunas' beats change only the two sauna days' summaries, every night and other day of the five weeks as before",
+                    with.size() == without.size() && differ.equals(want), differ);
+        } finally {
+            setStatic("testNow", 0L);
+        }
+        File realFile = dc.getDatabasePath(Db.REAL);
+        long inReal;
+        try (java.sql.Connection cn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + realFile.getPath());
+             java.sql.ResultSet rs = cn.createStatement().executeQuery("SELECT COUNT(*) FROM life_days")) {
+            rs.next();
+            inReal = rs.getLong(1);
+        }
+        check("#435 demo: the real file holds no demo time", inReal == 0, inReal);
+        clean254();
+    }
+
+    /** {@code e} sorted as {@code LifeLog.times} reads them (by day, then key). */
+    static String sortTimes435(List<app.openring.core.LifeTimes.Entry> e) {
+        List<app.openring.core.LifeTimes.Entry> s = new ArrayList<app.openring.core.LifeTimes.Entry>(e);
+        java.util.Collections.sort(s, new java.util.Comparator<app.openring.core.LifeTimes.Entry>() {
+            @Override
+            public int compare(app.openring.core.LifeTimes.Entry a, app.openring.core.LifeTimes.Entry b) {
+                int c = a.day.compareTo(b.day);
+                return c != 0 ? c : a.key.compareTo(b.key);
+            }
+        });
+        return s.toString();
     }
 
     // ---------------------------------------------------------------- issue #380, phase 1a: sleep sounds
@@ -16729,6 +17205,1005 @@ public class PipelineTest {
         check("#427 five years of nights by hand: every one counted by Further analysis, with the ring's", h.nights == ringNights + 1826 && read < 30, h.nights + " " + read);
         check("#427 five years of nights by hand go through a restore of an older backup row for row, in seconds", r.ok && r.history && handRows427(Db.get(c)).equals(rows)
                 && handCount427(Db.get(c)) == 1826 && restore < 60, restore);
+        clean254();
+    }
+
+    // ------------------------------------------------------------------------------------- sleep sounds, phase 1b (issue #380)
+
+    static final double T1B = 1_790_000_000; // 2026-09-21, the made up nights' start
+    static final int RATE1B = app.openring.core.analysis.SoundDetector.RATE;
+
+    /** Made up audio (no recording): a quiet room with sounds, each {at s, length s, kind 0 talk 1 cough 2 snore, amplitude}. */
+    static short[] audio1b(double seconds, long seed, double[]... sounds) {
+        Random r = new Random(seed);
+        double[] a = new double[(int) Math.round(seconds * RATE1B)];
+        for (int i = 0; i < a.length; i++) a[i] = r.nextGaussian() * 30;
+        for (double[] s : sounds) {
+            int from = (int) Math.round(s[0] * RATE1B), n = (int) Math.round(s[1] * RATE1B);
+            for (int i = 0; i < n && from + i < a.length; i++) {
+                double t = i / (double) RATE1B, e = Math.min(1, Math.min(t, s[1] - t) / 0.03);
+                double v;
+                if (s[2] == 1) v = Math.min(1, t / 0.01) * Math.exp(-t / 0.4) * r.nextGaussian() * 0.6;
+                else if (s[2] == 2) v = Math.min(1, Math.min(t, s[1] - t) / 0.25) * (Math.sin(2 * Math.PI * 90 * t) + 0.4 * Math.sin(2 * Math.PI * 180 * t + 1)) / 1.4;
+                else v = e * (0.65 + 0.35 * Math.sin(2 * Math.PI * 4 * t)) * (Math.sin(2 * Math.PI * 150 * t) + 0.5 * Math.sin(2 * Math.PI * 300 * t)) / 1.5;
+                a[from + i] += s[3] * v;
+            }
+        }
+        short[] out = new short[a.length];
+        for (int i = 0; i < a.length; i++) out[i] = (short) Math.max(-32768, Math.min(32767, Math.round(a[i])));
+        return out;
+    }
+
+    /** Feeds {@code s} in pieces of 100 ms, each with the clock at its last sample ({@code start} plus the samples so far). */
+    static boolean feed1b(app.openring.data.SoundNight n, short[] s, double start) {
+        int piece = RATE1B / 10;
+        for (int i = 0; i < s.length; i += piece) {
+            int len = Math.min(piece, s.length - i);
+            if (!n.feed(s, i, len, start + (i + len) / (double) RATE1B)) return false;
+        }
+        return true;
+    }
+
+    /** A stand in for the phone's AAC encoder: writes the clip (as WAV bytes) under .m4a; its first {@code fail} calls fail half way. */
+    static final class Writer1b implements app.openring.data.SoundNight.Writer {
+        int calls, fail;
+
+        @Override
+        public String ext() {
+            return ".m4a";
+        }
+
+        @Override
+        public void write(File f, short[] pcm, int off, int len) throws Exception {
+            calls++;
+            Files.write(f.toPath(), app.openring.core.SleepSounds.wav(pcm, off, len, RATE1B));
+            if (calls <= fail) throw new java.io.IOException("made up encoder failure");
+        }
+    }
+
+    /** Null when every mark with sound names a file in {@code folder} and every file there is named by one; else what is wrong. */
+    static String consistent1b(Db db, File folder) {
+        java.util.Set<String> named = new java.util.HashSet<String>();
+        StringBuilder bad = new StringBuilder();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start, file FROM sound_clips WHERE gone = 0", null);
+        try {
+            while (c.moveToNext()) {
+                String f = c.getString(1);
+                if (!named.add(f)) bad.append("twice ").append(f).append(' ');
+                if (!new File(folder, f).isFile()) bad.append("missing ").append(f).append(' ');
+            }
+        } finally {
+            c.close();
+        }
+        for (String f : files380(folder)) if (!named.contains(f)) bad.append("orphan ").append(f).append(' ');
+        return bad.length() == 0 ? null : bad.toString();
+    }
+
+    static String kinds1b(Db db) {
+        StringBuilder b = new StringBuilder();
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT kind, gone FROM sound_clips ORDER BY start", null);
+        try {
+            while (c.moveToNext()) b.append(c.getString(0)).append(c.getLong(1) == 0 ? "" : "-gone").append(' ');
+        } finally {
+            c.close();
+        }
+        return b.toString().trim();
+    }
+
+    static String night1b(Db db, double start) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT stop, clips, ended FROM sound_nights WHERE start = ?", new String[] {String.valueOf(start)});
+        try {
+            return c.moveToFirst() ? Math.round(c.getDouble(0) - start) + " " + c.getLong(1) + " " + c.getString(2) : null;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
+     * Issue #380, phase 1b: a night fed made up audio stores each mark the detector decides (talking, a cough, a snoring
+     * stretch), each with its clip file in the real folder named after its sound, the files holding the clip's samples, no
+     * file without its mark; the night's row closes with its stop, clip count and why. The marks are the detector's own.
+     */
+    static void soundNight1b380() throws Exception {
+        Context c = phone254("openring380-1b-night");
+        Db db = Db.get(c);
+        short[] s = audio1b(90, 1, new double[] {20, 3, 0, 3000}, new double[] {40, 0.5, 1, 9000},
+                new double[] {55, 1.2, 2, 2500}, new double[] {59, 1.2, 2, 2500}, new double[] {63, 1.2, 2, 2500});
+        // 3 s of digital silence at 80 s: another app held the microphone
+        Arrays.fill(s, 80 * RATE1B, 83 * RATE1B, (short) 0);
+        check("#380 1b: nothing listens before the start", !app.openring.data.SoundNight.isRunning() && Double.isNaN(app.openring.data.SoundNight.runningStart())
+                && app.openring.data.SoundNight.runningSounds() == 0, null);
+        Writer1b w = new Writer1b();
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, w);
+        try {
+            check("#380 1b: a night listening is known to the screens", app.openring.data.SoundNight.isRunning() && app.openring.data.SoundNight.runningStart() == T1B, null);
+            check("#380 1b: its row is written at the start, still open", "0 0 null".equals(night1b(db, T1B)), night1b(db, T1B));
+            boolean fed = feed1b(n, s, T1B);
+            check("#380 1b: while listening the card counts the night's 3 sounds so far", app.openring.data.SoundNight.runningSounds() == 3,
+                    app.openring.data.SoundNight.runningSounds());
+            n.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: the 3 s of digital silence are a gap of silence", db.count("SELECT COUNT(*) FROM sound_gaps WHERE why = 'silence' AND start >= " + (T1B + 79.9)
+                    + " AND stop <= " + (T1B + 83.1)) == 1, soundRows380(db));
+            app.openring.core.analysis.SoundDetector d = new app.openring.core.analysis.SoundDetector(T1B, 10);
+            d.feed(s);
+            d.finish();
+            StringBuilder want = new StringBuilder();
+            for (app.openring.core.analysis.SoundDetector.Mark m : d.marks()) want.append(m.kind).append(' ');
+            check("#380 1b: the marks stored are the detector's: talking, a cough, one snoring stretch", fed && kinds1b(db).equals(want.toString().trim())
+                    && "talk cough snore".equals(kinds1b(db)), kinds1b(db));
+            File real = app.openring.data.Sounds.folder(c, false);
+            check("#380 1b: every mark with sound names its file in the real folder, and no file is left without a mark", consistent1b(db, real) == null
+                    && files380(real).size() == 3, consistent1b(db, real) + " " + files380(real));
+            boolean named = true;
+            for (String f : files380(real)) named &= f.matches("s\\d+\\.m4a");
+            check("#380 1b: clip files are named after their sound's start, with the encoder's ending", named, files380(real));
+            File talk = new File(real, "s" + Math.round((T1B + 20) * 1000) + ".m4a");
+            long bytes = talk.isFile() ? talk.length() : -1;
+            check("#380 1b: the talking clip holds 5 s before, the sound and 3 s after (about 11 s of samples)", Math.abs((bytes - 44) / 2.0 / RATE1B - 11) < 0.2, bytes);
+            check("#380 1b: the night closes with its stop, its 3 clips and why", "90 3 hand".equals(night1b(db, T1B)), night1b(db, T1B));
+            check("#380 1b: nothing listens after the end, and feeding more is refused", !app.openring.data.SoundNight.isRunning() && n.closed()
+                    && !n.feed(s, 0, 1600, T1B + 100), null);
+            n.finish(app.openring.data.Sounds.ENDED_TIME);
+            check("#380 1b: finishing twice changes nothing", "90 3 hand".equals(night1b(db, T1B)), night1b(db, T1B));
+            app.openring.data.Sounds.Night shown = app.openring.data.Sounds.night(db, T1B);
+            check("#380 1b: the screens read the night with its marks and sounds", shown != null && shown.clips.size() == 3 && shown.clips.get(0).sound()
+                    && app.openring.core.SleepSounds.summary(shown.marks()).startsWith("3 sounds: snoring"), shown == null ? null : app.openring.core.SleepSounds.summary(shown.marks()));
+            boolean twice = false;
+            app.openring.data.SoundNight a = app.openring.data.SoundNight.start(c, T1B + 1000, 10, null);
+            try {
+                app.openring.data.SoundNight.start(c, T1B + 2000, 10, null);
+            } catch (IllegalStateException e) {
+                twice = true;
+            }
+            a.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: a second night cannot start while one listens", twice, null);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        clean254();
+    }
+
+    /** The encoder fails: the clip goes to WAV (the half written file removed), and so does the rest of the night. */
+    static void soundEncoder1b380() throws Exception {
+        Context c = phone254("openring380-1b-wav");
+        Db db = Db.get(c);
+        short[] s = audio1b(80, 2, new double[] {15, 2, 0, 3000}, new double[] {35, 2, 0, 3000}, new double[] {55, 2, 0, 3000});
+        Writer1b w = new Writer1b();
+        w.fail = 1;
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, w);
+        try {
+            feed1b(n, s, T1B);
+            n.finish(app.openring.data.Sounds.ENDED_TIME);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        File real = app.openring.data.Sounds.folder(c, false);
+        boolean wav = !files380(real).isEmpty();
+        for (String f : files380(real)) wav &= f.endsWith(".wav");
+        check("#380 1b: after the encoder failed once, every clip is a WAV file and no half written .m4a is left", wav && files380(real).size() == 3 && w.calls == 1,
+                files380(real) + " " + w.calls);
+        check("#380 1b: the WAV clips are named by their marks", consistent1b(db, real) == null, consistent1b(db, real));
+        byte[] head = Files.readAllBytes(new File(real, files380(real).get(0)).toPath());
+        check("#380 1b: a WAV clip is a real WAV file", new String(head, 0, 4, "US-ASCII").equals("RIFF") && new String(head, 8, 4, "US-ASCII").equals("WAVE"), null);
+        clean254();
+    }
+
+    /** 62 sounds, louder and louder: the 60 clip limit gives up the quietest; their files go, their marks stay without sound. */
+    static void soundLimit1b380() throws Exception {
+        Context c = phone254("openring380-1b-limit");
+        Db db = Db.get(c);
+        double[][] sounds = new double[62][];
+        for (int i = 0; i < sounds.length; i++) sounds[i] = new double[] {10 + 12 * i, 1.5, 0, 1000 + 60 * i};
+        short[] s = audio1b(10 + 12 * 62 + 10, 3, sounds);
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        try {
+            feed1b(n, s, T1B);
+            n.finish(app.openring.data.Sounds.ENDED_TIME);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        File real = app.openring.data.Sounds.folder(c, false);
+        check("#380 1b: 62 sounds, 60 clips: 62 marks, 60 with sound, 60 files, each named by its mark", db.count("SELECT COUNT(*) FROM sound_clips") == 62
+                && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 60 && files380(real).size() == 60 && consistent1b(db, real) == null,
+                db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") + " " + files380(real).size() + " " + consistent1b(db, real));
+        check("#380 1b: the two given up are the quietest (the first two)", db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 1 AND start < " + (T1B + 40)) == 2, null);
+        check("#380 1b: the night counts its 60 clips", night1b(db, T1B) != null && night1b(db, T1B).contains(" 60 "), night1b(db, T1B));
+        clean254();
+    }
+
+    /** The audio falls behind the clock (the phone dropped 20 s): a new detector at the clock's time, the time between a gap. */
+    static void soundDrift1b380() throws Exception {
+        Context c = phone254("openring380-1b-drift");
+        Db db = Db.get(c);
+        short[] first = audio1b(30, 4, new double[] {12, 2, 0, 3000});
+        short[] second = audio1b(30, 5, new double[] {12, 2, 0, 3000});
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        try {
+            feed1b(n, first, T1B);
+            // 20 s of audio never came: the next pieces arrive with the clock 20 s later
+            feed1b(n, second, T1B + 50);
+            n.finish(app.openring.data.Sounds.ENDED_HAND);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        List<Double> starts = new ArrayList<Double>();
+        android.database.Cursor q = db.getReadableDatabase().rawQuery("SELECT start FROM sound_clips ORDER BY start", null);
+        try {
+            while (q.moveToNext()) starts.add(q.getDouble(0));
+        } finally {
+            q.close();
+        }
+        check("#380 1b: after the dropped audio the mark is at the clock's time (62 s), not moved earlier (42 s)", starts.size() == 2
+                && Math.abs(starts.get(0) - (T1B + 12)) < 0.1 && Math.abs(starts.get(1) - (T1B + 62)) < 0.2, starts);
+        check("#380 1b: the missing 20 s are a gap of the system", db.count("SELECT COUNT(*) FROM sound_gaps WHERE why = 'system' AND start >= " + (T1B + 29.9)
+                + " AND start <= " + (T1B + 30.1) + " AND stop >= " + (T1B + 49.9) + " AND stop <= " + (T1B + 50.1)) == 1, soundRows380(db));
+        File real = app.openring.data.Sounds.folder(c, false);
+        check("#380 1b: both clips saved and named after a restart of the detector", consistent1b(db, real) == null && files380(real).size() == 2, files380(real));
+        // review of #450: a small loss (2 s of pieces dropped) is a gap too; timing noise of a few hundred ms is not
+        app.openring.data.SoundNight m = app.openring.data.SoundNight.start(c, T1B + 3600, 10, new Writer1b());
+        try {
+            feed1b(m, Arrays.copyOf(first, 10 * RATE1B), T1B + 3600);
+            feed1b(m, Arrays.copyOfRange(first, 10 * RATE1B, 20 * RATE1B), T1B + 3600 + 10.3);
+            feed1b(m, Arrays.copyOfRange(first, 20 * RATE1B, first.length), T1B + 3600 + 22.3);
+            m.finish(app.openring.data.Sounds.ENDED_HAND);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        check("#380 1b: 2 s of lost pieces are one gap of the system; 0.3 s late is no gap", db.count("SELECT COUNT(*) FROM sound_gaps WHERE why = 'system' AND start >= "
+                + (T1B + 3600)) == 1 && db.count("SELECT COUNT(*) FROM sound_gaps WHERE why = 'system' AND start >= " + (T1B + 3600 + 19.9)
+                + " AND start <= " + (T1B + 3600 + 20.1) + " AND stop >= " + (T1B + 3600 + 22.2) + " AND stop <= " + (T1B + 3600 + 22.4)) == 1, soundRows380(db));
+        clean254();
+    }
+
+    /** A night the phone ended without a word (the app was killed): closed as "system" at the next start, its stop the last known minute. */
+    static void soundStale1b380() throws Exception {
+        Context c = phone254("openring380-1b-stale");
+        Db db = Db.get(c);
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        feed1b(n, audio1b(150, 6), T1B);
+        // the process dies: nothing more is written (stopRunning writes nothing, as a killed app)
+        app.openring.data.SoundNight.stopRunning();
+        String left = night1b(db, T1B);
+        app.openring.data.SoundNight b = app.openring.data.SoundNight.start(c, T1B + 3600, 10, new Writer1b());
+        try {
+            check("#380 1b: a killed night keeps its last minute and no reason", left != null && left.endsWith("null") && Long.parseLong(left.split(" ")[0]) >= 120, left);
+            check("#380 1b: the next start closes it as ended by the system, its stop kept", night1b(db, T1B).equals(left.replace("null", "system"))
+                    && night1b(db, T1B + 3600).endsWith("null"), night1b(db, T1B) + " / " + night1b(db, T1B + 3600));
+            b.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: the new night is not touched by its own start", night1b(db, T1B + 3600).endsWith("hand"), night1b(db, T1B + 3600));
+            app.openring.data.Sounds.Night shown = app.openring.data.Sounds.night(db, T1B);
+            check("#380 1b: the card says Android ended it", shown != null && app.openring.core.SleepSounds.endedLine(shown.ended, shown.stop, Z58) != null, null);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        clean254();
+    }
+
+    /**
+     * Design review of #380: Delete all while listening leaves no row and no file, and the night writes nothing afterwards (its
+     * next piece is refused, which stops the service). Also with the audio fed from another thread while Delete all runs.
+     */
+    static void soundDeleteAll1b380() throws Exception {
+        Context c = phone254("openring380-1b-delete");
+        Db db = Db.get(c);
+        final short[] s = audio1b(60, 7, new double[] {10, 2, 0, 3000}, new double[] {30, 2, 0, 3000}, new double[] {50, 2, 0, 3000});
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        File real = app.openring.data.Sounds.folder(c, false);
+        try {
+            feed1b(n, Arrays.copyOf(s, 25 * RATE1B), T1B);
+            check("#380 1b (test setup): listening has a clip file and rows", files380(real).size() == 1 && soundCount380(db) >= 2, files380(real));
+            app.openring.data.DeleteAll.run(c);
+            check("#380 1b: Delete all while listening: no sound row and no clip file", soundCount380(db) == 0 && files380(real).isEmpty()
+                    && notEmpty272(db).isEmpty(), soundRows380(db) + files380(real));
+            boolean refused = !n.feed(s, 25 * RATE1B, 1600, T1B + 25.1);
+            feed1b(n, Arrays.copyOfRange(s, 25 * RATE1B, s.length), T1B + 25);
+            n.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: after Delete all the night writes nothing: its next piece is refused, no row and no file come back", refused
+                    && soundCount380(db) == 0 && files380(real).isEmpty() && !app.openring.data.SoundNight.isRunning(), soundRows380(db) + files380(real));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        // the same with the microphone's pieces coming from another thread while Delete all runs
+        final app.openring.data.SoundNight m = app.openring.data.SoundNight.start(c, T1B + 7200, 10, new Writer1b());
+        final short[] long1 = audio1b(240, 8, new double[] {10, 2, 0, 3000}, new double[] {40, 2, 0, 3000}, new double[] {70, 2, 0, 3000},
+                new double[] {100, 2, 0, 3000}, new double[] {130, 2, 0, 3000}, new double[] {160, 2, 0, 3000}, new double[] {190, 2, 0, 3000});
+        final boolean[] stopped = {false};
+        Thread mic = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                stopped[0] = !feed1b(m, long1, T1B + 7200);
+            }
+        });
+        try {
+            mic.start();
+            while (files380(real).isEmpty() && mic.isAlive()) Thread.sleep(1);
+            app.openring.data.DeleteAll.run(c);
+            mic.join(60000);
+            check("#380 1b: Delete all while another thread feeds the night: the feeding stops, no row and no file afterwards", stopped[0]
+                    && soundCount380(db) == 0 && files380(real).isEmpty(), stopped[0] + " " + soundRows380(db) + files380(real));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+            mic.join(60000);
+        }
+        // review of #450: Delete all fails while listening: nothing deleted, and the night goes on and ends as it should
+        app.openring.data.SoundNight k = app.openring.data.SoundNight.start(c, T1B + 14400, 10, new Writer1b());
+        try {
+            feed1b(k, Arrays.copyOf(s, 25 * RATE1B), T1B + 14400);
+            // a gap row, so the trigger below has a row to stop on
+            app.openring.data.Sounds.addGap(db, N380, N380 + 60, app.openring.data.Sounds.GAP_SILENCE);
+            String rows = soundRows380(db);
+            List<String> files = files380(real);
+            db.getWritableDatabase().execSQL("CREATE TRIGGER stop_sound BEFORE DELETE ON sound_gaps BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+            Throwable got = null;
+            try {
+                app.openring.data.DeleteAll.run(c);
+            } catch (RuntimeException e) {
+                got = e;
+            }
+            db.getWritableDatabase().execSQL("DROP TRIGGER stop_sound");
+            check("#380 1b: Delete all fails while listening: every row and file as before, the night still listening", got != null && soundRows380(db).equals(rows)
+                    && files380(real).equals(files) && app.openring.data.SoundNight.isRunning() && !k.closed(), got);
+            boolean goesOn = feed1b(k, Arrays.copyOfRange(s, 25 * RATE1B, s.length), T1B + 14400 + 25);
+            k.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: after the failed Delete all the night ends as it should: its 3 marks with their clips, ended by hand", goesOn
+                    && "60 3 hand".equals(night1b(db, T1B + 14400)) && consistent1b(db, real) == null, night1b(db, T1B + 14400) + " " + consistent1b(db, real));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        clean254();
+    }
+
+    /** "Delete all clips of this night" while it listens: it stops first, its rows and files go, an older night stays. */
+    static void soundDeleteNight1b380() throws Exception {
+        Context c = phone254("openring380-1b-night-delete");
+        Db db = Db.get(c);
+        someSounds380(c, db);
+        File real = app.openring.data.Sounds.folder(c, false);
+        String older = soundRows380(db);
+        List<String> olderFiles = files380(real);
+        short[] s = audio1b(40, 9, new double[] {10, 2, 0, 3000});
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        try {
+            feed1b(n, s, T1B);
+            check("#380 1b (test setup): the night listening has its clip", files380(real).size() == olderFiles.size() + 1, files380(real));
+            int gone = app.openring.data.SoundNight.deleteNight(c, db, T1B);
+            check("#380 1b: Delete all clips of this night while it listens: it stops and writes nothing more", gone == 1 && !app.openring.data.SoundNight.isRunning()
+                    && !n.feed(s, 0, 1600, T1B + 41), gone);
+            check("#380 1b: its rows and file are gone, the older night is as it was", soundRows380(db).equals(older) && files380(real).equals(olderFiles), soundRows380(db));
+            check("#380 1b: deleting the older night removes its rows and files", app.openring.data.SoundNight.deleteNight(c, db, N380) == 4 && soundCount380(db) == 0
+                    && files380(real).isEmpty(), soundRows380(db) + files380(real));
+            check("#380 1b: deleting a night that is not there deletes nothing", app.openring.data.SoundNight.deleteNight(c, db, N380) == 0, null);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        // Delete sound (one clip): the file goes, the mark stays without sound
+        someSounds380(c, db);
+        check("#380 1b: Delete sound: the file goes, the mark stays without sound", app.openring.data.Sounds.deleteSound(db, real, N380 + 100)
+                && !new File(real, "a380.m4a").exists() && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 1 AND start = " + (N380 + 100)) == 1
+                && db.count("SELECT COUNT(*) FROM sound_clips") == 4, files380(real));
+        clean254();
+    }
+
+    /** Listening while demo mode is shown writes into the real history and the real folder, never the demo's. */
+    static void soundDemoMode1b380() throws Exception {
+        Context c = phone254("openring380-1b-demo");
+        app.openring.data.Prefs.of(c).setDemo(true);
+        Db demo = Db.get(c);
+        check("#380 1b (test setup): the demo file is shown", Db.DEMO.equals(demo.fileName), demo.fileName);
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        try {
+            feed1b(n, audio1b(40, 10, new double[] {10, 2, 0, 3000}), T1B);
+            n.finish(app.openring.data.Sounds.ENDED_HAND);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        check("#380 1b: listening in demo mode writes nothing into the demo file or its folder", soundCount380(demo) == 0
+                && files380(app.openring.data.Sounds.folder(c, true)).isEmpty(), soundRows380(demo));
+        app.openring.data.Prefs.of(c).setDemo(false);
+        Db real = Db.get(c);
+        check("#380 1b: it went into the real history and the real folder", Db.REAL.equals(real.fileName) && real.count("SELECT COUNT(*) FROM sound_clips") == 1
+                && files380(app.openring.data.Sounds.folder(c, false)).size() == 1 && consistent1b(real, app.openring.data.Sounds.folder(c, false)) == null,
+                soundRows380(real));
+        clean254();
+    }
+
+    /**
+     * The settings of sleep sounds through a backup: how long clips keep their sound, the microphone test and its threshold,
+     * the bedtime notification; never the consent. An older backup without them keeps the phone's.
+     */
+    static void soundSettings1b380() throws Exception {
+        Context c = phone254("openring380-1b-settings");
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        check("#380 1b: the defaults: 7 days, 10 dB, not tested, the notification on, no consent", p.soundKeepDays() == 7 && p.soundThreshold() == 10
+                && p.soundTested() == 0 && Double.isNaN(p.soundMargin()) && p.soundRemind() && !p.soundConsent(), null);
+        p.setSoundMicDenied(true);
+        p.setSoundRemindSent("2026-11-22");
+        check("#380 1b: the microphone's refusal and the day of the last notification are remembered", p.soundMicDenied() && "2026-11-22".equals(p.soundRemindSent()), null);
+        p.setSoundKeepDays(14);
+        check("#380 1b: 14 days is not a choice and is not stored", p.soundKeepDays() == 7, p.soundKeepDays());
+        p.setSoundKeepDays(30);
+        p.setSoundTest(1_790_000_000L, 22.4);
+        p.setSoundRemind(false);
+        p.setSoundConsent(true);
+        check("#380 1b: the test stores its margin and half of it as the threshold", p.soundThreshold() == 11.2 && p.soundMargin() == 22.4
+                && p.soundTested() == 1_790_000_000L, p.soundThreshold());
+        byte[] full = backup252(c);
+        Context phone2 = phone254("openring380-1b-settings2");
+        app.openring.data.Backup.Result r = app.openring.data.Backup.read(phone2, new java.io.ByteArrayInputStream(full));
+        app.openring.data.Prefs q = app.openring.data.Prefs.of(phone2);
+        check("#380 1b: a restore brings back 30 days, the test (22.4 dB, 11.2 dB threshold) and the notification off", r.ok && q.soundKeepDays() == 30
+                && q.soundThreshold() == 11.2 && q.soundMargin() == 22.4 && q.soundTested() == 1_790_000_000L && !q.soundRemind(), r.message);
+        check("#380 1b: the consent and the microphone's refusal are never in a backup (a new phone asks again)", !q.soundConsent() && !q.soundMicDenied()
+                && q.soundRemindSent() == null, null);
+        String json = new String(zipEntry(full, "openring-backup.json"), "UTF-8");
+        check("#380 1b: the backup's settings hold no consent and no sound", !json.contains("sound_consent") && !json.contains(".m4a") && !json.contains(".wav"), null);
+        // an older backup without the keys: the phone keeps its own
+        byte[] old = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+            @Override
+            public void accept(JSONObject o) {
+                for (String k : new String[] {"sound_keep", "sound_threshold", "sound_tested", "sound_margin", "sound_remind"}) o.remove(k);
+            }
+        });
+        Context phone3 = phone254("openring380-1b-settings3");
+        app.openring.data.Prefs t = app.openring.data.Prefs.of(phone3);
+        t.setSoundKeepDays(0);
+        t.setSoundTest(1_780_000_000L, 13);
+        app.openring.data.Backup.Result r3 = app.openring.data.Backup.read(phone3, new java.io.ByteArrayInputStream(old));
+        check("#380 1b: an older backup without them keeps the phone's: until deleted, its own test", r3.ok && t.soundKeepDays() == 0 && t.soundThreshold() == 6.5
+                && t.soundMargin() == 13 && t.soundTested() == 1_780_000_000L && t.soundRemind(), r3.message + " " + t.soundThreshold());
+        // a value that is not a choice in a backup is not taken
+        byte[] odd = editJson288(full, new java.util.function.Consumer<JSONObject>() {
+            @Override
+            public void accept(JSONObject o) {
+                try {
+                    o.put("sound_keep", 14);
+                    o.put("sound_threshold", 400);
+                } catch (org.json.JSONException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        });
+        Context phone4 = phone254("openring380-1b-settings4");
+        app.openring.data.Backup.read(phone4, new java.io.ByteArrayInputStream(odd));
+        app.openring.data.Prefs u = app.openring.data.Prefs.of(phone4);
+        check("#380 1b: a backup with 14 days or a 40 dB threshold keeps the defaults", u.soundKeepDays() == 7 && u.soundThreshold() == 10, u.soundThreshold());
+        clean254();
+    }
+
+    /** The retention choices on clips of 10 and 40 days ago (one kept), and the sweep left out while a night listens. */
+    static void soundRetention1b380() throws Exception {
+        Context c = phone254("openring380-1b-keep");
+        Db db = Db.get(c);
+        File real = app.openring.data.Sounds.folder(c, false);
+        double now = System.currentTimeMillis() / 1000.0;
+        String[] kinds = {app.openring.core.analysis.SoundDetector.TALK, app.openring.core.analysis.SoundDetector.COUGH};
+        clip380(c, db, now - 10 * 86400, kinds[0], "ten.m4a", true);
+        clip380(c, db, now - 40 * 86400, kinds[1], "forty.m4a", true);
+        clip380(c, db, now - 41 * 86400, kinds[0], "kept.wav", true);
+        app.openring.data.Sounds.keep(db, now - 41 * 86400, true);
+        app.openring.data.Sounds.tidy(c, db, app.openring.core.SleepSounds.KEEP_ALWAYS);
+        check("#380 1b: until deleted: every clip keeps its sound", files380(real).size() == 3 && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 3, files380(real));
+        app.openring.data.Sounds.tidy(c, db, app.openring.core.SleepSounds.KEEP_MONTH);
+        check("#380 1b: 30 days: the 40 day old clip loses its sound, its mark stays; the kept one stays", files380(real).equals(Arrays.asList("kept.wav", "ten.m4a"))
+                && db.count("SELECT COUNT(*) FROM sound_clips") == 3, files380(real));
+        app.openring.data.Sounds.tidy(c, db, app.openring.core.SleepSounds.KEEP_WEEK);
+        check("#380 1b: 7 days: the 10 day old clip too; the kept one stays", files380(real).equals(Arrays.asList("kept.wav"))
+                && db.count("SELECT COUNT(*) FROM sound_clips") == 3, files380(real));
+        // a file no mark names (a snoring stretch's clip waiting for its mark), older than the sweep's grace
+        clipFile380(real, "s1.m4a", 100);
+        new File(real, "s1.m4a").setLastModified(System.currentTimeMillis() - 3600 * 1000L);
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, now, 10, new Writer1b());
+        try {
+            app.openring.data.SoundNight.tidyReal(c, app.openring.core.SleepSounds.KEEP_WEEK);
+            check("#380 1b: while a night listens the sweep leaves its waiting clip alone", new File(real, "s1.m4a").isFile(), files380(real));
+            n.finish(app.openring.data.Sounds.ENDED_HAND);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        app.openring.data.SoundNight.tidyReal(c, app.openring.core.SleepSounds.KEEP_WEEK);
+        check("#380 1b: after the night the sweep removes a file no mark names", !new File(real, "s1.m4a").exists() && new File(real, "kept.wav").isFile(), files380(real));
+        clean254();
+    }
+
+    /**
+     * The usual bedtime and wake up for the bedtime notification and the stop time, from the person's own main nights (the
+     * real file, also in demo mode): 30 min before the usual bedtime, an hour after the usual wake up; the defaults without nights.
+     */
+    static void soundUsual1b380() throws Exception {
+        Context c = phone254("openring380-1b-usual");
+        Db db = Db.get(c);
+        LocalDate today = LocalDate.now(Z58);
+        app.openring.core.SleepSounds.Usual none = app.openring.data.SoundNight.usual(c, today, Z58);
+        check("#380 1b: without nights: the notification at 22:30, the stop at 9:00", !none.known() && none.remindMinute() == 22 * 60 + 30 && none.stopMinute() == 9 * 60, none.nights);
+        for (int i = 20; i >= 1; i--) {
+            LocalDate d = today.minusDays(i);
+            double start = d.minusDays(1).atTime(23, 10).atZone(Z58).toEpochSecond(), end = d.atTime(7, 5).atZone(Z58).toEpochSecond();
+            db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                    new Object[] {start, end, d.toString(), "{\"start\":" + start + ",\"end\":" + end + "}"});
+        }
+        // a nap (not main) and a night without times do not count
+        double nap = today.minusDays(3).atTime(14, 0).atZone(Z58).toEpochSecond();
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 0, NULL, ?)",
+                new Object[] {nap, nap + 3600, today.minusDays(3).toString(), "{\"start\":" + nap + ",\"end\":" + (nap + 3600) + "}"});
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                new Object[] {nap + 7200, nap + 9000, today.minusDays(2).toString(), "{}"});
+        List<double[]> used = app.openring.data.Sounds.usualNights(db, today);
+        check("#380 1b: the last 14 main nights with times count", used.size() == 14, used.size());
+        app.openring.core.SleepSounds.Usual u = app.openring.data.SoundNight.usual(c, today, Z58);
+        check("#380 1b: nights at 23:10 to 07:05: the notification at 22:40, the stop at 08:05", u.known() && u.remindMinute() == 22 * 60 + 40
+                && u.stopMinute() == 8 * 60 + 5, u.remindMinute() + " " + u.stopMinute());
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db.get(c);
+            app.openring.core.SleepSounds.Usual demo = app.openring.data.SoundNight.usual(c, today, Z58);
+            check("#380 1b: in demo mode the person's own nights count, not the demo's", demo.remindMinute() == 22 * 60 + 40, demo.remindMinute());
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        java.lang.reflect.Method any = app.openring.data.Sounds.class.getDeclaredMethod("any", Db.class);
+        any.setAccessible(true);
+        db = Db.get(c);
+        boolean before = (Boolean) any.invoke(null, db);
+        app.openring.data.Sounds.addNight(db, N380, N380 + 60, null, 0, app.openring.data.Sounds.ENDED_HAND);
+        check("#380 1b: a history with a night listened has sounds (the demo is built again without)", !before && (Boolean) any.invoke(null, db), null);
+        clean254();
+    }
+
+    /**
+     * Failures while listening: the database refuses the rows for a while (they wait in memory and are written once it takes
+     * them again, nothing lost); the clip folder cannot be written (the mark stays without sound, the night goes on).
+     */
+    static void soundFailures1b380() throws Exception {
+        Context c = phone254("openring380-1b-fail");
+        Db db = Db.get(c);
+        File real = app.openring.data.Sounds.folder(c, false);
+        short[] s = audio1b(40, 11, new double[] {10, 2, 0, 3000});
+        db.getWritableDatabase().execSQL("CREATE TRIGGER stop_clip BEFORE INSERT ON sound_clips BEGIN SELECT RAISE(ABORT, 'test stop'); END");
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        try {
+            feed1b(n, Arrays.copyOf(s, 20 * RATE1B), T1B);
+            check("#380 1b: while the database refuses the mark, it waits and its clip file is kept", db.count("SELECT COUNT(*) FROM sound_clips") == 0
+                    && files380(real).size() == 1 && app.openring.data.SoundNight.runningSounds() == 1, soundRows380(db) + files380(real));
+            db.getWritableDatabase().execSQL("DROP TRIGGER stop_clip");
+            feed1b(n, Arrays.copyOfRange(s, 20 * RATE1B, s.length), T1B + 20);
+            n.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: once the database takes it again the mark is written with its clip, nothing lost", db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0") == 1
+                    && consistent1b(db, real) == null && "40 1 hand".equals(night1b(db, T1B)), soundRows380(db) + " " + night1b(db, T1B));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        // the clip folder cannot be made (a file is in its place): no clip, the mark stays without sound, the night goes on
+        rmTree(real);
+        Files.write(real.toPath(), new byte[1]);
+        app.openring.data.SoundNight m = app.openring.data.SoundNight.start(c, T1B + 3600, 10, new Writer1b());
+        try {
+            boolean fed = feed1b(m, s, T1B + 3600);
+            m.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#380 1b: no folder to write into: the night goes on, its mark is stored without sound", fed && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 1 AND start >= "
+                    + (T1B + 3600)) == 1 && "40 0 hand".equals(night1b(db, T1B + 3600)), soundRows380(db));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+            real.delete();
+        }
+        clean254();
+    }
+
+    /** The reads and deletes of the screens at their edges: open nights, nights after one another, files that cannot go, stored odd values. */
+    static void soundEdges1b380() throws Exception {
+        Context c = phone254("openring380-1b-edges");
+        Db db = Db.get(c);
+        File real = app.openring.data.Sounds.folder(c, false);
+        check("#380 1b: no night, no night to read", app.openring.data.Sounds.night(db, N380) == null
+                && app.openring.data.Sounds.forDay(db, LocalDate.of(2019, 3, 4), Z58) == null, null);
+        // a night never written beyond its start (no stop, no reason): its marks are those of the next 13 hours, before the next night
+        app.openring.data.Sounds.addNight(db, N380, null, null, 0, null);
+        clip380(c, db, N380 + 100, app.openring.core.analysis.SoundDetector.TALK, "a1.m4a", true);
+        app.openring.data.Sounds.addNight(db, N380 + 3600, N380 + 7200, null, 1, app.openring.data.Sounds.ENDED_HAND);
+        clip380(c, db, N380 + 4000, app.openring.core.analysis.SoundDetector.TALK, "b1.m4a", true);
+        app.openring.data.Sounds.addMark(db, N380 + 5000, N380 + 5003, app.openring.core.analysis.SoundDetector.COUGH, null);
+        app.openring.data.Sounds.Night first = app.openring.data.Sounds.night(db, N380);
+        check("#380 1b: an open night has no stop and no reason, and ends where the next night starts", first != null && Double.isNaN(first.stop)
+                && first.ended == null && first.clips.size() == 1, first == null ? null : first.clips.size());
+        check("#380 1b: the Sleep tab of 4 March shows the newer of the two nights", app.openring.data.Sounds.forDay(db, LocalDate.of(2019, 3, 4), Z58).start == N380 + 3600, null);
+        check("#380 1b: deleting a night with a mark without sound deletes both marks and the one file", app.openring.data.Sounds.deleteNight(db, real, N380 + 3600) == 2
+                && files380(real).equals(Arrays.asList("a1.m4a")), files380(real));
+        // Delete sound: a clip whose file cannot be deleted keeps its sound; a mark that is not there changes nothing
+        File stuck = new File(real, "c1.m4a");
+        stuck.mkdirs();
+        Files.write(new File(stuck, "inside").toPath(), new byte[1]);
+        app.openring.data.Sounds.addClip(db, N380 + 200, N380 + 206, app.openring.core.analysis.SoundDetector.TALK, -30.0, "c1.m4a");
+        check("#380 1b: Delete sound that cannot delete the file keeps the mark's sound", !app.openring.data.Sounds.deleteSound(db, real, N380 + 200)
+                && db.count("SELECT COUNT(*) FROM sound_clips WHERE gone = 0 AND start = " + (N380 + 200)) == 1, null);
+        String rows = soundRows380(db);
+        check("#380 1b: Delete sound of a mark that is not there changes nothing", app.openring.data.Sounds.deleteSound(db, real, N380 + 999) && soundRows380(db).equals(rows), null);
+        // the tidy of the demo file runs the sweep on the demo folder, also while a real night listens
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            File demo = app.openring.data.Sounds.folder(c, d);
+            clipFile380(demo, "lost.wav", 10);
+            new File(demo, "lost.wav").setLastModified(System.currentTimeMillis() - 3600 * 1000L);
+            app.openring.data.Sounds.tidy(c, d, app.openring.core.SleepSounds.KEEP_WEEK);
+            check("#380 1b: the demo's tidy sweeps the demo folder while a real night listens", files380(demo).isEmpty(), files380(demo));
+            app.openring.data.Sounds.addNight(d, T1B, T1B + 60, null, 0, app.openring.data.Sounds.ENDED_HAND);
+            app.openring.data.SoundNight.deleteNight(c, d, T1B);
+            check("#380 1b: deleting the demo's night of the same start never stops the real night", app.openring.data.SoundNight.isRunning() && !n.closed(), null);
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+            app.openring.data.SoundNight.stopRunning();
+        }
+        db = Db.get(c);
+        // stored values that are not choices read as the defaults
+        c.getSharedPreferences("openring", Context.MODE_PRIVATE).edit().putInt("sound_keep", 14).putInt("sound_threshold", 400).apply();
+        app.openring.data.Prefs p = app.openring.data.Prefs.of(c);
+        check("#380 1b: a stored 14 days or 40 dB read as 7 days and 10 dB", p.soundKeepDays() == 7 && p.soundThreshold() == 10, p.soundThreshold());
+        // the usual nights leave out a night that is not JSON or ends before it starts
+        LocalDate today = LocalDate.now(Z58);
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                new Object[] {T1B, T1B + 60, today.minusDays(1).toString(), "not json"});
+        db.getWritableDatabase().execSQL("INSERT INTO nights(start, stop, day, main, score, json) VALUES (?, ?, ?, 1, NULL, ?)",
+                new Object[] {T1B + 100, T1B + 50, today.minusDays(2).toString(), "{\"start\":" + (T1B + 100) + ",\"end\":" + (T1B + 50) + "}"});
+        check("#380 1b: a night that is not JSON or ends before it starts does not count", app.openring.data.Sounds.usualNights(db, today).isEmpty(), null);
+        clean254();
+    }
+
+    /** The demo's made up clips: tones in WAV files in the demo folder only, its marks on today's Sleep tab; never in the real file. */
+    static void soundDemoClips1b380() throws Exception {
+        Context c = phone254("openring380-1b-democlips");
+        Db realDb = Db.get(c);
+        someSounds380(c, realDb);
+        String realRows = soundRows380(realDb);
+        List<String> realFiles = files380(app.openring.data.Sounds.folder(c, false));
+        java.lang.reflect.Method demo = app.openring.data.Sounds.class.getDeclaredMethod("demo", Context.class, Db.class, LocalDate.class, ZoneId.class);
+        demo.setAccessible(true);
+        boolean refused = false;
+        try {
+            demo.invoke(null, c, realDb, LocalDate.now(Z58), Z58);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            refused = e.getCause() instanceof IllegalStateException;
+        }
+        check("#380 1b: demo clips are refused for the real file", refused && soundRows380(realDb).equals(realRows), null);
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            File folder = app.openring.data.Sounds.folder(c, d);
+            clipFile380(folder, "old.wav", 10);
+            demo.invoke(null, c, d, LocalDate.now(Z58), Z58);
+            demo.invoke(null, c, d, LocalDate.now(Z58), Z58);
+            List<String> fs = files380(folder);
+            boolean wav = fs.size() == 3;
+            for (String f : fs) {
+                byte[] b = Files.readAllBytes(new File(folder, f).toPath());
+                wav &= f.endsWith(".wav") && new String(b, 0, 4, "US-ASCII").equals("RIFF");
+            }
+            check("#380 1b: the demo's 3 clips are WAV tones in the demo folder, an old file removed, built twice the same", wav && consistent1b(d, folder) == null, fs);
+            app.openring.data.Sounds.Night n = app.openring.data.Sounds.forDay(d, LocalDate.now(Z58), Z58);
+            check("#380 1b: the demo night is on today's Sleep tab: 4 marks (one without sound), 12 minutes of silence, ended at its time", n != null && n.clips.size() == 4
+                    && !n.clips.get(3).sound() && n.silent == 720 && app.openring.data.Sounds.ENDED_TIME.equals(n.ended), n == null ? null : n.clips.size() + " " + n.silent);
+            check("#380 1b: the demo night's line", n != null && app.openring.core.SleepSounds.summary(n.marks()).equals("4 sounds: snoring 14 min, 1 cough like sound, 2 talking or other sounds."),
+                    n == null ? null : app.openring.core.SleepSounds.summary(n.marks()));
+            check("#380 1b: yesterday's Sleep tab has no sound night", app.openring.data.Sounds.forDay(d, LocalDate.now(Z58).minusDays(1), Z58) == null, null);
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        realDb = Db.get(c);
+        check("#380 1b: the real sounds and files are untouched by the demo's", soundRows380(realDb).equals(realRows)
+                && files380(app.openring.data.Sounds.folder(c, false)).equals(realFiles), null);
+        clean254();
+    }
+
+    /** Offers {@code s} through {@code q} in pieces of 100 ms, as the reading thread does; the pieces the queue took. */
+    static int offer450(app.openring.data.SoundQueue q, short[] s, double start) {
+        int piece = RATE1B / 10, took = 0;
+        for (int i = 0; i < s.length; i += piece) {
+            int len = Math.min(piece, s.length - i);
+            if (q.offer(Arrays.copyOfRange(s, i, i + len), len, start + (i + len) / (double) RATE1B)) took++;
+        }
+        return took;
+    }
+
+    static boolean waitFor450(java.util.concurrent.Callable<Boolean> done) throws Exception {
+        long until = System.currentTimeMillis() + 20000;
+        while (!done.call()) {
+            if (System.currentTimeMillis() > until) return false;
+            Thread.sleep(2);
+        }
+        return true;
+    }
+
+    /**
+     * Review of #450 (Must fix and Should fix): the hand off between the reading thread and the night's worker
+     * ({@code data/SoundQueue}). The end never blocks for good when the worker stopped early with a full queue (Delete all while
+     * the worker waited), an error in the worker stops the reading and the night is still finished (not left "listening"), a
+     * full queue drops pieces instead of waiting, and a night fed through the queue stores what a night fed directly stores.
+     */
+    static void soundQueue1b450() throws Exception {
+        final short[] piece = new short[RATE1B / 10];
+        // the worker held up on its first piece (as behind a long Delete all), the queue fills, then the night refuses
+        final java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicInteger fedCount = new java.util.concurrent.atomic.AtomicInteger();
+        final app.openring.data.SoundQueue full = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, new app.openring.data.SoundQueue.Feed() {
+            @Override
+            public boolean feed(short[] s, int off, int len, double now) {
+                fedCount.incrementAndGet();
+                try {
+                    hold.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return false;
+            }
+        });
+        full.offer(piece, piece.length, T1B);
+        check("#450 (test setup): the worker holds its first piece", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return fedCount.get() == 1;
+            }
+        }), null);
+        int took = 0;
+        for (int i = 0; i < app.openring.data.SoundQueue.QUEUE + 50; i++) if (full.offer(piece, piece.length, T1B + 0.1 * (i + 2))) took++;
+        check("#450: a full queue takes 600 pieces (60 s) and drops the rest at once, the reading never waits", took == app.openring.data.SoundQueue.QUEUE
+                && full.waiting() == app.openring.data.SoundQueue.QUEUE, took);
+        hold.countDown();
+        check("#450: the night refused a piece (Delete all): the worker stops, the reading is told to stop", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return full.stopped();
+            }
+        }) && full.closed() && !full.failed() && full.waiting() == app.openring.data.SoundQueue.QUEUE, full.waiting());
+        long t0 = System.currentTimeMillis();
+        boolean ended = full.end(120000);
+        long ms = System.currentTimeMillis() - t0;
+        check("#450 Must fix: the end with a full queue and a stopped worker comes at once (it used to wait for good)", ended && ms < 5000
+                && full.waiting() <= 1 && !full.offer(piece, piece.length, T1B + 100), ms + " ms, " + full.waiting());
+        // the worker stops only after the end began: the end mark waits for room at most the given time, then goes in anyway
+        final java.util.concurrent.CountDownLatch hold2 = new java.util.concurrent.CountDownLatch(1);
+        final app.openring.data.SoundQueue late = new app.openring.data.SoundQueue(4, new app.openring.data.SoundQueue.Feed() {
+            @Override
+            public boolean feed(short[] s, int off, int len, double now) {
+                fedCount.incrementAndGet();
+                try {
+                    hold2.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return false;
+            }
+        });
+        fedCount.set(0);
+        late.offer(piece, piece.length, T1B);
+        // the worker holds its first piece, then the queue fills (4 waiting): the end mark has no room
+        check("#450 (test setup): the second worker holds its first piece", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return fedCount.get() == 1;
+            }
+        }), null);
+        for (int i = 1; i < 10; i++) late.offer(piece, piece.length, T1B + i);
+        final boolean[] lateEnded = {false};
+        Thread ender = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    lateEnded[0] = late.end(300);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        ender.start();
+        Thread.sleep(50);
+        hold2.countDown();
+        ender.join(20000);
+        check("#450 Must fix: the worker stops while the end waits for room: the end still comes, its 4 waiting pieces counted as dropped for the log", !ender.isAlive() && lateEnded[0] && late.closed()
+                && late.droppedAtEnd() == 4, late.droppedAtEnd());
+
+        // an error in the worker
+        final RuntimeException boom = new IllegalStateException("made up error in the night");
+        final app.openring.data.SoundQueue broken = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, new app.openring.data.SoundQueue.Feed() {
+            int n;
+
+            @Override
+            public boolean feed(short[] s, int off, int len, double now) {
+                if (++n == 3) throw boom;
+                return true;
+            }
+        });
+        for (int i = 0; i < 10; i++) broken.offer(piece, piece.length, T1B + 0.1 * (i + 1));
+        check("#450 Should fix: an error in the worker is told apart from a closed night, and stops the reading", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return broken.stopped();
+            }
+        }) && broken.failed() && !broken.closed() && broken.error() == boom && !broken.offer(piece, piece.length, T1B + 5), broken.error());
+        check("#450: the end after an error comes at once", broken.end(120000), null);
+
+        // a real night through the queue: the same rows as fed directly; an error in its worker still ends the night
+        Context c = phone254("openring450-queue");
+        Db db = Db.get(c);
+        final File real = app.openring.data.Sounds.folder(c, false);
+        short[] s = audio1b(60, 7, new double[] {10, 2, 0, 3000}, new double[] {30, 2, 0, 3000}, new double[] {50, 2, 0, 3000});
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, new Writer1b());
+        try {
+            app.openring.data.SoundQueue q = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, n);
+            int pieces = offer450(q, s, T1B);
+            boolean done = q.end(120000);
+            if (!n.closed()) n.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#450: a night fed through the queue stores its 3 marks with their clips, ended by hand", pieces == 600 && done && !q.stopped()
+                    && "60 3 hand".equals(night1b(db, T1B)) && consistent1b(db, real) == null && !app.openring.data.SoundNight.isRunning(),
+                    pieces + " " + night1b(db, T1B) + " " + consistent1b(db, real));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        final app.openring.data.SoundNight m = app.openring.data.SoundNight.start(c, T1B + 7200, 10, new Writer1b());
+        try {
+            app.openring.data.SoundQueue q = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, new app.openring.data.SoundQueue.Feed() {
+                int k;
+
+                @Override
+                public boolean feed(short[] a, int off, int len, double now) {
+                    if (++k > 250) throw new IllegalStateException("made up error in the night");
+                    return m.feed(a, off, len, now);
+                }
+            });
+            offer450(q, s, T1B + 7200);
+            q.end(120000);
+            // as the service's finally does: an error is no Delete all, so the night is still finished (as "system")
+            boolean wasOpen = !m.closed();
+            if (q.failed() && !m.closed()) m.finish(app.openring.data.Sounds.ENDED_SYSTEM);
+            String row = night1b(db, T1B + 7200);
+            check("#450 Should fix: after an error in the worker the night is finished as system and no longer listening", q.failed() && wasOpen
+                    && m.closed() && !app.openring.data.SoundNight.isRunning() && row != null && row.endsWith(" system") && consistent1b(db, real) == null, row);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        // Delete all while the queue feeds the night: the worker stops, the end comes, nothing is written afterwards
+        final app.openring.data.SoundNight d = app.openring.data.SoundNight.start(c, T1B + 14400, 10, new Writer1b());
+        try {
+            final app.openring.data.SoundQueue q = new app.openring.data.SoundQueue(app.openring.data.SoundQueue.QUEUE, d);
+            offer450(q, Arrays.copyOf(s, 25 * RATE1B), T1B + 14400);
+            check("#450 (test setup): the queue fed the night's first clip", waitFor450(new java.util.concurrent.Callable<Boolean>() {
+                @Override
+                public Boolean call() {
+                    return q.waiting() == 0 && !files380(real).isEmpty();
+                }
+            }), files380(real));
+            app.openring.data.DeleteAll.run(c);
+            offer450(q, Arrays.copyOfRange(s, 25 * RATE1B, s.length), T1B + 14425);
+            boolean done = q.end(120000);
+            d.finish(app.openring.data.Sounds.ENDED_HAND);
+            check("#450: Delete all while the queue feeds the night: the worker stops as closed, the end comes, no row and no file", done && q.closed()
+                    && !q.failed() && soundCount380(db) == 0 && files380(real).isEmpty() && !app.openring.data.SoundNight.isRunning(), soundRows380(db) + files380(real));
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        String svc = new String(Files.readAllBytes(new File("app/src/main/java/app/openring/sync/SoundService.java").toPath()), "UTF-8");
+        int lock = svc.indexOf("wl.release()");
+        check("#450: the service hands off through SoundQueue (no put that can wait for good) and releases the wake lock in its own finally", svc.contains("new SoundQueue(")
+                && !svc.contains(".put(") && lock > 0 && svc.lastIndexOf("} finally {", lock) > svc.lastIndexOf("night.finish(why)", lock)
+                && svc.contains("queue.failed()"), null);
+        clean254();
+    }
+
+    /** Review of #450: the demo night when its clip folder cannot be made: every mark and the night are there, the marks without sound. */
+    static void soundDemoNoFolder1b450() throws Exception {
+        Context c = phone254("openring450-demo-nofolder");
+        java.lang.reflect.Method demo = app.openring.data.Sounds.class.getDeclaredMethod("demo", Context.class, Db.class, LocalDate.class, ZoneId.class);
+        demo.setAccessible(true);
+        app.openring.data.Prefs.of(c).setDemo(true);
+        File nb = new File(c.dir, "no_backup");
+        try {
+            Db d = Db.get(c);
+            rmTree(nb);
+            Files.write(nb.toPath(), new byte[] {1});
+            demo.invoke(null, c, d, LocalDate.now(Z58), Z58);
+            app.openring.data.Sounds.Night n = app.openring.data.Sounds.forDay(d, LocalDate.now(Z58), Z58);
+            boolean none = n != null;
+            if (n != null) for (int i = 0; i < n.clips.size(); i++) none &= !n.clips.get(i).sound();
+            check("#450: no demo clip folder: the demo night still has its 4 marks, all without sound, and its 12 minutes of silence", n != null && n.clips.size() == 4
+                    && none && n.silent == 720 && d.count("SELECT COUNT(*) FROM sound_nights WHERE clips = 0") == 1, n == null ? null : n.clips.size());
+        } finally {
+            nb.delete();
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        clean254();
+    }
+
+    /** A clip writer whose {@code ext} throws once {@code broken} is set: an error {@code SoundNight.save} does not catch. */
+    static final class BrokenWriter450 implements app.openring.data.SoundNight.Writer {
+        volatile boolean broken;
+
+        @Override
+        public String ext() {
+            if (broken) throw new IllegalStateException("made up lasting error");
+            return ".m4a";
+        }
+
+        @Override
+        public void write(File f, short[] pcm, int off, int len) throws Exception {
+            Files.write(f.toPath(), app.openring.core.SleepSounds.wav(pcm, off, len, RATE1B));
+        }
+    }
+
+    /**
+     * Independent review of #450: the end of a night that cannot be written (a lasting error) still stops it listening, its row
+     * keeps "ended" empty and the next start closes it as system; Delete all's two failure paths ({@code SoundNight.deleteHolding}).
+     */
+    static void soundFinishFails1b450() throws Exception {
+        Context c = phone254("openring450-finish");
+        Db db = Db.get(c);
+        // a sound at 28 s of 30: its clip is only ready when the night ends
+        short[] s = audio1b(30, 11, new double[] {28, 1, 0, 3000});
+        BrokenWriter450 w = new BrokenWriter450();
+        app.openring.data.SoundNight n = app.openring.data.SoundNight.start(c, T1B, 10, w);
+        Throwable got = null;
+        try {
+            feed1b(n, s, T1B);
+            w.broken = true;
+            try {
+                n.finish(app.openring.data.Sounds.ENDED_SYSTEM);
+            } catch (RuntimeException e) {
+                got = e;
+            }
+            String row = night1b(db, T1B);
+            check("#450: the end of the night throws (a lasting error): the night is closed and no longer listening, its row not ended", got != null
+                    && n.closed() && !app.openring.data.SoundNight.isRunning() && row != null && row.endsWith(" null"), got + " " + row);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
+        app.openring.data.SoundNight next = app.openring.data.SoundNight.start(c, T1B + 7200, 10, null);
+        try {
+            String row = night1b(db, T1B);
+            check("#450: the next start closes that night as system", row != null && row.endsWith(" system"), row);
+        } finally {
+            next.finish(app.openring.data.Sounds.ENDED_HAND);
+        }
+        // Delete all's two parts: the history's delete throws (nothing deleted, the night goes on), a later part throws (closed)
+        java.lang.reflect.Method holding = app.openring.data.SoundNight.class.getDeclaredMethod("deleteHolding", Runnable.class, Runnable.class);
+        holding.setAccessible(true);
+        final boolean[] restRan = {false};
+        app.openring.data.SoundNight h = app.openring.data.SoundNight.start(c, T1B + 14400, 10, null);
+        try {
+            got = null;
+            try {
+                holding.invoke(null, new Runnable() {
+                    @Override
+                    public void run() {
+                        throw new IllegalStateException("made up history failure");
+                    }
+                }, new Runnable() {
+                    @Override
+                    public void run() {
+                        restRan[0] = true;
+                    }
+                });
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                got = e.getCause();
+            }
+            check("#450: Delete all, the history's delete throws: the rest does not run, the night goes on listening", got instanceof IllegalStateException
+                    && !restRan[0] && !h.closed() && app.openring.data.SoundNight.isRunning(), got);
+            got = null;
+            try {
+                holding.invoke(null, new Runnable() {
+                    @Override
+                    public void run() {
+                    }
+                }, new Runnable() {
+                    @Override
+                    public void run() {
+                        throw new IllegalStateException("made up clip folder failure");
+                    }
+                });
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                got = e.getCause();
+            }
+            check("#450: Delete all, a later part throws after the history went: the night is closed all the same", got instanceof IllegalStateException
+                    && h.closed() && !app.openring.data.SoundNight.isRunning(), got);
+        } finally {
+            app.openring.data.SoundNight.stopRunning();
+        }
         clean254();
     }
 }

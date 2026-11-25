@@ -30,7 +30,8 @@ final class TrendsCard {
         if (tab == Pages.TODAY || d == null) return;
         if ((tab == Pages.SLEEP || tab == Pages.READINESS) && PhoneViews.needsDevice(c, d)) return;
         LinearLayout card = Ui.card(c);
-        // the title first, so it becomes the tile's header (ui/Tiles: a tap there folds, a hold moves the card); the rest opens Trends
+        // the title first, so it becomes the tile's header (ui/Tiles: a tap there folds; the card moves by its handle in the edit
+        // session, Rearrange tiles); the rest opens Trends
         // a caption as every other tile's header (small, grey, upper case); the key stays "your months"
         card.addView(Ui.caption(c, Explain.TRENDS_CARD_TITLE));
         card.addView(Ui.gap(c, 4));

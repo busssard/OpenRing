@@ -153,7 +153,7 @@ public final class Demo {
         // yesterday until about 04:00 and missing while another run is half way (issue #29)
         if (db.eventCount() > 0 && today.toString().equals(db.kv(BUILT, null)) && WatchStore.any(db) && PhoneStore.any(db)
                 && db.count("SELECT COUNT(*) FROM battery") > 0 && LifeLog.any(db)
-                && HandNights.any(db)) return false;
+                && HandNights.any(db) && Sounds.any(db)) return false;
         if (p != null) p.step("Making up 5 weeks of nights and days");
         db.resetAll(Db.DEMO_BUILD);
         ZoneId zone = ZoneId.systemDefault();
@@ -164,6 +164,9 @@ public final class Demo {
         List<RingEvent> ev = warmNights(history(t0, days, now, zone, new Random(7), screen, apps, true), t0, zone, app.openring.core.analysis.Cycles.demoWarmNights(today));
         // the ring on its charger yesterday afternoon, so the made up watch fills that time (issue #251, main device)
         ev = charging(ev, t0, at(today.minusDays(1), CHARGE_FROM_H, zone), at(today.minusDays(1), CHARGE_TO_H, zone));
+        // the made up saunas with a time (issue #435): a higher heart rate while in the heat, so the band on the day's chart
+        // shows what a sauna looks like (only here, Demo.history and the tests built on it are unchanged)
+        if (saunaBeats) ev = sauna(ev, t0, zone, app.openring.core.LifeTimes.demo(today));
         long lastDs = ev.get(ev.size() - 1).ds;
         for (int i = 0; i < ev.size(); i += 4000) db.insertBatch(ev.subList(i, Math.min(ev.size(), i + 4000)), 1, now);
         db.insertPhoneAnchor(1, lastDs, t0 + (lastDs - DS0) / 10);
@@ -177,6 +180,9 @@ public final class Demo {
         // a made up night by hand (issue #427), the day before yesterday: shown as replaced by the demo ring's night, and as
         // the night of that day with the screen test's extra hand_night
         HandNights.demo(db, today, zone, now);
+        // made up sleep sounds of last night (issue #380, phase 1b): tones made in code, in the demo file and its own clip folder
+        // a clip file that cannot be written leaves its mark without sound (Sounds.demo), the rest of the demo is not held up
+        Sounds.demo(c, db, today, zone);
         watch(db, today, now, zone);
         phone(db, today, now, zone);
         ringBattery(db, today, now, zone);
@@ -184,6 +190,8 @@ public final class Demo {
         Analyzer.runAll(c, null);
         // the year before the ring's five weeks, as results only (Trends, issue #374); a second or two, no step of its own
         olderYear(db, today, zone);
+        // made up life factors over that year (issue #292, phase 2), so the card of their effect has enough days to show
+        LifeLog.demoYear(db, today, zone, now);
         db.put(BUILT, today.toString());
         return true;
     }
@@ -429,6 +437,43 @@ public final class Demo {
             if (reading && unix + 600 > from && unix < to) continue;
             out.add(e);
         }
+        return out;
+    }
+
+    /**
+     * Tests only: false builds the demo without the saunas' heart beats, so the analysis pin of issue #292 phase 1.5 (made before
+     * #435) still holds; the pipeline test checks the beats change only the day summaries of the sauna days.
+     */
+    static volatile boolean saunaBeats = true;
+
+    /**
+     * Heart beats of a sauna (issue #435, demo mode only): for each made up Sauna with a time and a length in {@code times}, one
+     * heart beat reading every 2 minutes at about 106 to 115 bpm (a person sitting in the heat), on top of the day's own; no
+     * movement, so the activity stays as it was. The events in time order again.
+     */
+    static List<RingEvent> sauna(List<RingEvent> ev, long t0, ZoneId zone, List<app.openring.core.LifeTimes.Entry> times) {
+        List<RingEvent> out = new ArrayList<RingEvent>(ev);
+        Random r = new Random(435);
+        for (app.openring.core.LifeTimes.Entry e : times) {
+            if (!app.openring.core.LifeTags.SAUNA.equals(e.key) || e.minutes == null) continue;
+            app.openring.core.LifeTimes.Band b = app.openring.core.LifeTimes.band(e.day, e.key, "Sauna", e.time, e.minutes, zone);
+            if (b == null || b.start <= t0) continue;
+            for (double t = b.start + 60; t < b.stop; t += 120) {
+                int i1 = 520 + r.nextInt(46);
+                byte[] ibi = new byte[4];
+                ibi[0] = (byte) (i1 >> 3);
+                ibi[1] = (byte) ((i1 & 7) | (1 << 3));
+                ibi[2] = (byte) (i1 >> 3);
+                ibi[3] = (byte) ((i1 & 7) | (1 << 3));
+                out.add(new RingEvent(EventCodec.GREEN_IBI_QUALITY, ds(t0, t), ibi));
+            }
+        }
+        Collections.sort(out, new Comparator<RingEvent>() {
+            @Override
+            public int compare(RingEvent a, RingEvent b) {
+                return Long.compare(a.ds, b.ds);
+            }
+        });
         return out;
     }
 

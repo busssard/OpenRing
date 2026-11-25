@@ -26,7 +26,7 @@ import app.openring.core.TimeLine;
  * as JSON. Nothing leaves the phone unless you export it.
  */
 public final class Db extends SQLiteOpenHelper {
-    static final int VERSION = 14;
+    static final int VERSION = 15;
     private static Db instance;
     public static final String REAL = "openring.db", DEMO = "openring-demo.db";
     /** The database file in use: the real history, or the demo history in demo mode. */
@@ -166,6 +166,7 @@ public final class Db extends SQLiteOpenHelper {
         upgradeTo12(db);
         upgradeTo13(db);
         upgradeTo14(db);
+        upgradeTo15(db);
     }
 
     @Override
@@ -183,6 +184,16 @@ public final class Db extends SQLiteOpenHelper {
         if (oldV < 12) upgradeTo12(db);
         if (oldV < 13) upgradeTo13(db);
         if (oldV < 14) upgradeTo14(db);
+        if (oldV < 15) upgradeTo15(db);
+    }
+
+    /**
+     * v15: the length of a logged time (issue #435), {@code life_days.minutes}, see {@link LifeLog#add15}. Only adds the
+     * column when it is missing: safe to run twice and to resume. No row changes; older files (and restored older backups)
+     * get it empty, so their logged days and times stay as they were.
+     */
+    private static void upgradeTo15(SQLiteDatabase db) {
+        LifeLog.add15(db);
     }
 
     /**
@@ -1067,6 +1078,19 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * Every main night of the history ordered by start, one at a time: {@code each} gets its day and its JSON string as they
+     * are read, so a day's newest main night comes last (the daily CSV's zones, {@code Exporter.DayZones}, issue #460).
+     */
+    public void eachMainNight(java.util.function.BiConsumer<String, String> each) {
+        Cursor c = getReadableDatabase().rawQuery("SELECT day, json FROM nights WHERE main=1 ORDER BY start", null);
+        try {
+            while (c.moveToNext()) each.accept(c.getString(0), c.getString(1));
+        } finally {
+            c.close();
+        }
+    }
+
     /** Days before and after a date that the "Recent nights" strip shows (issue #98). */
     public static final int RECENT_DAYS = 30;
 
@@ -1675,12 +1699,21 @@ public final class Db extends SQLiteOpenHelper {
         {"watch_moves", 10, new String[] {"device", "start", "met", "up", "down"}},
         {"phone_readings", 11, new String[] {"device", "boot", "elapsed", "counter", "wall"}},
         {"phone_steps", 11, new String[] {"device", "boot", "elapsed", "start", "stop", "steps"}},
-        {"life_days", 12, new String[] {"day", "tag", "time", "span", "made", "gone"}},
+        {"life_days", 12, new String[] {"day", "tag", "time", "span", "made", "gone"}},  // and minutes from 15, LATER_COLUMNS
         {"life_tags", 12, new String[] {"key", "name", "shown", "ord", "made", "gone"}},
         {"sound_nights", 13, new String[] {"start", "stop", "floor", "clips", "ended"}},
         {"sound_clips", 13, new String[] {"start", "stop", "kind", "peak", "file", "kept", "gone"}},
         {"sound_gaps", 13, new String[] {"start", "stop", "why"}},
         {"sleep_manual", 14, new String[] {"made", "start", "stop", "wakes", "gone"}},
+    };
+
+    /**
+     * Columns added to a table after the version that made it: the table, the column and the version that added it
+     * ({@code events.seg} with 2, {@code life_days.minutes} with 15, issue #435). Known for every version, needed from that one.
+     */
+    private static final Object[][] LATER_COLUMNS = {
+        {"events", "seg", 2},
+        {"life_days", "minutes", 15},
     };
 
     /**
@@ -1696,11 +1729,12 @@ public final class Db extends SQLiteOpenHelper {
             String name = (String) t[0];
             int since = (Integer) t[1];
             java.util.List<String> need = new java.util.ArrayList<String>(java.util.Arrays.asList((String[]) t[2]));
-            // events.seg: needed from version 2, known (and added by the upgrade) before
+            // events.seg, life_days.minutes: needed from the version that added them, known (and added by the upgrade) before
             java.util.List<String> known = new java.util.ArrayList<String>(need);
-            if ("events".equals(name)) {
-                known.add("seg");
-                if (version >= 2) need.add("seg");
+            for (Object[] later : LATER_COLUMNS) {
+                if (!name.equals(later[0])) continue;
+                known.add((String) later[1]);
+                if (version >= (Integer) later[2]) need.add((String) later[1]);
             }
             String type = first(d, "SELECT type FROM sqlite_master WHERE name = '" + name + "'");
             if (type == null) {

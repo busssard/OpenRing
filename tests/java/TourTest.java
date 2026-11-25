@@ -1,0 +1,175 @@
+import app.openring.core.Tour;
+
+import java.util.*;
+
+/**
+ * The short tour (issue #453, {@code core/Tour}): the steps in their order with their parts and tabs, which taps move on,
+ * Next and Back past steps whose part is not on screen, the demo's ending, when the tour starts by itself (the demo's first
+ * look, the first sync with a real device, never again once done or skipped, never while tiles are rearranged), and every
+ * text plain. Run with tests/run_tests.sh.
+ */
+public class TourTest {
+    static int passed, failed;
+
+    static void check(String name, boolean ok) {
+        if (ok) passed++;
+        else {
+            failed++;
+            System.out.println("FAIL " + name);
+        }
+    }
+
+    static void eq(String name, Object got, Object want) {
+        boolean ok = Objects.equals(got, want);
+        if (!ok) System.out.println("  got <" + got + "> want <" + want + ">");
+        check(name, ok);
+    }
+
+    public static void main(String[] args) {
+        steps();
+        walk();
+        skipping();
+        start();
+        labels();
+        texts();
+        System.out.println("tour: " + passed + " passed, " + failed + " failed");
+        if (failed > 0) System.exit(1);
+    }
+
+    static void steps() {
+        eq("seven steps", Tour.STEPS.size(), Tour.COUNT);
+        StringBuilder keys = new StringBuilder();
+        for (Tour.Step s : Tour.STEPS) keys.append(s.key).append(' ');
+        eq("the issue's order", keys.toString().trim(), "sync scores tabs chart tile life settings");
+        eq("Sync, the tab bar and the gear are on every tab", Tour.STEPS.get(0).tab + " " + Tour.STEPS.get(2).tab + " " + Tour.STEPS.get(6).tab,
+                Tour.ANY + " " + Tour.ANY + " " + Tour.ANY);
+        eq("the scores and the life factors on Today", Tour.STEPS.get(1).tab + " " + Tour.STEPS.get(5).tab, Tour.TODAY + " " + Tour.TODAY);
+        eq("the chart and its tile's title on Sleep", Tour.STEPS.get(3).tab + " " + Tour.STEPS.get(4).tab, Tour.SLEEP + " " + Tour.SLEEP);
+        eq("Today and Sleep are the tabs of ui/Pages", Tour.TODAY + " " + Tour.SLEEP, "0 1");
+        for (Tour.Step s : Tour.STEPS) {
+            // the tabs: a tap opens the tab tapped, the tour stays on the tab bar until Next (else the next step would open Sleep)
+            boolean trying = Tour.CHART.equals(s.key) || Tour.TILE.equals(s.key) || Tour.TABS.equals(s.key);
+            check("a tap moves on except where trying it is the point: " + s.key, s.tapMovesOn != trying);
+        }
+        check("the chart is skipped when its tile is folded", !Tour.STEPS.get(3).foldedOk);
+        check("the scores and the life factors show by their tile when folded", Tour.STEPS.get(1).foldedOk && Tour.STEPS.get(5).foldedOk);
+        Set<String> unique = new HashSet<String>();
+        for (Tour.Step s : Tour.STEPS) unique.add(s.key);
+        eq("each part once", unique.size(), Tour.COUNT);
+    }
+
+    static void walk() {
+        eq("Next from the first step", Tour.step(0, 1, true), 1);
+        eq("Back from the third step", Tour.step(2, -1, true), 1);
+        eq("Back on the first step closes", Tour.step(0, -1, true), Tour.CLOSED);
+        eq("Back on the first step closes with a real device too", Tour.step(0, -1, false), Tour.CLOSED);
+        eq("after the last step: the demo's ending", Tour.step(Tour.COUNT - 1, 1, true), Tour.END);
+        eq("after the last step with a real device: done", Tour.step(Tour.COUNT - 1, 1, false), Tour.CLOSED);
+        eq("Back from the demo's ending: the last step", Tour.step(Tour.END, -1, true), Tour.COUNT - 1);
+        eq("Next past the ending stays on it (its own buttons end it)", Tour.step(Tour.END, 1, true), Tour.END);
+        // the whole walk forward in demo mode
+        int s = -1, n = 0;
+        List<Integer> seen = new ArrayList<Integer>();
+        while (n++ < 20) {
+            s = Tour.step(s, 1, true);
+            seen.add(s);
+            if (s == Tour.END) break;
+        }
+        eq("the demo walk: every step, then the ending", seen.toString(), "[0, 1, 2, 3, 4, 5, 6, 7]");
+    }
+
+    static boolean[] all(boolean v) {
+        boolean[] f = new boolean[Tour.COUNT];
+        Arrays.fill(f, v);
+        return f;
+    }
+
+    /**
+     * The overlay's walk ({@code TourOverlay.show} and {@code locate}): it shows {@code first}, and each step whose part is not on
+     * screen sends it on by {@link Tour#afterMissing}, counting the misses in a row as the overlay does.
+     */
+    static int walk(int first, int dir, boolean[] found, boolean demo) {
+        int s = first, misses = 0;
+        while (s >= 0 && s < Tour.COUNT && !found[s]) s = Tour.afterMissing(s, dir, demo, ++misses);
+        return s;
+    }
+
+    /** Next ({@code dir} 1) or Back (-1) from {@code from} as the overlay does it: {@link Tour#step}, then the walk. */
+    static int move(int from, int dir, boolean[] found, boolean demo) {
+        return walk(Tour.step(from, dir, demo), dir, found, demo);
+    }
+
+    static void skipping() {
+        boolean[] f = all(true);
+        f[3] = false; // no night: no chart
+        eq("Next past a missing chart", move(2, 1, f, true), 4);
+        eq("Back past a missing chart", move(4, -1, f, true), 2);
+        f = all(true);
+        f[3] = f[4] = f[5] = false;
+        eq("Next past three missing steps in a row", move(2, 1, f, false), 6);
+        f = all(true);
+        f[6] = false;
+        eq("a missing last step: the demo's ending", move(5, 1, f, true), Tour.END);
+        eq("a missing last step with a real device: done", move(5, 1, f, false), Tour.CLOSED);
+        f = all(true);
+        f[0] = false;
+        eq("a missing first step: the tour begins at the second", walk(0, 1, f, true), 1);
+        eq("Back to a missing first step closes", move(1, -1, f, true), Tour.CLOSED);
+        f = all(false);
+        eq("nothing on screen in demo mode: only the ending", walk(0, 1, f, true), Tour.END);
+        eq("nothing on screen with a real device: closed at once", walk(0, 1, f, false), Tour.CLOSED);
+        eq("Back from the ending past missing steps closes", move(Tour.END, -1, f, true), Tour.CLOSED);
+        f = all(true);
+        f[6] = f[5] = false;
+        eq("Back from the ending past missing last steps", move(Tour.END, -1, f, true), 4);
+        f = all(true);
+        f[2] = false;
+        eq("the extra tour 2 with the tab bar missing: the chart", walk(2, 1, f, true), 3);
+        eq("a missing part: the next step the same way", Tour.afterMissing(3, 1, true, 1) + " " + Tour.afterMissing(3, -1, true, 1), "4 2");
+        eq("a missing part past two rounds of misses closes", Tour.afterMissing(3, 1, true, 2 * Tour.COUNT + 1), Tour.CLOSED);
+        eq("two rounds of misses are still walked", Tour.afterMissing(3, 1, true, 2 * Tour.COUNT), 4);
+        eq("the count keeps the fixed numbers", Tour.count(0) + ", " + Tour.count(4) + ", " + Tour.count(6), "1 of 7, 5 of 7, 7 of 7");
+        eq("no count on the ending or when closed", Tour.count(Tour.END) + Tour.count(Tour.CLOSED), "");
+    }
+
+    static void start() {
+        eq("the demo's first look starts it", Tour.autoStart(true, false, false, 0, 0), Tour.DEMO);
+        eq("the demo again after it was done or skipped: no", Tour.autoStart(true, true, false, 0, 0), Tour.NONE);
+        eq("the first sync with a real device starts it", Tour.autoStart(false, false, false, 0, 1763900000L), Tour.FIRST_SYNC);
+        eq("a later sync does not", Tour.autoStart(false, false, false, 1763800000L, 1763900000L), Tour.NONE);
+        eq("no sync yet (or a failed first sync) does not", Tour.autoStart(false, false, false, 0, 0), Tour.NONE);
+        eq("the first sync after the demo's tour: not again", Tour.autoStart(false, true, false, 0, 1763900000L), Tour.NONE);
+        eq("never while the tiles are rearranged (demo)", Tour.autoStart(true, false, true, 0, 0), Tour.NONE);
+        eq("never while the tiles are rearranged (first sync)", Tour.autoStart(false, false, true, 0, 1763900000L), Tour.NONE);
+    }
+
+    static void labels() {
+        eq("Next on the steps", Tour.nextLabel(0, true) + " " + Tour.nextLabel(5, false), "Next Next");
+        eq("Next on the demo's last step (the ending follows)", Tour.nextLabel(6, true), "Next");
+        eq("Done on the last step with a real device", Tour.nextLabel(6, false), "Done");
+        eq("the ending: add a device when none is set up", Tour.endButton(false), "Add my device");
+        eq("the ending: back to the person's own data", Tour.endButton(true), "Back to my data");
+        eq("the first sync's step 1", Tour.text(0, true), Tour.SYNC_FIRST);
+        eq("step 1 otherwise", Tour.text(0, false), Tour.SYNC_TEXT);
+        eq("the first sync changes only step 1", Tour.text(1, true), Tour.STEPS.get(1).text);
+        eq("the ending's text", Tour.text(Tour.END, false), Tour.END_TEXT);
+        eq("the ending's text without a device: add one", Tour.endText(false), "That was the demo. Add your own ring or watch to see your own data, or keep looking around.");
+        eq("the ending's text with a device: back to it", Tour.endText(true), "That was the demo. Go back to your own data, or keep looking around.");
+        check("both ending texts are in the list the text checks read", Tour.texts().contains(Tour.END_TEXT) && Tour.texts().contains(Tour.END_BACK));
+        eq("the first sync's step 1, two sentences", Tour.SYNC_FIRST, "Your first sync worked: Sync reads your ring or watch over Bluetooth. Nothing leaves your phone.");
+        eq("closed has no text", Tour.text(Tour.CLOSED, false), "");
+    }
+
+    static void texts() {
+        for (String t : Tour.texts()) {
+            check("plain, no dash as punctuation: " + t, !t.isEmpty() && !t.contains(" - ") && !t.contains("–") && !t.contains("—"));
+            check("short (a bubble, under 110 characters): " + t, t.length() < 110);
+            int sentences = 0;
+            for (String part : t.split("[.!?](\\s|$)")) if (!part.trim().isEmpty()) sentences++;
+            check("at most two sentences: " + t, sentences <= 2);
+        }
+        check("the issue's step texts", Tour.STEPS.get(1).text.equals("Your scores for the day. Tap one to see why.")
+                && Tour.STEPS.get(6).text.equals("Your devices, backups and what the app is allowed to use are here.")
+                && Tour.STEPS.get(4).text.equals("Tap a title to fold a tile. In Settings, Rearrange tiles puts them in your order."));
+    }
+}

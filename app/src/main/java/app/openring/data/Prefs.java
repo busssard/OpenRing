@@ -363,6 +363,55 @@ public final class Prefs {
         new java.security.SecureRandom().nextBytes(b);
         return app.openring.core.Hex.encode(b);
     }
+    // ---- sleep sounds (issue #380, phase 1b) ----
+    /**
+     * The person agreed to the consent text before the first night. On this phone only, never in a backup: a new phone asks
+     * again (the person next to you may be another).
+     */
+    public boolean soundConsent() { return sp.getBoolean("sound_consent", false); }
+    public void setSoundConsent(boolean b) { sp.edit().putBoolean("sound_consent", b).apply(); }
+    /** The microphone was refused explicitly once (the rule of issue #140, as for Bluetooth); on this phone only. */
+    public boolean soundMicDenied() { return sp.getBoolean("sound_mic_denied", false); }
+    public void setSoundMicDenied(boolean b) { sp.edit().putBoolean("sound_mic_denied", b).apply(); }
+    /** Days a clip keeps its sound ({@code core/SleepSounds.KEEP_CHOICES}: 7 by default, 30, 0 until deleted). In the backup. */
+    public int soundKeepDays() {
+        int d = sp.getInt("sound_keep", app.openring.core.SleepSounds.KEEP_DEFAULT);
+        return app.openring.core.SleepSounds.validKeep(d) ? d : app.openring.core.SleepSounds.KEEP_DEFAULT;
+    }
+    public void setSoundKeepDays(int d) {
+        if (app.openring.core.SleepSounds.validKeep(d)) sp.edit().putInt("sound_keep", d).apply();
+    }
+    /**
+     * The detector's start threshold in dB above the floor, from the microphone test (owner's wish of 21 November): stored in
+     * tenths of a dB, 10 dB without a test, anything outside 6 to 15 dB is the default. In the backup.
+     */
+    public double soundThreshold() {
+        double t = sp.getInt("sound_threshold", 100) / 10.0;
+        return app.openring.core.SleepSounds.validThreshold(t) ? t : app.openring.core.analysis.SoundDetector.ABOVE_DB;
+    }
+    /** The last microphone test: when (unix seconds) and the voice's margin above the room (dB); the threshold from it. */
+    public long soundTested() { return sp.getLong("sound_tested", 0); }
+    public double soundMargin() { return sp.contains("sound_margin") ? sp.getInt("sound_margin", 0) / 10.0 : Double.NaN; }
+    public void setSoundTest(long when, double margin) {
+        double t = app.openring.core.SleepSounds.threshold(margin);
+        sp.edit().putLong("sound_tested", when).putInt("sound_margin", (int) Math.round(margin * 10)).putInt("sound_threshold", (int) Math.round(t * 10)).apply();
+    }
+    /** Backup only: the stored values as they are (tenths of a dB), so a restore gives back exactly the same. */
+    int soundThresholdX10() { return sp.getInt("sound_threshold", 100); }
+    int soundMarginX10() { return sp.getInt("sound_margin", Integer.MIN_VALUE); }
+    void restoreSoundTest(long when, int marginX10, int thresholdX10) {
+        SharedPreferences.Editor e = sp.edit().putLong("sound_tested", Math.max(0, when));
+        if (marginX10 != Integer.MIN_VALUE) e.putInt("sound_margin", marginX10);
+        if (app.openring.core.SleepSounds.validThreshold(thresholdX10 / 10.0)) e.putInt("sound_threshold", thresholdX10);
+        e.apply();
+    }
+    /** The bedtime notification, on by default (it only comes once the person agreed). In the backup. */
+    public boolean soundRemind() { return sp.getBoolean("sound_remind", true); }
+    public void setSoundRemind(boolean b) { sp.edit().putBoolean("sound_remind", b).apply(); }
+    /** The day (yyyy-mm-dd) the bedtime notification was last sent, so it comes once a day. */
+    public String soundRemindSent() { return sp.getString("sound_remind_sent", null); }
+    public void setSoundRemindSent(String day) { sp.edit().putString("sound_remind_sent", day).apply(); }
+
     /** Physical activity was asked for once (a later "not allowed" is then a refusal, not "not asked yet"). */
     public boolean phoneAsked() { return sp.getBoolean("phone_asked", false); }
     public void setPhoneAsked() { sp.edit().putBoolean("phone_asked", true).apply(); }
@@ -439,6 +488,13 @@ public final class Prefs {
 
     public boolean demo() { return sp.getBoolean("demo", false); }
     public void setDemo(boolean b) { sp.edit().putBoolean("demo", b).commit(); }
+
+    /**
+     * The short tour was done or skipped once (issue #453): it never starts by itself again, in demo mode or with a device.
+     * One flag for both; not in backups (a hint, not data, so the backup format stays as it is).
+     */
+    public boolean tourSeen() { return sp.getBoolean("tour_seen", false); }
+    public void setTourSeen() { sp.edit().putBoolean("tour_seen", true).apply(); }
 
     // ---- automatic backups (issue #242) ----
     /** The version code noted at the last start, 0 when none was noted yet. */
