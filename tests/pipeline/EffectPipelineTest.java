@@ -94,6 +94,11 @@ public class EffectPipelineTest {
                 alc == null ? null : FactorEffect.status(alc, Locale.US));
         check("#292 demo: Meditation has a number that is not clear yet", med != null && med.state == FactorEffect.NUMBER && !med.clear(),
                 med == null ? null : FactorEffect.status(med, Locale.US));
+        // screens.sh scrolls to these words to find each open row (issue #473): change both together
+        check("#292 demo: the open rows' sentences start as screens.sh looks for them, After a day with Alcohol and After a day with Meditation",
+                alc != null && med != null && FactorEffect.headline(alc, Locale.US).startsWith("After a day with Alcohol")
+                        && FactorEffect.headline(med, Locale.US).startsWith("After a day with Meditation"),
+                alc == null || med == null ? null : FactorEffect.headline(alc, Locale.US) + " | " + FactorEffect.headline(med, Locale.US));
         int few = 0;
         for (FactorEffect.Result r : l) if (r.state == FactorEffect.FEW_WITH) few++;
         check("#292 demo: some factors have too few days yet (the count shows)", few >= 1, few);

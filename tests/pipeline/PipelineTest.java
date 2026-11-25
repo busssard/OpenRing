@@ -3522,7 +3522,10 @@ public class PipelineTest {
         return low >= floor - 3 && low <= night + 3;
     }
 
-    /** Issue #439: three pinned cases of the #72 rule, so loosening it turns a check red even when the demo days still pass. */
+    /**
+     * Issue #439: pinned cases of the #72 rule, so loosening it turns a check red even when the demo days still pass; issue
+     * #472 added the upper bound and the case with no next night.
+     */
     static void dayLowRule72() {
         double day = 1_000_000, nextStart = day + 22.5 * 3600; // the next night starts at 22:30
         // own night 55, the next night calmer at 46
@@ -3539,6 +3542,21 @@ public class PipelineTest {
                 dayLowNearNight(46, nextStart - 400, 55, 46, nextStart), null);
         check("#72 rule: a point whose quarter hour ends before the next night does not",
                 !dayLowNearNight(46, nextStart - 500, 55, 46, nextStart), null);
+        // no next night (NaN, the newest day) and the upper bound: within 3 bpm of the own night, from both sides (issue #472)
+        check("#72 rule: with no next night, exactly 3 bpm above the own night passes",
+                dayLowNearNight(58, day + 15 * 3600, 55, Double.NaN, nextStart), null);
+        check("#72 rule: with no next night, 4 bpm above the own night fails (a day line too high)",
+                !dayLowNearNight(59, day + 15 * 3600, 55, Double.NaN, nextStart), null);
+        check("#72 rule: with no next night, exactly 3 bpm below the own night passes",
+                dayLowNearNight(52, day + 15 * 3600, 55, Double.NaN, nextStart), null);
+        check("#72 rule: with no next night, 4 bpm below the own night fails (a day line too low)",
+                !dayLowNearNight(51, day + 15 * 3600, 55, Double.NaN, nextStart), null);
+        // a lowest point late in the evening may not go down to a next night that does not exist
+        check("#72 rule: with no next night, a low late in the evening still has to stay near the own night",
+                !dayLowNearNight(46, nextStart + 1800, 55, Double.NaN, nextStart), null);
+        // the upper bound also holds when the lowest point lies in a lower next night
+        check("#72 rule: a lowest point in the next night 4 bpm above the own night fails",
+                !dayLowNearNight(59, nextStart + 1800, 55, 46, nextStart), null);
     }
 
     /** Start of the main night of {@code day} (unix seconds), NaN when there is none. */
