@@ -473,14 +473,9 @@ public final class Sounds {
      * same times as the Sleep tab, also after a trip. The day is found with the zone noted at the night's start. Reads only.
      */
     public static java.time.ZoneId zone(Db db, double start, java.time.ZoneId phone) {
-        java.time.ZoneId guess = phone;
-        try {
-            String noted = db.zoneAt(start);
-            if (noted != null) guess = java.time.ZoneId.of(noted);
-        } catch (RuntimeException e) {
-            // an unreadable or unknown zone: the phone's
-        }
-        return Exporter.dayZone(db, SleepSounds.nightDay(start, guess).toString(), phone);
+        // an unknown zone id gives the phone's, as everywhere (ClockChange.zone never throws)
+        java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(start));
+        return Exporter.dayZone(db, SleepSounds.nightDay(start, noted == null ? phone : noted).toString(), phone);
     }
 
     /** The newest night shown on {@code day}'s Sleep tab (started from 12:00 the day before to 12:00 that day), null for none. */

@@ -17926,6 +17926,12 @@ public class PipelineTest {
         } finally {
             app.openring.data.Prefs.of(c).setDemo(false);
         }
+        // a zone id this phone does not know (noted by another phone, restored): the phone's zone, never an error
+        db = Db.get(c);
+        db.noteZone(bStop + 7 * 86400, "Not/AZone");
+        double later = bStop + 7 * 86400 - 3600;
+        check("#380 1c: a zone this phone does not know gives the phone's", app.openring.data.Sounds.zone(db, later, zh).equals(zh),
+                app.openring.data.Sounds.zone(db, later, zh));
         clean254();
     }
 
