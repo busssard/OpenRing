@@ -198,6 +198,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
             app.openring.sync.PhoneJob.schedule(this);
             fillPhoneCard();
         }
+        // back from the sleep sounds screen: set up, the microphone, its test (issue #380)
+        if (soundsCard != null) fillSoundsCard();
         // back from Android's notification settings: the card shows whether the reminder can be shown now
         if (periodCard != null && notifyShown != notificationsOn()) fillPeriodCard();
         // back from Import from drip: its Undo line (issue #252, phase 1b)
@@ -306,6 +308,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
             root.addView(watchBlock.view);
             phoneBlock = block(app.openring.core.SettingsBlocks.PHONE);
             phoneBlock.add(phoneCard());
+            phoneBlock.add(soundsCard());
             root.addView(phoneBlock.view);
             addPeriodFold();
             addScreenFold(p);
@@ -436,6 +439,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // ---- the Phone block (issue #329): steps from this phone ----
         phoneBlock = block(app.openring.core.SettingsBlocks.PHONE);
         phoneBlock.add(phoneCard());
+        phoneBlock.add(soundsCard());
         root.addView(phoneBlock.view);
 
         // ---- profile ----
@@ -623,7 +627,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
         small(danger, "Delete all local data", Ui.WARN, new Runnable() {
             @Override
             public void run() {
-                confirm("Delete everything?", "All synced events and results on this phone are erased, including your period log and your life factors. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
+                confirm("Delete everything?", "All synced events and results on this phone are erased, including your period log, your life factors and your sleep sound clips. The ring keeps its key. Copies in your backup folder stay.", new Runnable() {
                     @Override
                     public void run() {
                         deleteAll();
@@ -1340,6 +1344,111 @@ public final class SettingsActivity extends Activity implements RingManager.List
         card.addView(Ui.gap(this, 10));
         boolean ring = ringThere(p), watch = demo || p.watchAddress() != null, phone = phoneThere(p);
         if (phone && app.openring.core.MainDevice.present(ring, watch, true).length >= 2) mainDeviceChoice(card, p);
+    }
+
+    /** Sleep sounds' part of the Phone block (issue #380, phase 1b), rebuilt in place after a change. */
+    private LinearLayout soundsCard;
+
+    LinearLayout soundsCard() {
+        soundsCard = Ui.vbox(this);
+        fillSoundsCard();
+        return soundsCard;
+    }
+
+    /**
+     * Sleep sounds: set up or not, how long clips keep their sound (7 days, 30 days, until deleted), the bedtime notification
+     * and when it comes, the space the clips use, and the microphone test. Demo mode never records and changes nothing here.
+     */
+    void fillSoundsCard() {
+        final LinearLayout card = soundsCard;
+        if (card == null) return;
+        final Prefs p = Prefs.of(this);
+        final boolean demo = p.demo();
+        card.removeAllViews();
+        card.addView(Ui.gap(this, 14));
+        card.addView(Ui.divider(this));
+        card.addView(Ui.gap(this, 10));
+        card.addView(Ui.text(this, app.openring.core.SleepSounds.TITLE, 15, Ui.TEXT, Ui.MEDIUM));
+        boolean allowed = app.openring.sync.SoundService.allowed(this);
+        card.addView(line("Set up", demo ? "Demo mode, never records" : !p.soundConsent() ? "Not yet" : allowed ? "Yes" : "Microphone not allowed"));
+        if (!demo && (!p.soundConsent() || !allowed)) {
+            small(card, p.soundConsent() ? app.openring.core.SleepSounds.MIC_ALLOW : app.openring.core.SleepSounds.SET_UP, Ui.SLEEP, new Runnable() {
+                @Override
+                public void run() {
+                    startActivity(new Intent(SettingsActivity.this, SoundsActivity.class).putExtra(SoundsActivity.MODE, SoundsActivity.CONSENT));
+                }
+            });
+        }
+        card.addView(Ui.gap(this, 8));
+        card.addView(Ui.text(this, "Keep clips", 12, Ui.TEXT_3, Ui.REGULAR));
+        chipRow(card, app.openring.core.SleepSounds.KEEP_NAMES, indexOf(app.openring.core.SleepSounds.KEEP_CHOICES, p.soundKeepDays()), Ui.SLEEP, new Pick() {
+            @Override
+            public void pick(int i) {
+                if (demo) {
+                    say(app.openring.core.SleepSounds.DEMO_NO_RECORD);
+                    return;
+                }
+                p.setSoundKeepDays(app.openring.core.SleepSounds.KEEP_CHOICES[i]);
+                fillSoundsCard();
+            }
+        });
+        card.addView(Ui.text(this, app.openring.core.SleepSounds.keepLine(p.soundKeepDays()), 12, Ui.TEXT_3, Ui.REGULAR));
+        Switch sw = new Switch(this);
+        sw.setText("Remind me at bedtime");
+        sw.setTextColor(Ui.TEXT);
+        sw.setChecked(p.soundRemind());
+        sw.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                p.setSoundRemind(on);
+                app.openring.sync.SoundReminder.planLater(SettingsActivity.this);
+            }
+        });
+        LinearLayout.LayoutParams swl = Ui.matchWrap();
+        swl.setMargins(0, Ui.dp(this, 10), 0, 0);
+        card.addView(sw, swl);
+        final LinearLayout later = Ui.vbox(this);
+        later.addView(Ui.text(this, "reading...", 12, Ui.TEXT_3, Ui.REGULAR));
+        card.addView(later, Ui.matchWrap());
+        final Context appCtx = getApplicationContext();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String remind = null, space = null;
+                java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+                try {
+                    remind = app.openring.core.SleepSounds.remindLine(app.openring.data.SoundNight.usual(appCtx, java.time.LocalDate.now(zone), zone));
+                    app.openring.data.Sounds.Space s = app.openring.data.Sounds.space(app.openring.data.Sounds.folder(appCtx, app.openring.data.Db.get(appCtx)));
+                    space = app.openring.core.SleepSounds.spaceLine(s.files, s.bytes);
+                } catch (Exception e) {
+                    RingManager.get(appCtx).log("sleep sounds: settings not read (" + e.getClass().getSimpleName() + ")");
+                }
+                final String r = remind, sp = space;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || isDestroyed()) return;
+                        later.removeAllViews();
+                        // the next time only while it is planned (set up, microphone allowed, switch on), else Off (review of #450)
+                        if (r != null) later.addView(Ui.text(SettingsActivity.this, app.openring.sync.SoundReminder.wanted(SettingsActivity.this)
+                                ? r + ". Start opens the app and listens." : "Bedtime notification: Off.",
+                                12, Ui.TEXT_3, Ui.REGULAR));
+                        later.addView(line("Space used", sp == null ? "--" : sp));
+                        later.addView(Ui.text(SettingsActivity.this, "The clip files on this phone. They are never in a backup.", 12, Ui.TEXT_3, Ui.REGULAR));
+                    }
+                });
+            }
+        }, "sounds settings").start();
+        card.addView(Ui.gap(this, 6));
+        card.addView(Ui.text(this, app.openring.core.SleepSounds.testedLine(p.soundTested(), p.soundMargin(), p.soundThreshold(), java.time.ZoneId.systemDefault()),
+                13, Ui.TEXT_2, Ui.REGULAR));
+        card.addView(Ui.text(this, app.openring.core.SleepSounds.THRESHOLD_NOTE, 12, Ui.TEXT_3, Ui.REGULAR));
+        small(card, app.openring.core.SleepSounds.TEST, Ui.SLEEP, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, SoundsActivity.class).putExtra(SoundsActivity.MODE, SoundsActivity.TEST));
+            }
+        });
     }
 
     /** The Phone header's line; {@code last} the newest reading (unix seconds, 0 none, NaN not read yet). */
@@ -2225,7 +2334,7 @@ public final class SettingsActivity extends Activity implements RingManager.List
     void scrollToSection() {
         String section = getIntent().getStringExtra("section");
         final View card = "blocks".equals(section) || "ring".equals(section) ? ringBlock.view : "profile".equals(section) ? profCard : "period".equals(section) ? periodCard : "stages".equals(section) ? stagesCard
-                : "watch".equals(section) ? watchCard : "phone".equals(section) ? phoneCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
+                : "watch".equals(section) ? watchCard : "phone".equals(section) ? phoneCard : "sounds".equals(section) ? soundsCard : "screen".equals(section) ? screenCard : "games".equals(section) ? gamesCard
                 : "layout".equals(section) ? layoutCard : "backups".equals(section) ? backupsCard : "advanced".equals(section) ? advancedCard : null;
         if (card == null) return;
         // the demo page is short: room below the last card, so every card can reach the top (issue #160); kept on every

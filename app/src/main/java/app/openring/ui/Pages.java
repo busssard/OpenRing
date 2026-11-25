@@ -547,6 +547,7 @@ public final class Pages {
             if (offer != null) root.addView(offer);
             // the watch's nights around this day and its statistics still show (owner's report of 13 November)
             if (!d.watchRecent.isEmpty()) root.addView(recentNights(c, d, d.watchRecent, nav));
+            root.addView(SoundViews.card(c, d, nav));
             root.addView(infoCard(c, "About sleep", Explain.SLEEP_WATCH_ONLY));
             HistoryViews.sleep(c, root, d);
             if (HistoryViews.watch(d)) root.addView(furtherAnalysis(c, d));
@@ -567,6 +568,7 @@ public final class Pages {
             // slept without the ring and the watch: enter the night by hand (issue #427)
             View offer = HandViews.offerCard(c, d, nav);
             if (offer != null) root.addView(offer);
+            root.addView(SoundViews.card(c, d, nav));
             root.addView(infoCard(c, "About sleep", Explain.SLEEP));
             LinearLayout how = Ui.card(c);
             how.addView(Ui.caption(c, "How to see your sleep"));
@@ -656,6 +658,8 @@ public final class Pages {
         root.addView(hyp);
 
         root.addView(timeline(c, n, nz, d.leftOut));
+        // sleep sounds of this night (issue #380): the night's marks with their clips, Listen tonight
+        root.addView(SoundViews.card(c, d, nav));
         root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors", null, n));
         root.addView(infoCard(c, "About the sleep score", Explain.SLEEP));
 
@@ -794,6 +798,7 @@ public final class Pages {
         // the night's timeline from the watch's stages, as the ring's (each wake up of a minute or more)
         app.openring.core.DeviceHistory.NightRow row = watchOnly ? d.deviceHistory.night(d.date) : null;
         if (row != null) root.addView(timeline(c, app.openring.data.WatchHistory.nightJson(row), nz, new ArrayList<double[]>()));
+        root.addView(SoundViews.card(c, d, nav));
         if (scored) {
             DeviceViews.deviceParts(c, root, d, "sleep", Ui.SLEEP);
             root.addView(infoCard(c, "About the sleep score", Explain.SLEEP_DEVICE));

@@ -3,6 +3,7 @@ import app.openring.core.analysis.SoundDetector.Clip;
 import app.openring.core.analysis.SoundDetector.Gap;
 import app.openring.core.analysis.SoundDetector.Mark;
 
+import java.time.LocalDateTime;
 import java.util.*;
 
 /**
@@ -54,6 +55,16 @@ public class SoundTest {
         clipWindows();
         gaps();
         pieces();
+        // phase 1b: the microphone test (owner's wish of 21 November), bedtime, retention, texts, WAV, demo tones, the ring
+        micThreshold();
+        micLevels();
+        thresholdFromTest();
+        usualTimes();
+        keepChoices();
+        texts1b();
+        wavFile();
+        demoTones();
+        audioRing();
         System.out.println("sound: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -599,6 +610,291 @@ public class SoundTest {
         t.finish();
         List<Mark> rest = t.takeMarks();
         check("takeMarks hands each mark out once", first.size() + rest.size() == t.marks().size() && t.takeMarks().isEmpty(), first.size() + " " + rest.size());
+    }
+
+    // ------------------------------------------------------------------------------------- phase 1b
+
+    /** The start threshold from a test's margin: half, kept between 6 and 15 dB; no sound keeps the default 10 dB. */
+    static void micThreshold() {
+        eq("a margin of 5 dB gives the lowest threshold, 6 dB", app.openring.core.SleepSounds.threshold(5), 6.0);
+        eq("a margin of 12 dB gives 6 dB (half of it)", app.openring.core.SleepSounds.threshold(12), 6.0);
+        eq("a margin of 16 dB gives 8 dB", app.openring.core.SleepSounds.threshold(16), 8.0);
+        eq("a margin of 30 dB gives the highest threshold, 15 dB", app.openring.core.SleepSounds.threshold(30), 15.0);
+        eq("a margin of 40 dB still gives 15 dB", app.openring.core.SleepSounds.threshold(40), 15.0);
+        eq("no sound keeps the default 10 dB", app.openring.core.SleepSounds.threshold(Double.NaN), SoundDetector.ABOVE_DB);
+        eq("an infinite margin keeps the default", app.openring.core.SleepSounds.threshold(Double.POSITIVE_INFINITY), SoundDetector.ABOVE_DB);
+        eq("no sound is its own verdict", app.openring.core.SleepSounds.verdict(Double.NaN), app.openring.core.SleepSounds.NO_SOUND);
+        eq("9.9 dB: too far", app.openring.core.SleepSounds.verdict(9.9), app.openring.core.SleepSounds.TOO_FAR);
+        eq("a voice not louder than the room: too far", app.openring.core.SleepSounds.verdict(-3), app.openring.core.SleepSounds.TOO_FAR);
+        eq("10 dB: works", app.openring.core.SleepSounds.verdict(10), app.openring.core.SleepSounds.WORKS);
+        eq("19.9 dB: works", app.openring.core.SleepSounds.verdict(19.9), app.openring.core.SleepSounds.WORKS);
+        eq("20 dB: good", app.openring.core.SleepSounds.verdict(20), app.openring.core.SleepSounds.GOOD);
+        // review of #450: only a test that worked sets the threshold; too far or no sound keeps the one before
+        check("Good and Works set the threshold", app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.GOOD)
+                && app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.WORKS));
+        check("too far (9.9 dB) and no sound keep the threshold before", !app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.verdict(9.9))
+                && !app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.verdict(Double.NaN)));
+        check("a test at 10 dB sets 6 dB, one at 9.9 dB changes nothing", app.openring.core.SleepSounds.saves(app.openring.core.SleepSounds.verdict(10))
+                && app.openring.core.SleepSounds.threshold(10) == 6.0);
+        eq("the good text (owner's wish)", app.openring.core.SleepSounds.verdictText(app.openring.core.SleepSounds.GOOD), "Good, quiet talking and snoring will be found.");
+        eq("the works text", app.openring.core.SleepSounds.verdictText(app.openring.core.SleepSounds.WORKS),
+                "Works, but quiet sounds may be missed. Put the phone closer to your head.");
+        eq("the too far text", app.openring.core.SleepSounds.verdictText(app.openring.core.SleepSounds.TOO_FAR),
+                "Too far or the room is too loud (a fan?). Move the phone closer and test again.");
+        eq("the no sound text", app.openring.core.SleepSounds.verdictText(app.openring.core.SleepSounds.NO_SOUND), "The microphone gave no sound. Another app may be using it.");
+        check("6 and 15 dB are valid stored thresholds, 5.9 and 15.1 are not", app.openring.core.SleepSounds.validThreshold(6) && app.openring.core.SleepSounds.validThreshold(15)
+                && !app.openring.core.SleepSounds.validThreshold(5.9) && !app.openring.core.SleepSounds.validThreshold(15.1) && !app.openring.core.SleepSounds.validThreshold(Double.NaN));
+        eq("the margin of a test without room sound is not a number", app.openring.core.SleepSounds.margin(Double.NaN, -40), Double.NaN);
+    }
+
+    /** The levels the test measures, in the detector's own units. */
+    static void micLevels() {
+        short[] zero = new short[SoundDetector.FRAME];
+        eq("digital silence is the bottom of the scale", SoundDetector.level(zero, 0, zero.length), SoundDetector.MIN_DB);
+        eq("no samples are the bottom of the scale", SoundDetector.level(zero, 0, 0), SoundDetector.MIN_DB);
+        short[] full = new short[SoundDetector.FRAME];
+        for (int i = 0; i < full.length; i++) full[i] = (short) (i % 2 == 0 ? 32767 : -32767);
+        check("a full scale square wave is 0 dB", Math.abs(SoundDetector.level(full, 0, full.length)) < 0.01, SoundDetector.level(full, 0, full.length));
+        Random r = new Random(3);
+        short[] room = pcm(room(10, 30, r));
+        double[] lv = app.openring.core.SleepSounds.frameLevels(room, room.length);
+        eq("10 s are 312 whole frames", lv.length, 10 * R / SoundDetector.FRAME);
+        double rl = app.openring.core.SleepSounds.roomLevel(lv);
+        check("a room of noise at 30 (about -61 dB of full scale) measures about -61 dB", Math.abs(rl - (-61.0)) < 0.5, rl);
+        double[] silent = app.openring.core.SleepSounds.frameLevels(new short[10 * R], 10 * R);
+        eq("a silent microphone has no room level", app.openring.core.SleepSounds.roomLevel(silent), Double.NaN);
+        eq("and no voice level", app.openring.core.SleepSounds.voiceLevel(silent), Double.NaN);
+        eq("no frames have no room level", app.openring.core.SleepSounds.roomLevel(new double[0]), Double.NaN);
+        // half the frames silent (another app took the microphone half way): left out of the room, as the detector's floor does
+        double[] half = new double[40];
+        for (int i = 0; i < half.length; i++) half[i] = i < 20 ? SoundDetector.MIN_DB : -50;
+        eq("digital silence is left out of the room level", app.openring.core.SleepSounds.roomLevel(half), -50.0);
+        // the loudest second: a short loud word in 8 s of quiet counts as the power mean of its second
+        double[] voice = new double[250];
+        Arrays.fill(voice, -60);
+        for (int i = 100; i < 131; i++) voice[i] = -30;
+        check("the loudest second of 31 loud frames is their level", Math.abs(app.openring.core.SleepSounds.voiceLevel(voice) - (-30)) < 1e-6,
+                app.openring.core.SleepSounds.voiceLevel(voice));
+        double[] blip = new double[250];
+        Arrays.fill(blip, -60);
+        blip[100] = -30;
+        double bl = app.openring.core.SleepSounds.voiceLevel(blip);
+        check("one loud frame counts as a thirty first of its second (a click is not a voice)", bl < -43 && bl > -46, bl);
+        double[] shortTest = {-40, -40, -40};
+        check("fewer frames than a second: their power mean", Math.abs(app.openring.core.SleepSounds.voiceLevel(shortTest) - (-40)) < 1e-9);
+    }
+
+    /**
+     * The owner's case on #380: a made up test with the voice about 16 dB above the room sets the threshold to about 8 dB, which
+     * finds a quiet sound about 8 dB above the room that the default 10 dB misses.
+     */
+    static void thresholdFromTest() {
+        Random q = new Random(7);
+        double[] room = room(app.openring.core.SleepSounds.ROOM_S, 30, q);
+        double[] voice = room(app.openring.core.SleepSounds.VOICE_S, 30, q);
+        // the sentence: 3 s of a 180 Hz tone, (30² + 264²/2) / 30² is about 10^1.6, so about 16 dB above the room
+        for (int i = 2 * R + 1; i < 5 * R; i++) voice[i] += 264 * Math.sin(2 * Math.PI * 180 * i / (double) R);
+        double rl = app.openring.core.SleepSounds.roomLevel(app.openring.core.SleepSounds.frameLevels(pcm(room), room.length));
+        double vl = app.openring.core.SleepSounds.voiceLevel(app.openring.core.SleepSounds.frameLevels(pcm(voice), voice.length));
+        double margin = app.openring.core.SleepSounds.margin(rl, vl);
+        check("the made up test: the voice about 16 dB above the room", Math.abs(margin - 16) < 0.5, margin);
+        eq("16 dB: works, quiet sounds may be missed", app.openring.core.SleepSounds.verdict(margin), app.openring.core.SleepSounds.WORKS);
+        double th = app.openring.core.SleepSounds.threshold(margin);
+        check("the threshold from it is about 8 dB", Math.abs(th - 8) < 0.25, th);
+        Random r = new Random(42);
+        double[] a = room(60, 30, r);
+        // the same quiet sound as threshold(): a steady 300 Hz tone about 8 dB above the room
+        for (int i = 30 * R; i < 32 * R; i++) a[i] += 98 * Math.sin(2 * Math.PI * 300 * (i - 30 * R) / (double) R);
+        short[] s = pcm(a);
+        SoundDetector def = run(s, 640);
+        SoundDetector tested = new SoundDetector(T0, th);
+        for (int i = 0; i < s.length; i += 640) tested.feed(s, i, Math.min(640, s.length - i));
+        tested.finish();
+        check("with the default 10 dB the quiet sound is missed", def.marks().isEmpty(), def.marks());
+        check("with the threshold from the 16 dB test it is found, at its time, with a clip", tested.marks().size() == 1
+                && Math.abs(tested.marks().get(0).start - (T0 + 30)) < 0.1 && tested.clips().size() == 1, tested.marks());
+        eq("the detector uses the threshold it was given", tested.threshold(), th);
+    }
+
+    static double at(LocalDateTime t) {
+        return t.atZone(ZURICH).toEpochSecond();
+    }
+
+    static final java.time.ZoneId ZURICH = java.time.ZoneId.of("Europe/Zurich");
+
+    /** Nights at {@code bed} to {@code wake} (clock minutes), one a day from 1 November 2026. */
+    static List<double[]> nights(int n, int bedMin, int wakeMin) {
+        List<double[]> out = new ArrayList<double[]>();
+        for (int i = 0; i < n; i++) {
+            java.time.LocalDate day = java.time.LocalDate.of(2026, 11, 1).plusDays(i);
+            LocalDateTime b = bedMin >= 18 * 60 ? day.minusDays(1).atTime(bedMin / 60, bedMin % 60) : day.atTime(bedMin / 60, bedMin % 60);
+            out.add(new double[] {at(b), at(day.atTime(wakeMin / 60, wakeMin % 60))});
+        }
+        return out;
+    }
+
+    /** The usual bedtime (notification 30 min before it) and wake up (stop an hour after it), from the last 14 nights. */
+    static void usualTimes() {
+        app.openring.core.SleepSounds.Usual six = app.openring.core.SleepSounds.usual(nights(6, 23 * 60 + 10, 7 * 60 + 5), ZURICH);
+        check("6 nights are not enough: the notification at 22:30, the stop at 9:00", !six.known() && six.remindMinute() == 22 * 60 + 30 && six.stopMinute() == 9 * 60, six.nights);
+        eq("the line says why", app.openring.core.SleepSounds.remindLine(six), "Next at 22:30 (until 7 nights are recorded)");
+        app.openring.core.SleepSounds.Usual seven = app.openring.core.SleepSounds.usual(nights(7, 23 * 60 + 10, 7 * 60 + 5), ZURICH);
+        check("7 nights at 23:10 to 07:05: the notification at 22:40, the stop at 08:05", seven.known() && seven.remindMinute() == 22 * 60 + 40 && seven.stopMinute() == 8 * 60 + 5,
+                seven.remindMinute() + " " + seven.stopMinute());
+        eq("the line names the usual bedtime", app.openring.core.SleepSounds.remindLine(seven), "Next at 22:40 (30 min before your usual bedtime)");
+        // the last 14 count: 10 old nights at 21:00 and 14 new ones at 23:10 give 23:10
+        List<double[]> mixed = nights(10, 21 * 60, 6 * 60);
+        for (double[] n : nights(14, 23 * 60 + 10, 7 * 60 + 5)) mixed.add(new double[] {n[0] + 20 * 86400, n[1] + 20 * 86400});
+        app.openring.core.SleepSounds.Usual last = app.openring.core.SleepSounds.usual(mixed, ZURICH);
+        check("only the last 14 nights count", last.remindMinute() == 22 * 60 + 40 && last.nights == 14, last.remindMinute() + " " + last.nights);
+        // bedtimes around midnight: counted from 18:00, so 00:20 is later than 23:50 (the median is 00:20, the notification 23:50)
+        List<double[]> late = new ArrayList<double[]>();
+        int[] beds = {23 * 60 + 50, 10, 15, 20, 30, 40, 60};
+        for (int i = 0; i < beds.length; i++) {
+            java.time.LocalDate day = java.time.LocalDate.of(2026, 11, 1).plusDays(i);
+            LocalDateTime b = beds[i] >= 18 * 60 ? day.minusDays(1).atTime(beds[i] / 60, beds[i] % 60) : day.atTime(beds[i] / 60, beds[i] % 60);
+            late.add(new double[] {at(b), at(day.atTime(8, 0))});
+        }
+        app.openring.core.SleepSounds.Usual mid = app.openring.core.SleepSounds.usual(late, ZURICH);
+        check("bedtimes around midnight: usual 00:20, the notification at 23:50", Math.abs(mid.bed - 20) < 1e-9 && mid.remindMinute() == 23 * 60 + 50, mid.bed + " " + mid.remindMinute());
+        // an early sleeper whose usual bedtime is 20:10: the notification at 19:40
+        app.openring.core.SleepSounds.Usual early = app.openring.core.SleepSounds.usual(nights(9, 20 * 60 + 10, 5 * 60), ZURICH);
+        check("an early sleeper: the notification at 19:40, the stop at 06:00", early.remindMinute() == 19 * 60 + 40 && early.stopMinute() == 6 * 60, early.remindMinute());
+        // the next notification: today when still to come, else tomorrow
+        long nine = (long) at(LocalDateTime.of(2026, 11, 22, 21, 0)) * 1000;
+        eq("at 21:00 the 22:40 notification is today", app.openring.core.SleepSounds.nextAt(22 * 60 + 40, ZURICH, nine), (long) at(LocalDateTime.of(2026, 11, 22, 22, 40)) * 1000);
+        long eleven = (long) at(LocalDateTime.of(2026, 11, 22, 23, 0)) * 1000;
+        eq("at 23:00 it is tomorrow", app.openring.core.SleepSounds.nextAt(22 * 60 + 40, ZURICH, eleven), (long) at(LocalDateTime.of(2026, 11, 23, 22, 40)) * 1000);
+        long exactly = (long) at(LocalDateTime.of(2026, 11, 22, 22, 40)) * 1000;
+        eq("at 22:40 itself the next is tomorrow (never twice)", app.openring.core.SleepSounds.nextAt(22 * 60 + 40, ZURICH, exactly), (long) at(LocalDateTime.of(2026, 11, 23, 22, 40)) * 1000);
+        // the stop: the usual wake up plus an hour, or 12 hours, whichever first
+        double start = at(LocalDateTime.of(2026, 11, 22, 23, 10));
+        app.openring.core.SleepSounds.Stop st = app.openring.core.SleepSounds.stopAt(start, 8 * 60 + 5, ZURICH);
+        check("started at 23:10: stops at 08:05, not the limit", st.at == at(LocalDateTime.of(2026, 11, 23, 8, 5)) && !st.limit, st.at);
+        app.openring.core.SleepSounds.Stop nap = app.openring.core.SleepSounds.stopAt(at(LocalDateTime.of(2026, 11, 22, 14, 0)), 8 * 60 + 5, ZURICH);
+        check("started at 14:00: the 12 hour limit at 02:00 comes first", nap.limit && nap.at == at(LocalDateTime.of(2026, 11, 23, 2, 0)), nap.at);
+        app.openring.core.SleepSounds.Stop late2 = app.openring.core.SleepSounds.stopAt(at(LocalDateTime.of(2026, 11, 23, 7, 30)), 8 * 60 + 5, ZURICH);
+        check("started at 07:30: not stopped within the first hour (the limit then)", late2.limit && late2.at == at(LocalDateTime.of(2026, 11, 23, 19, 30)), late2.at);
+        // the night's day: its start plus 12 hours
+        eq("a night from 23:10 on Saturday is Sunday's", app.openring.core.SleepSounds.nightDay(at(LocalDateTime.of(2026, 11, 21, 23, 10)), ZURICH), java.time.LocalDate.of(2026, 11, 22));
+        eq("a night from 00:30 on Sunday is Sunday's", app.openring.core.SleepSounds.nightDay(at(LocalDateTime.of(2026, 11, 22, 0, 30)), ZURICH), java.time.LocalDate.of(2026, 11, 22));
+        eq("listening from 12:00 belongs to the next day", app.openring.core.SleepSounds.nightDay(at(LocalDateTime.of(2026, 11, 22, 12, 0)), ZURICH), java.time.LocalDate.of(2026, 11, 23));
+    }
+
+    /** The retention choices: 7 (the default), 30, until deleted; anything else is not a choice. */
+    static void keepChoices() {
+        check("7, 30 and until deleted (0) are the choices", app.openring.core.SleepSounds.validKeep(7) && app.openring.core.SleepSounds.validKeep(30)
+                && app.openring.core.SleepSounds.validKeep(0) && !app.openring.core.SleepSounds.validKeep(14) && !app.openring.core.SleepSounds.validKeep(-1));
+        eq("7 days is the default", app.openring.core.SleepSounds.KEEP_DEFAULT, 7);
+        eq("three names for three choices", app.openring.core.SleepSounds.KEEP_NAMES.length, app.openring.core.SleepSounds.KEEP_CHOICES.length);
+        eq("the 7 day line", app.openring.core.SleepSounds.keepLine(7), "Clips keep their sound for 7 days, then only the mark stays (unless you keep the clip).");
+        eq("the until deleted line", app.openring.core.SleepSounds.keepLine(0), "Clips keep their sound until you delete them.");
+        check("Settings opened at sleep sounds opens the Phone block", app.openring.core.SettingsBlocks.of("sounds") == app.openring.core.SettingsBlocks.PHONE
+                && app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.PHONE, "sounds"));
+    }
+
+    /** The texts of the card, the consent and the notifications: plain, no dashes, every number explained. */
+    static void texts1b() {
+        List<app.openring.core.SleepSounds.Mark> m = new ArrayList<app.openring.core.SleepSounds.Mark>();
+        double t = at(LocalDateTime.of(2026, 11, 22, 0, 41));
+        m.add(new app.openring.core.SleepSounds.Mark(t, t + 3.2, SoundDetector.TALK, true, false));
+        m.add(new app.openring.core.SleepSounds.Mark(t + 5460, t + 5460 + 14 * 60, SoundDetector.SNORE, true, false));
+        m.add(new app.openring.core.SleepSounds.Mark(t + 10560, t + 10560.6, SoundDetector.COUGH, true, true));
+        m.add(new app.openring.core.SleepSounds.Mark(t + 15720, t + 15724, SoundDetector.TALK, false, false));
+        eq("the night's line", app.openring.core.SleepSounds.summary(m), "4 sounds: snoring 14 min, 1 cough like sound, 2 talking or other sounds.");
+        eq("a quiet night", app.openring.core.SleepSounds.summary(new ArrayList<app.openring.core.SleepSounds.Mark>()), app.openring.core.SleepSounds.QUIET);
+        List<app.openring.core.SleepSounds.Mark> one = new ArrayList<app.openring.core.SleepSounds.Mark>();
+        one.add(new app.openring.core.SleepSounds.Mark(t, t + 20, SoundDetector.SNORE, true, false));
+        eq("a short snoring stretch", app.openring.core.SleepSounds.summary(one), "1 sound: snoring under 1 min.");
+        eq("a talking row", app.openring.core.SleepSounds.row(m.get(0), ZURICH), "00:41 Talking or other sound, 3 s");
+        eq("a snoring row", app.openring.core.SleepSounds.row(m.get(1), ZURICH), "02:12 Snoring, 14 min");
+        eq("a cough row", app.openring.core.SleepSounds.row(m.get(2), ZURICH), "03:37 Cough like sound, 1 s");
+        eq("a row whose sound was deleted", app.openring.core.SleepSounds.row(m.get(3), ZURICH), "05:03 Talking or other sound, 4 s (sound deleted)");
+        eq("listening now", app.openring.core.SleepSounds.listeningLine(at(LocalDateTime.of(2026, 11, 21, 23, 12)), 3, ZURICH), "Listening since 23:12, 3 sounds so far.");
+        eq("space used", app.openring.core.SleepSounds.spaceLine(12, 640 * 1024), "12 clips, 0.6 MB");
+        eq("space used, small", app.openring.core.SleepSounds.spaceLine(1, 40 * 1024), "1 clip, under 0.1 MB");
+        eq("space used, none", app.openring.core.SleepSounds.spaceLine(0, 0), "No clips");
+        eq("a night Android ended", app.openring.core.SleepSounds.endedLine(app.openring.core.SleepSounds.ENDED_SYSTEM, at(LocalDateTime.of(2026, 11, 22, 3, 40)), ZURICH),
+                "Stopped at 03:40: Android ended the listening.");
+        check("a night stopped by hand or at its time has no such line", app.openring.core.SleepSounds.endedLine(app.openring.core.SleepSounds.ENDED_HAND, t, ZURICH) == null
+                && app.openring.core.SleepSounds.endedLine(app.openring.core.SleepSounds.ENDED_TIME, t, ZURICH) == null
+                && app.openring.core.SleepSounds.endedLine(null, t, ZURICH) == null);
+        eq("12 minutes of silence", app.openring.core.SleepSounds.gapLine(12 * 60), "Not listening for 12 min: another app used the microphone.");
+        check("under a minute of silence is not worth a line", app.openring.core.SleepSounds.gapLine(59) == null && app.openring.core.SleepSounds.gapLine(Double.NaN) == null);
+        eq("tested on", app.openring.core.SleepSounds.testedLine((long) at(LocalDateTime.of(2026, 11, 22, 22, 0)), 22.4, 11.2, ZURICH),
+                "Microphone tested on 22 Nov: your voice was 22 dB above the room.");
+        eq("not tested", app.openring.core.SleepSounds.testedLine(0, Double.NaN, 10, ZURICH), "Microphone not tested yet, so a sound is kept from 10 dB above the room.");
+        eq("the margin line", app.openring.core.SleepSounds.marginLine(22.4), "Your voice was 22 dB above the room.");
+        eq("the threshold line", app.openring.core.SleepSounds.thresholdLine(11.2), "A sound is kept from 11.2 dB above the room.");
+        eq("the no diagnosis sentence (Design review)", app.openring.core.SleepSounds.NO_DIAGNOSIS, "Snoring minutes are not a test for sleep apnea. If breathing pauses worry you, ask a doctor.");
+        check("the consent names backups (Design review)", app.openring.core.SleepSounds.CONSENT.contains("Times and kinds of sounds are in backups, the sounds themselves never."));
+        check("the consent names the person next to you", app.openring.core.SleepSounds.CONSENT.contains("If someone sleeps next to you, they will be recorded too"));
+        eq("the test sentence (owner's wish)", app.openring.core.SleepSounds.TEST_SENTENCE, "I am testing the sleep sounds of Open Ring.");
+        eq("the kinds' names", app.openring.core.SleepSounds.kindName(SoundDetector.SNORE) + "|" + app.openring.core.SleepSounds.kindName(SoundDetector.COUGH) + "|"
+                + app.openring.core.SleepSounds.kindName(SoundDetector.TALK), "Snoring|Cough like sound|Talking or other sound");
+        check("the stored values of why a night stopped", app.openring.core.SleepSounds.ENDED_LIMIT.equals("12 h") && app.openring.core.SleepSounds.ENDED_SYSTEM.equals("system"));
+        String[] all = {app.openring.core.SleepSounds.ABOUT, app.openring.core.SleepSounds.NOTHING, app.openring.core.SleepSounds.QUIET, app.openring.core.SleepSounds.COUNTS_NOTE,
+            app.openring.core.SleepSounds.BATTERY, app.openring.core.SleepSounds.NO_DIAGNOSIS, app.openring.core.SleepSounds.DEMO_NO_RECORD, app.openring.core.SleepSounds.MIC_OFF,
+            app.openring.core.SleepSounds.MIC_SETTINGS, app.openring.core.SleepSounds.MIC_REFUSED, app.openring.core.SleepSounds.NOT_STARTED, app.openring.core.SleepSounds.CONSENT,
+            app.openring.core.SleepSounds.NOTE_TEXT, app.openring.core.SleepSounds.REMIND_TEXT, app.openring.core.SleepSounds.DELETE_NIGHT_ASK, app.openring.core.SleepSounds.KEPT_NOTE,
+            app.openring.core.SleepSounds.TEST_ROOM, app.openring.core.SleepSounds.TEST_PLAYED, app.openring.core.SleepSounds.TEST_PROCESSED, app.openring.core.SleepSounds.THRESHOLD_NOTE,
+            app.openring.core.SleepSounds.MARGIN_NOTE, app.openring.core.SleepSounds.keepLine(7), app.openring.core.SleepSounds.summary(m)};
+        boolean plain = true;
+        for (String s : all) plain &= !s.contains(" - ") && !s.contains("–") && !s.contains("—");
+        check("no dashes as punctuation in the sleep sound texts", plain);
+    }
+
+    /** The WAV file the encoder falls back to: a 44 byte header and the samples, little endian. */
+    static void wavFile() {
+        short[] s = {0, 1, -1, 32767, -32768};
+        byte[] w = app.openring.core.SleepSounds.wav(s, 1, 4, 16000);
+        eq("44 bytes of header and 2 per sample", w.length, 44 + 8);
+        eq("RIFF and WAVE", new String(w, 0, 4) + new String(w, 8, 4) + new String(w, 12, 4) + new String(w, 36, 4), "RIFFWAVEfmt data");
+        eq("the RIFF size", (w[4] & 0xff) | (w[5] & 0xff) << 8, 36 + 8);
+        eq("16 kHz", (w[24] & 0xff) | (w[25] & 0xff) << 8 | (w[26] & 0xff) << 16, 16000);
+        eq("one channel, 16 bit", "" + w[22] + w[34], "116");
+        eq("the first sample (1), little endian", "" + w[44] + w[45], "10");
+        eq("the last sample (-32768)", "" + (w[50] & 0xff) + " " + (w[51] & 0xff), "0 128");
+    }
+
+    /** The demo's clips are tones made in code: deterministic, of their length, never clipped, each found by the detector. */
+    static void demoTones() {
+        for (String kind : new String[] {SoundDetector.TALK, SoundDetector.SNORE, SoundDetector.COUGH}) {
+            short[] a = app.openring.core.SleepSounds.demoTone(kind, 8), b = app.openring.core.SleepSounds.demoTone(kind, 8);
+            eq("demo " + kind + ": 8 s at 16 kHz", a.length, 8 * R);
+            check("demo " + kind + ": the same every time", Arrays.equals(a, b));
+            int max = 0;
+            for (short v : a) max = Math.max(max, Math.abs((int) v));
+            check("demo " + kind + ": loud enough and never clipped", max > 3000 && max < 32767, max);
+            SoundDetector d = new SoundDetector(T0);
+            d.feed(a);
+            d.finish();
+            check("demo " + kind + ": the detector hears it", !d.marks().isEmpty(), d.marks());
+        }
+    }
+
+    /** The last seconds of audio: older samples are gone, a copy gives what is still held. */
+    static void audioRing() {
+        app.openring.core.analysis.AudioRing r = new app.openring.core.analysis.AudioRing(10);
+        short[] s = new short[25];
+        for (int i = 0; i < s.length; i++) s[i] = (short) i;
+        r.add(s, 0, 7);
+        r.add(s, 7, 18);
+        eq("25 samples added", r.total(), 25L);
+        eq("it holds 10", r.capacity(), 10);
+        eq("the oldest held is 15", r.oldest(), 15L);
+        eq("a copy from 12 to 20 gives 15 to 19", Arrays.toString(r.copy(12, 20)), "[15, 16, 17, 18, 19]");
+        eq("a copy past the newest stops at it", Arrays.toString(r.copy(22, 30)), "[22, 23, 24]");
+        eq("a copy of what is gone is empty", r.copy(0, 10).length, 0);
+        r.clear();
+        eq("cleared: nothing held", r.total() + " " + r.copy(0, 5).length, "0 0");
+        boolean refused = false;
+        try {
+            new app.openring.core.analysis.AudioRing(0);
+        } catch (IllegalArgumentException e) {
+            refused = true;
+        }
+        check("a ring of no samples is refused", refused);
     }
 
     static String describe(SoundDetector d) {

@@ -340,6 +340,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * (issue #329; nothing is asked without a tap, and demo mode never asks),
      * hand_night (boolean, demo mode only) shows today and the day before yesterday as without a device night, hand_entry
      * (boolean, demo mode only) opens the entry of a night by hand for last night with two wake marks (issue #427),
+     * sounds (string, demo mode only: consent, test or list) opens the sleep sounds' consent, the microphone test's made up
+     * result or the clip list of the demo's night (issue #380; demo mode never records), sounds_start (boolean, the bedtime
+     * notification's Start) starts listening,
      * life_time (boolean, demo mode only) opens "When and how long?" for Sauna on Today's row (issue #435; nothing is saved).
      */
     void handleExtras(Intent i) {
@@ -432,6 +435,15 @@ public final class MainActivity extends Activity implements RingManager.Listener
             startActivity(new Intent(this, WatchActivity.class).putExtra("demo_report", i.getBooleanExtra("watch_report", false))
                     .putExtra("demo_ring", i.getBooleanExtra("device_ring", false))); // the made up QRing ring's result (issue #418)
         }
+        // the bedtime notification's Start (issue #380): listening starts from here, a screen in front, as Android requires
+        if (i.getBooleanExtra("sounds_start", false)) {
+            i.removeExtra("sounds_start");
+            SoundViews.listen(this);
+        }
+        // screen test: sleep sounds (issue #380), demo mode only, which never records: the consent ("consent"), the microphone
+        // test's made up result ("test") or the clip list of the demo's night ("list")
+        String sounds = i.getStringExtra("sounds");
+        if (sounds != null && Prefs.of(this).demo()) startActivity(new Intent(this, SoundsActivity.class).putExtra(SoundsActivity.MODE, sounds));
         // screen test: the Badges page (issue #265); it only reads, so it needs no demo mode
         if (i.getBooleanExtra("badges", false)) startActivity(new Intent(this, BadgesActivity.class));
         // screen test: Trends (issue #374) at a group, with trends_measure and trends_period; it only reads, so no demo mode needed
@@ -681,6 +693,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         app.openring.sync.BackupJob.schedule(this);
         // the reminder before the expected period (issue #252): planned again from the person's own log, in the background
         app.openring.sync.PeriodReminder.planLater(this);
+        // the bedtime notification for sleep sounds (issue #380): planned again from the usual bedtime, in the background
+        app.openring.sync.SoundReminder.planLater(this);
         RingManager.get(this).addListener(this);
         wasBusy = RingManager.get(this).busy();
         updateStatus();
@@ -698,6 +712,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
     protected void onPause() {
         super.onPause();
         RingManager.get(this).removeListener(this);
+        // a sleep sound clip stops with its screen (issue #380)
+        SoundViews.stopPlaying();
     }
 
     void setDate(LocalDate d) {

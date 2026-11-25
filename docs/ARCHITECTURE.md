@@ -415,8 +415,41 @@ factors (the phone wins on the same start), then gives `gone` 1 to every mark wh
 another of the phone's marks, all in one transaction; any failure puts the old file back. Delete all is one method,
 `data/DeleteAll.run` (the history in use, the copies before updates, and the clip folder of the history deleted: the demo's in
 demo mode, the real one otherwise; the other history and its clips stay, so its marks never lose their files). The Data check has one line of counts only: "Sleep sounds: N nights, M clips (K
-with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav files. Nothing calls the sweep or the retention yet;
-1b runs them with the service.
+with sound)". Space used (`Sounds.space`) is the real size of the .m4a and .wav files.
+
+**Sleep sounds, phase 1b: listening.** `sync/SoundService` (foreground, type `microphone`, `RECORD_AUDIO` and
+`FOREGROUND_SERVICE_MICROPHONE`) is started only from a screen in front (the Sleep card's Listen tonight, or the bedtime
+notification's Start, which opens the app first); demo mode never records. It reads `AudioRecord` at 16 kHz mono (source
+`UNPROCESSED` where the phone offers it, else `VOICE_RECOGNITION`) in pieces of 100 ms (a 10 s buffer) under a partial wake lock that its loop's
+`finally` releases (in a `finally` of its own), and hands each piece with the clock of its last sample to a worker thread through
+`data/SoundQueue` (at most 60 s waiting, a piece beyond that is dropped and becomes a gap; its end never waits for good, also when
+the worker stopped early with a full queue; an error in the worker still finishes the night as `system`), so encoding and writing
+never hold up the reading; the worker feeds `data/SoundNight`, the JVM
+tested part: the 1a detector with the start threshold of
+the microphone test (`Prefs.soundThreshold`, 10 dB without one), the last 24 s of audio (`core/analysis/AudioRing`), each ready
+clip saved as `s<ms of its sound>.m4a` (`sync/ClipEncoder`, AAC 24 kbps through `MediaCodec` and `MediaMuxer`) or, after the
+encoder failed once, as WAV for the rest of the night (`core/SleepSounds.wav`); clips given up lose their file; marks written as
+decided and again when their clip changes; everything into the real file through `Db.beginWrite` (also in demo mode; rows wait in
+memory while an analysis runs or a restore swaps). The night's row is written at the start and each minute (`stop` the last
+minute heard, `ended` empty while it runs); the next start closes a night left open as `system`. A piece more than 1 s after the one before (lost
+pieces), or audio more than 5 s behind the clock in all, finishes the detector and starts a new one at the clock's time, with a
+`system` gap between, so marks never move. It stops by hand, at the usual wake up plus an hour (9:00 until 7 nights) or after 12 hours (`core/SleepSounds.stopAt`).
+One lock guards every write of the night: `DeleteAll.run` for the real history (`SoundNight.deleteHolding`) and
+`SoundNight.deleteNight` ("Delete all clips of this night") delete under it and only then close the night, so nothing of it is
+written afterwards and the service ends on its next piece; when the history's delete fails the night goes on listening, once it
+worked the night is closed even if a later step (copies, clip folder) fails. Retention and sweep (`Sounds.tidy`) run after each night and when the clip list opens; the
+sweep is left out while a night listens (a snoring stretch's clip can wait longer than the sweep's grace for its mark). Screens:
+the Sleep sounds card on the Sleep tab (`ui/SoundViews`: the night whose start plus 12 hours falls on the day, its marks with
+Play, Listen tonight, Stop listening, the battery and no diagnosis notes), `ui/SoundsActivity` (the consent, the microphone asked
+in context with the rule of issue #140, Test the microphone, the clip list with Keep, Delete sound and Delete all clips of this
+night), Settings' Phone block (keep clips 7 days, 30 days or until deleted, the bedtime notification, space used, the test).
+Test the microphone (owner's wish of 21 November): 10 s of room (20th percentile of the frame levels), 8 s for the sentence (the
+loudest second), after a test that worked (Good, Works) the margin's half kept between 6 and 15 dB is the new threshold, saved at once (too far,
+a loud room or no sound changes nothing); the sentence is held in memory,
+played once and dropped. `sync/SoundReminder` posts "Ready for the night?" 30 minutes before the usual bedtime of the last 14
+ring nights (22:30 until 7), once a day, after the consent, with the microphone allowed and while the switch is on. Settings in a backup: `sound_keep`,
+`sound_threshold`, `sound_tested`, `sound_margin`, `sound_remind`; never the consent. The demo file gets last night's made up
+sounds (`Sounds.demo`: tones made in code in `no_backup/sounds-demo`, never a voice). Marks on the night timeline come in 1c.
 
 **Nights by hand (issue #427).** A night slept without the ring and the watch, entered on one screen (`ui/HandNightActivity`): a bar
 from 18:00 the evening before to 14:00 on the day, in the day's zone (19 or 21 hours on a clock change night), with In bed and Up

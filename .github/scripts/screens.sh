@@ -198,6 +198,13 @@ launch --ei tab 1; sleep 3
 swipe_up; swipe_up;                       shot sleep-details 1
 # the Details card with Total sleep first, next to Time in bed (issue #409); sleep-details above scrolls past it
 launch --ei tab 1 --es card DETAILS;        shot sleep-details-card 2
+# Sleep sounds (issue #380, phase 1b), demo mode only, which never records: the card with the demo night's clips (tones made in
+# code), the consent before the first night, the microphone test's made up result, the clip list, Settings' part in the Phone block
+launch --ei tab 1 --es card SLEEP_SOUNDS;   shot sleep-sounds-card 2
+launch --es sounds consent;                 shot sleep-sounds-consent 2
+launch --es sounds test;                    shot sleep-sounds-test 2
+launch --es sounds list;                    shot sleep-sounds-list 3
+launch --es settings sounds;                shot settings-sounds 3
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 launch --ei tab 1 --ez analysis true --ei period 1
