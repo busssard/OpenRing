@@ -5090,6 +5090,79 @@ public class CoreTest {
         return Math.abs(a - b) < 1e-6;
     }
 
+    /** {@code ScreenTime.subtract} as it was before the cuts were searched (code health), the reference for the check below. */
+    static List<double[]> subtractOld(List<double[]> sessions, List<double[]> cuts) {
+        List<double[]> cs = new ArrayList<double[]>(cuts);
+        java.util.Collections.sort(cs, new java.util.Comparator<double[]>() {
+            @Override
+            public int compare(double[] x, double[] y) {
+                return Double.compare(x[0], y[0]);
+            }
+        });
+        List<double[]> out = new ArrayList<double[]>();
+        for (double[] s : sessions) {
+            double a = s[0];
+            for (double[] c : cs) {
+                if (c[1] <= a) continue;
+                if (c[0] >= s[1]) break;
+                if (c[0] > a) out.add(new double[] {a, c[0]});
+                a = Math.max(a, c[1]);
+                if (a >= s[1]) break;
+            }
+            if (a < s[1]) out.add(new double[] {a, s[1]});
+        }
+        return out;
+    }
+
+    static boolean samePieces(List<double[]> x, List<double[]> y) {
+        if (x.size() != y.size()) return false;
+        for (int i = 0; i < x.size(); i++)
+            if (Double.compare(x.get(i)[0], y.get(i)[0]) != 0 || Double.compare(x.get(i)[1], y.get(i)[1]) != 0) return false;
+        return true;
+    }
+
+    /**
+     * Screen time with left out apps over years (Trends): the searched cuts give exactly the pieces of the old loop, in the
+     * same order, on 3000 seeded made up cases (overlapping, nested, touching, empty and long cuts, sessions out of order,
+     * a cut or session without a number), and three years of sessions and cuts take well under a second.
+     */
+    static void subtractAsBefore() {
+        java.util.Random r = new java.util.Random(20261124L);
+        int same = 0, cases = 3000;
+        for (int t = 0; t < cases; t++) {
+            List<double[]> ss = new ArrayList<double[]>(), cs = new ArrayList<double[]>();
+            int ns = r.nextInt(30), nc = r.nextInt(30);
+            for (int i = 0; i < ns; i++) {
+                double a = r.nextInt(500) + (r.nextBoolean() ? 0.5 : 0);
+                ss.add(new double[] {a, a + r.nextInt(r.nextInt(4) == 0 ? 200 : 20)});
+            }
+            for (int i = 0; i < nc; i++) {
+                double a = r.nextInt(500);
+                int k = r.nextInt(10);
+                double len = k == 0 ? 0 : k == 1 ? 300 + r.nextInt(300) : r.nextInt(25);
+                cs.add(new double[] {a, a + len});
+            }
+            if (t % 97 == 0 && nc > 0) cs.get(r.nextInt(nc))[1] = Double.NaN;
+            if (t % 89 == 0 && ns > 0) ss.get(r.nextInt(ns))[0] = Double.NaN;
+            if (t % 83 == 0 && nc > 0) cs.get(r.nextInt(nc))[0] = Double.NaN;
+            if (samePieces(ScreenTime.subtract(ss, cs), subtractOld(ss, cs))) same++;
+        }
+        eq("subtract: the same pieces as the old loop on every made up case", same, cases);
+        List<double[]> ss = new ArrayList<double[]>(), cs = new ArrayList<double[]>();
+        double day = 86400;
+        for (int d = 0; d < 3 * 365; d++) {
+            for (int i = 0; i < 80; i++) ss.add(new double[] {d * day + i * 900, d * day + i * 900 + 300});
+            for (int i = 0; i < 20; i++) cs.add(new double[] {d * day + i * 3600 + 100, d * day + i * 3600 + 160});
+        }
+        long t0 = System.nanoTime();
+        List<double[]> fast = ScreenTime.subtract(ss, cs);
+        long ms = (System.nanoTime() - t0) / 1000000;
+        check("subtract: three years (87600 sessions, 21900 cuts) under a second", ms < 1000, ms + " ms");
+        List<double[]> some = new ArrayList<double[]>(ss.subList(ss.size() - 800, ss.size()));
+        check("subtract: the last ten days of three years as the old loop", samePieces(ScreenTime.subtract(some, cs), subtractOld(some, cs)));
+        eq("subtract: three years, pieces", fast.size(), 87600 + 21900);
+    }
+
     /** Apps in front and apps left out of screen time (1.15). */
     static void screenApps() {
         final int ON = ScreenTime.APP_ON, OFF = ScreenTime.APP_OFF, SOFF = ScreenTime.OFF;
@@ -5128,6 +5201,7 @@ public class CoreTest {
         List<double[]> touch = new ArrayList<double[]>();
         touch.add(new double[] {100, 200});
         check("subtract: touching edges keep everything", near(ScreenTime.minutes(ScreenTime.subtract(screen, touch), 0, 400), 200 / 60.0));
+        subtractAsBefore();
 
         java.util.Set<String> only = new java.util.HashSet<String>(java.util.Arrays.asList(m));
         eq("ranges: only the picked apps", ScreenTime.ranges(a, only).size(), 2);

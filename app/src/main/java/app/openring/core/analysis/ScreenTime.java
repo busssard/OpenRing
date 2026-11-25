@@ -430,14 +430,21 @@ public final class ScreenTime {
         l.add(new double[] {a, b});
     }
 
-    /** The sessions with every part covered by one of {@code cuts} taken out; both lists may overlap within themselves. */
+    /**
+     * The sessions with every part covered by one of {@code cuts} taken out; both lists may overlap within themselves.
+     * Each session starts at the first cut that can reach it (a binary search over the furthest end of the cuts so far),
+     * not at the first cut of all, so years of sessions and cuts (Trends) stay fast; the cuts it jumps over all end
+     * before the session starts, which the loop skipped one by one before, so the pieces are the same.
+     */
     public static List<double[]> subtract(List<double[]> sessions, List<double[]> cuts) {
         List<double[]> cs = new ArrayList<double[]>(cuts);
         Collections.sort(cs, BY_START);
+        double[] reach = furthestEnds(cs);
         List<double[]> out = new ArrayList<double[]>();
         for (double[] s : sessions) {
             double a = s[0];
-            for (double[] c : cs) {
+            for (int i = firstReaching(reach, a); i < cs.size(); i++) {
+                double[] c = cs.get(i);
                 if (c[1] <= a) continue;
                 if (c[0] >= s[1]) break;
                 if (c[0] > a) out.add(new double[] {a, c[0]});
@@ -447,6 +454,33 @@ public final class ScreenTime {
             if (a < s[1]) out.add(new double[] {a, s[1]});
         }
         return out;
+    }
+
+    /**
+     * For each cut, the furthest end of it and every cut before it (never falling, so it can be searched); an end that is
+     * not a number counts as reaching everything, so such a cut and all after it are never jumped over.
+     */
+    static double[] furthestEnds(List<double[]> cs) {
+        double[] reach = new double[cs.size()];
+        double m = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < reach.length; i++) {
+            double e = cs.get(i)[1];
+            if (Double.isNaN(e)) m = Double.POSITIVE_INFINITY;
+            else if (e > m) m = e;
+            reach[i] = m;
+        }
+        return reach;
+    }
+
+    /** The first index whose furthest end is not at or before {@code a} (all cuts before it end by {@code a}). */
+    static int firstReaching(double[] reach, double a) {
+        int lo = 0, hi = reach.length;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (reach[mid] <= a) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
     }
 
     static final Comparator<double[]> BY_START = new Comparator<double[]>() {
