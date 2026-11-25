@@ -8,8 +8,10 @@ import java.util.Locale;
 import java.util.Random;
 
 import app.openring.core.LifeTags;
+import app.openring.core.analysis.CycleFactors;
 import app.openring.core.analysis.Cycles;
 import app.openring.core.analysis.FactorEffect;
+import app.openring.core.analysis.cycleforecast.Methods;
 import app.openring.data.Db;
 import app.openring.data.Demo;
 import app.openring.data.LifeEffects;
@@ -124,6 +126,7 @@ public class EffectPipelineTest {
         db.addExcluded(s, s + 3600, 1234567);
         FactorEffect.Result a1 = find(read(db, today, z, true), LifeTags.ALCOHOL);
         check("#292 demo: a night in a left out time is skipped", a1.nWith == a0.nWith - 1, a0.nWith + " " + a1.nWith);
+        periodFactors(db, today, z);
         Demo.leave(c);
     }
 
@@ -182,5 +185,47 @@ public class EffectPipelineTest {
         check("#292 cache key: two sets with the same hash give different keys", a.hashCode() == b.hashCode() && !LifeEffects.days(a).equals(LifeEffects.days(b)),
                 LifeEffects.days(a) + " " + LifeEffects.days(b));
         check("#292 cache key: the same days give the same key", LifeEffects.days(a).equals(LifeEffects.days(new java.util.TreeSet<LocalDate>(a))), null);
+    }
+
+    /**
+     * Issue #383, phase 2: the demo's made up tags beside each period of "How close the estimates were", as {@code DayData} works
+     * them out: Illness only on the cycle with the made up ill week, Holiday and Travel on the newest period, the cycles before the
+     * made up year unknown, no Intimacy; reading changes nothing stored.
+     */
+    static void periodFactors(Db db, LocalDate today, ZoneId z) {
+        String before = stored(db);
+        Cycles cy = Periods.measured(db, Periods.cycles(db, today).withMethod(Methods.BEST), z);
+        app.openring.core.analysis.cycleforecast.Backtest.Score use = cy.backtest().of(cy.methodId);
+        long t0 = System.nanoTime();
+        CycleFactors cf = CycleFactors.of(cy, use, LifeEffects.tagFactors(LifeLog.known(db), LifeLog.all(db), z));
+        double ms = (System.nanoTime() - t0) / 1e6;
+        StringBuilder chips = new StringBuilder();
+        for (FactorEffect.Factor f : cf.chips) {
+            chips.append(f.key).append(' ');
+            System.out.println("    #383 demo, " + f.name + ": " + cf.line(f.key, Locale.US));
+        }
+        int last = cf.periods.size() - 1;
+        System.out.println("    #383 demo, the newest period's readout: " + cf.tip(last, null, Locale.US).replace("\n", " / ") + " (" + Math.round(ms) + " ms)");
+        check("#383 demo: one dot for each scored period", cf.periods.size() == use.n && use.n > 20, use.n);
+        int ill = 0;
+        boolean illRight = true;
+        LocalDate illFrom = Demo.illFrom(today);
+        for (int i = 0; i < cf.periods.size(); i++) {
+            if (cf.state(i, LifeTags.ILLNESS) != CycleFactors.WITH) continue;
+            ill++;
+            Cycles.Cycle k = cf.periods.get(i).cycle;
+            illRight &= !illFrom.isBefore(k.start) && illFrom.isBefore(k.next);
+        }
+        check("#383 demo: Illness on exactly the cycle with the made up ill week", ill == 1 && illRight, ill);
+        check("#383 demo: Holiday and Travel on the newest period", cf.state(last, LifeTags.HOLIDAY) == CycleFactors.WITH
+                && cf.state(last, LifeTags.TRAVEL) == CycleFactors.WITH && cf.newest(LifeTags.TRAVEL) == last, cf.periods.get(last).logged.keySet());
+        check("#383 demo: the cycles before the made up year are unknown, their readout says so", cf.state(0, LifeTags.ILLNESS) == CycleFactors.UNKNOWN
+                && cf.tip(0, null, Locale.US).startsWith("Before you started logging life factors"), cf.tip(0, null, Locale.US));
+        check("#383 demo: the chips hold Illness, Travel and Meditation, never Intimacy", cf.offered(LifeTags.ILLNESS) && cf.offered(LifeTags.TRAVEL)
+                && cf.offered(LifeTags.MEDITATION) && !cf.offered(LifeTags.INTIMACY), chips);
+        check("#383 demo: Illness reads as the decisions' sentence", cf.line(LifeTags.ILLNESS, Locale.US).startsWith("The period on ")
+                && cf.line(LifeTags.ILLNESS, Locale.US).endsWith("; you logged Illness that cycle (" + Demo.ILL_DAYS + " days)."), cf.line(LifeTags.ILLNESS, Locale.US));
+        check("#383 demo: reading changes nothing stored", stored(db).equals(before), null);
+        check("#383 demo: worked out in under 100 ms", ms < 100, ms);
     }
 }

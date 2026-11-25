@@ -65,7 +65,12 @@ public final class DayData {
      * worked out here in the background, kept while nothing changed). Empty without a ring or without factors; null when it
      * could not be worked out (the card says so).
      */
-    public List<app.openring.core.analysis.FactorEffect.Result> lifeEffects = new ArrayList<app.openring.core.analysis.FactorEffect.Result>();
+    /**
+     * The life factors logged in each scored cycle of "How close the estimates were" (issue #383, phase 2), null when the period
+     * tracker is hidden, has no period, or the factors could not be read.
+     */
+    public app.openring.core.analysis.CycleFactors periodFactors;
+    public List<app.openring.core.analysis.FactorEffect.Result> lifeEffects =new ArrayList<app.openring.core.analysis.FactorEffect.Result>();
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
     /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
@@ -445,6 +450,18 @@ public final class DayData {
             d.lifeTimes.clear();
             d.lifeOk = false;
             app.openring.ble.RingManager.get(c).log("day load: the life factors could not be read: " + e.getClass().getSimpleName());
+        }
+        if (d.lifeOk && d.periodShown && d.periods != null && !d.periods.periods.isEmpty()) {
+            try {
+                // issue #383, phase 2: the life factors logged in each scored cycle, beside its error on "How close the estimates
+                // were"; by calendar day, reads nothing more, also without a ring
+                d.periodFactors = app.openring.core.analysis.CycleFactors.of(d.periods, d.periods.backtest().of(d.periods.methodId),
+                        app.openring.data.LifeEffects.tagFactors(d.life, d.lifeDays, java.time.ZoneId.systemDefault()));
+            } catch (RuntimeException e) {
+                // the chart shows the periods as before; the error's kind only, never a tag, a name or a date
+                d.periodFactors = null;
+                app.openring.ble.RingManager.get(c).log("day load: the life factors of each cycle: " + e.getClass().getSimpleName());
+            }
         }
         if (d.lifeOk && d.has.ring) {
             try {

@@ -478,8 +478,14 @@ launch --ei tab 4 --es card HOW_CLOSE_THE_ESTIMATES_WERE; sleep 3
 scroll_to "HOW CLOSE THE ESTIMATES WERE" 3 || echo "::warning::issue #383 step: the card How close the estimates were was not found on Body"
 shot body-period-accuracy 1
 scroll_to "Each period, " 12 || echo "::warning::issue #383 step: the chart of each period's error was not found"
-if touch_desc "Days each period came" 70; then shot body-period-accuracy-touch 1
+# touched at 92 % (phase 2 of #383): a period of the demo's made up year, so the readout also names the life factors of its cycle
+if touch_desc "Days each period came" 92; then shot body-period-accuracy-touch 1
 else echo "::warning::issue #383 step skipped: the chart of each period's error was not on screen to touch it"; fi
+# phase 2 of #383: Mark a life factor, Illness: the period after the demo's made up ill week ringed and touched, the cycles before
+# the made up year faded, the line under the chart (only what was logged next to the period, never a cause); the chips sit under
+# the chart, so they are on screen with it
+if tap_text "Illness"; then shot body-period-accuracy-factor 2
+else echo "::warning::issue #383 phase 2 step skipped: the chip Illness was not on screen under the chart"; fi
 # Phase 2 of #252: "Ovulation from your temperature" in Your cycles (this cycle's measured day, in how many cycles a rise
 # was found, the own time from ovulation to the period, a line under each cycle), the Period card's measured lines, and the
 # rise marked on the night temperature line (baseline, ringed high nights, the ovulation line), opened touched on its first
