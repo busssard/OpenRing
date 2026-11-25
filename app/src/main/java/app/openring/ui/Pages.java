@@ -605,13 +605,17 @@ public final class Pages {
         List<app.openring.core.LifeTimes.Band> nightLife = LifeCard.bands(d, Json.d(n, "start"), Json.d(n, "end"), nz);
         hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz).life(nightLife), app.openring.core.Tour.CHART), Ui.sized(c, -1, 170));
         JSONArray mv = n.optJSONArray("motion_series");
-        if (mv != null && mv.length() > 0) {
+        boolean moves = mv != null && mv.length() > 0;
+        if (moves) {
             hyp.addView(Ui.gap(c, 6));
             hyp.addView(Ui.text(c, "Movement", 11, Ui.TEXT_3, Ui.MEDIUM));
-            hyp.addView(new Charts.Strip(c, Json.series(mv), Json.d(n, "start"), Json.d(n, "end"), Ui.ACTIVE), Ui.sized(c, -1, 26));
+            // readable by touch, the readout above its bars (code health of #380)
+            hyp.addView(new Charts.Strip(c, Json.series(mv), Json.d(n, "start"), Json.d(n, "end"), Ui.ACTIVE).zone(nz), Ui.sized(c, -1, 44));
         }
         hyp.addView(Ui.gap(c, 4));
-        hyp.addView(Ui.text(c, "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        hyp.addView(Ui.text(c, moves ? "Touch or slide along the charts to see the time, the stage and the movement."
+                : "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        if (moves) hyp.addView(Ui.text(c, app.openring.core.NightStrip.MOVEMENT_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 8));
         hyp.addView(Ui.text(c, Explain.STAGES, 12, Ui.TEXT_2, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 10));

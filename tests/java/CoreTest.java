@@ -485,6 +485,43 @@ public class CoreTest {
             if (!back.equals(base)) moved++;
         }
         eq("merge: random nights keep their own rows in order", moved, 0);
+        nightStrip380(s, utc);
+    }
+
+    /** The Movement strip read by touch and the axis the night's strips share (code health of issue #380). */
+    static void nightStrip380(double s, java.time.ZoneId utc) {
+        eq("strip step: the 5 minute bins", NightStrip.step(new double[] {s + 150, s + 450, s + 750}), 300.0);
+        eq("strip step: a missing bin leaves the smallest step", NightStrip.step(new double[] {s + 150, s + 750, s + 1050}), 300.0);
+        eq("strip step: one point, 300 s", NightStrip.step(new double[] {s}), 300.0);
+        eq("strip step: none, 300 s", NightStrip.step(new double[0]), 300.0);
+        eq("strip step: the same time twice is not a step", NightStrip.step(new double[] {s, s, s + 60}), 60.0);
+        eq("strip step: other bins", NightStrip.step(new double[] {s, s + 120, s + 240}), 120.0);
+        double[] t = {s + 150, s + 450, s + 750};
+        eq("strip nearest: inside a bar", NightStrip.nearest(t, s + 500, 300), 1);
+        eq("strip nearest: at a bar's edge", NightStrip.nearest(t, s + 300, 300), 0);
+        eq("strip nearest: beyond the last bar", NightStrip.nearest(t, s + 950, 300), -1);
+        eq("strip nearest: no points", NightStrip.nearest(new double[0], s, 300), -1);
+        eq("strip frac: start", NightStrip.frac(s, s, s + 100), 0.0);
+        eq("strip frac: end", NightStrip.frac(s + 100, s, s + 100), 1.0);
+        eq("strip frac: an empty axis", NightStrip.frac(s + 5, s, s), 0.0);
+        // s is 22:00 UTC: the bar of 22:05 to 22:10 around 22:07:30
+        eq("movement tip", NightStrip.movementTip(s + 450, 300, 4, utc, Locale.US), "22:05 to 22:10, 4.0 s of motion per reading");
+        eq("movement tip: 10 s and more whole", NightStrip.movementTip(s + 450, 300, 12.4, utc, Locale.US), "22:05 to 22:10, 12 s of motion per reading");
+        eq("movement tip: none", NightStrip.movementTip(s + 450, 300, 0, utc, Locale.US), "22:05 to 22:10, no movement");
+        eq("movement tip: unknown", NightStrip.movementTip(s + 450, 300, Double.NaN, utc, Locale.US), "22:05 to 22:10, no movement reading");
+        eq("movement tip: in the night's zone", NightStrip.movementTip(s + 450, 300, 4, java.time.ZoneId.of("Asia/Tokyo"), Locale.US),
+                "07:05 to 07:10, 4.0 s of motion per reading");
+        eq("movement: no reading", NightStrip.noReading(s + 30, utc), "22:01, no movement reading");
+        for (String x : new String[] {NightStrip.MOVEMENT_NOTE, NightStrip.movementTip(s, 300, 3, utc, Locale.US)}) {
+            check("movement texts: no dashes as punctuation: " + x, !x.contains(" - ") && !x.contains("–") && !x.contains("—"));
+        }
+        try {
+            String src = new String(java.nio.file.Files.readAllBytes(new java.io.File("app/src/main/java/app/openring/ui/Charts.java").toPath()), "UTF-8");
+            check("Strip is a Scrub (readable by touch)", src.contains("class Strip extends Scrub"));
+            check("Strip takes its step from the series, no 300 s built in", src.contains("NightStrip.step(") && !src.contains("* 300 /"));
+        } catch (java.io.IOException ex) {
+            check("read Charts.java " + ex, false);
+        }
     }
 
     /** The night timeline rows exactly as ui/Pages.timeline built them before the move to WakeUps.timeline. */

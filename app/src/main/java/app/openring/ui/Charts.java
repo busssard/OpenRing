@@ -223,11 +223,14 @@ public final class Charts {
             return super.performClick();
         }
 
-        /** Vertical cursor at {@code x} from {@code top} to {@code bottom} with a label bubble on top (a line break gives two lines). */
+        /**
+         * Vertical cursor at {@code x} from {@code top} to {@code bottom} with a label bubble on top (a line break gives two
+         * lines; a line wider than the chart breaks at its last space that fits, issue #380, so no readout is cut off).
+         */
         protected void drawTip(Canvas cv, float x, float top, float bottom, String text) {
             cv.drawLine(x, top, x, bottom, cursor);
             float pad = Ui.dp(getContext(), 6);
-            String[] lines = text.split("\n");
+            String[] lines = wrap(text.split("\n"), getWidth() - pad * 2);
             float tw = 0;
             for (String l : lines) tw = Math.max(tw, tipTxt.measureText(l));
             float lh = tipTxt.getTextSize() * 1.25f;
@@ -241,6 +244,27 @@ public final class Charts {
                 cv.drawText(l, left + pad, y, tipTxt);
                 y += lh;
             }
+        }
+
+        /** {@code lines} with each line wider than {@code max} broken at its last space that fits (a word wider stays whole). */
+        private String[] wrap(String[] lines, float max) {
+            if (!(max > 0)) return lines;
+            java.util.List<String> out = new java.util.ArrayList<String>();
+            for (String l : lines) {
+                String rest = l;
+                while (tipTxt.measureText(rest) > max) {
+                    int cut = -1;
+                    for (int i = rest.indexOf(' '); i > 0; i = rest.indexOf(' ', i + 1)) {
+                        if (tipTxt.measureText(rest, 0, i) <= max) cut = i;
+                        else break;
+                    }
+                    if (cut <= 0) break;
+                    out.add(rest.substring(0, cut));
+                    rest = rest.substring(cut + 1);
+                }
+                out.add(rest);
+            }
+            return out.toArray(new String[0]);
         }
     }
 
@@ -500,12 +524,24 @@ public final class Charts {
 
     // ------------------------------------------------------------------- strip chart
 
-    /** A thin intensity strip (e.g. movement through the night): taller and stronger = more. */
-    public static final class Strip extends View {
+    /** Height of the bars of {@link Strip} and the marks of {@link SoundStrip}, at their bottom; the readout goes above. */
+    static final float STRIP_BARS_DP = 24;
+    /** Width of the label column of the night's charts, so their times line up with the stages. */
+    static final float NIGHT_LABEL_DP = 44;
+
+    /**
+     * A thin intensity strip (the movement through the night): taller and stronger = more. Readable by touch (code health of
+     * issue #380): the bar under the finger with its time and value ({@link app.openring.core.NightStrip#movementTip}). The
+     * bars take the series' own step ({@link app.openring.core.NightStrip#step}).
+     */
+    public static final class Strip extends Scrub {
         private final TS series;
         private final double from, to;
         private final int color;
+        private final double[] times;
+        private final double step;
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private ZoneId zone = ZoneId.systemDefault();
 
         public Strip(Context c, TS series, double from, double to, int color) {
             super(c);
@@ -513,24 +549,44 @@ public final class Charts {
             this.from = from;
             this.to = to;
             this.color = color;
+            times = new double[this.series.size()];
+            for (int i = 0; i < times.length; i++) times[i] = this.series.t(i);
+            step = app.openring.core.NightStrip.step(times);
+            setContentDescription("Movement through the night, touch to read it");
+        }
+
+        /** The zone the night's times are shown in (issue #22). */
+        public Strip zone(ZoneId z) {
+            if (z != null) zone = z;
+            return this;
         }
 
         @Override
         protected void onDraw(Canvas cv) {
             float w = getWidth(), h = getHeight();
-            float left = Ui.dp(getContext(), 44);
+            float left = Ui.dp(getContext(), NIGHT_LABEL_DP);
+            float barsH = Math.min(h, Ui.dp(getContext(), STRIP_BARS_DP));
             p.setColor(Ui.LINE);
             cv.drawRect(left, h - 1, w, h, p);
             double max = 1;
             for (int i = 0; i < series.size(); i++) max = Math.max(max, series.v(i));
-            float bw = Math.max(1.5f, (float) ((w - left) * 300 / Math.max(1, to - from)) - 1);
+            float bw = Math.max(1.5f, (float) ((w - left) * step / Math.max(1, to - from)) - 1);
             for (int i = 0; i < series.size(); i++) {
                 double v = series.v(i);
                 if (v <= 0 || Double.isNaN(v)) continue;
                 float x = (float) (left + (series.t(i) - from) / (to - from) * (w - left));
-                float bh = (float) (Math.min(1, v / max) * (h - 2));
+                float bh = (float) (Math.min(1, v / max) * (barsH - 2));
                 p.setColor(Ui.alpha(color, (float) (0.35 + 0.65 * Math.min(1, v / max))));
                 cv.drawRect(x - bw / 2, h - 1 - bh, x + bw / 2, h - 1, p);
+            }
+            if (!Float.isNaN(scrubX) && to > from && w > left) {
+                float sx = Math.max(left, Math.min(w, scrubX));
+                double t = from + (sx - left) / (w - left) * (to - from);
+                int k = app.openring.core.NightStrip.nearest(times, t, step);
+                String tip = k < 0 ? app.openring.core.NightStrip.noReading(t, zone)
+                        : app.openring.core.NightStrip.movementTip(times[k], step, series.v(k), zone, Locale.getDefault());
+                float x = k < 0 ? sx : (float) (left + (times[k] - from) / (to - from) * (w - left));
+                drawTip(cv, x, h - barsH, h, tip);
             }
         }
     }
