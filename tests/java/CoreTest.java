@@ -1241,6 +1241,69 @@ public class CoreTest {
         check("#329 job due: by default nothing is due", !BackgroundJob.due(fresh).run() && fresh.keyState == KeyState.NONE && fresh.zone != null);
     }
 
+    /** Owner's report of 23 November: an older day keeps the newer values in the charts, the window moves only past them. */
+    static void dayWindow() {
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 23);
+        eq("window: today ends today", app.openring.core.DayWindow.end(today, today, 7), today);
+        eq("window: yesterday still ends today (newer value stays)", app.openring.core.DayWindow.end(today.minusDays(1), today, 7), today);
+        eq("window: 6 days back still ends today", app.openring.core.DayWindow.end(today.minusDays(6), today, 7), today);
+        eq("window: 7 days back moves by one day", app.openring.core.DayWindow.end(today.minusDays(7), today, 7), today.minusDays(1));
+        eq("window: 40 days back in a 30 day chart ends 11 days back", app.openring.core.DayWindow.end(today.minusDays(40), today, 30), today.minusDays(11));
+        eq("window: a day after today (clock moved) ends on it", app.openring.core.DayWindow.end(today.plusDays(1), today, 7), today.plusDays(1));
+        eq("window: no today known ends on the picked day", app.openring.core.DayWindow.end(today.minusDays(3), null, 7), today.minusDays(3));
+        // stepping back one day at a time never jumps by more than a day
+        java.time.LocalDate prev = app.openring.core.DayWindow.end(today, today, 30);
+        boolean smooth = true, shown = true;
+        for (int k = 1; k <= 400; k++) {
+            java.time.LocalDate p = today.minusDays(k), e = app.openring.core.DayWindow.end(p, today, 30);
+            if (java.time.temporal.ChronoUnit.DAYS.between(e, prev) > 1) smooth = false;
+            if (app.openring.core.DayWindow.index(p, e, 30) < 0) shown = false;
+            prev = e;
+        }
+        check("window: stepping back 400 days moves at most a day per step", smooth);
+        check("window: the picked day is always in the window", shown);
+        eq("window: the picked day's place (yesterday in 7 days ending today)", app.openring.core.DayWindow.index(today.minusDays(1), today, 7), 5);
+        eq("window: today is the last place", app.openring.core.DayWindow.index(today, today, 7), 6);
+        eq("window: moved window, the picked day is the oldest", app.openring.core.DayWindow.index(today.minusDays(7), today.minusDays(1), 7), 0);
+        eq("window: outside is -1", app.openring.core.DayWindow.index(today.minusDays(9), today, 7), -1);
+
+        // code review of #455: the numbers of a picked day never follow the drawn window. Each day's value is its day number;
+        // the picked day and every later day hold 1000, so any of them in the usual value would show at once.
+        final java.time.LocalDate picked = today.minusDays(3);
+        app.openring.core.DayWindow.Value v = new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(java.time.LocalDate day) {
+                return day.isBefore(picked) ? day.toEpochDay() : 1000;
+            }
+        };
+        eq("window: the chart of the picked day still ends today", app.openring.core.DayWindow.end(picked, today, 15), today);
+        double usual = app.openring.core.DayWindow.usual(picked, v);
+        double want = 0;
+        for (int k = 1; k <= 14; k++) want += picked.minusDays(k).toEpochDay();
+        check("usual: an older day's usual value is the mean of the 14 days before it (" + usual + ")", Math.abs(usual - want / 14) < 1e-9);
+        double[] up = app.openring.core.DayWindow.values(picked, 30, v), drawn = app.openring.core.DayWindow.values(app.openring.core.DayWindow.end(picked, today, 30), 30, v);
+        check("values: ending at the picked day, the oldest first", up.length == 30 && up[0] == picked.minusDays(29).toEpochDay() && up[29] == 1000 && up[28] == picked.minusDays(1).toEpochDay());
+        check("values: the drawn window holds the newer days, the picked day's values do not", drawn[29] == 1000 && drawn[26] == 1000 && drawn[25] == picked.minusDays(1).toEpochDay());
+        app.openring.core.DayWindow.Value few = new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(java.time.LocalDate day) {
+                return day.equals(picked.minusDays(2)) || day.equals(picked.minusDays(9)) ? 50 : Double.NaN;
+            }
+        };
+        check("usual: fewer than 3 nights before the day give no usual value", Double.isNaN(app.openring.core.DayWindow.usual(picked, few)));
+        app.openring.core.DayWindow.Value three = new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(java.time.LocalDate day) {
+                return day.equals(picked.minusDays(1)) ? 40 : day.equals(picked.minusDays(14)) ? 50 : day.equals(picked.minusDays(7)) ? 60
+                        : day.equals(picked.minusDays(15)) || !day.isBefore(picked) ? 999 : Double.NaN;
+            }
+        };
+        eq("usual: 3 nights within the 14 days before (not the 15th, not the day itself)", app.openring.core.DayWindow.usual(picked, three), 50.0);
+        eq("average label: none when the chart ends on the picked day", app.openring.core.DayWindow.upTo(today, today, 30), "");
+        eq("average label: said when the chart also shows newer days", app.openring.core.DayWindow.upTo(picked, today, 30), " in the 30 days up to the day you picked");
+        eq("average label: a moved window ends 6 days after the picked day", app.openring.core.DayWindow.upTo(today.minusDays(9), today.minusDays(3), 7), " in the 7 days up to the day you picked");
+    }
+
     public static void main(String[] args) throws Exception {
         permissionSettings();
         keyState199();
@@ -1337,6 +1400,7 @@ public class CoreTest {
         start373();
         syncPlan();
         periodSettingsHidden();
+        dayWindow();
         startCards373();
         startScreens373();
         System.out.println(passed + " passed, " + failed + " failed");
@@ -5026,6 +5090,79 @@ public class CoreTest {
         return Math.abs(a - b) < 1e-6;
     }
 
+    /** {@code ScreenTime.subtract} as it was before the cuts were searched (code health), the reference for the check below. */
+    static List<double[]> subtractOld(List<double[]> sessions, List<double[]> cuts) {
+        List<double[]> cs = new ArrayList<double[]>(cuts);
+        java.util.Collections.sort(cs, new java.util.Comparator<double[]>() {
+            @Override
+            public int compare(double[] x, double[] y) {
+                return Double.compare(x[0], y[0]);
+            }
+        });
+        List<double[]> out = new ArrayList<double[]>();
+        for (double[] s : sessions) {
+            double a = s[0];
+            for (double[] c : cs) {
+                if (c[1] <= a) continue;
+                if (c[0] >= s[1]) break;
+                if (c[0] > a) out.add(new double[] {a, c[0]});
+                a = Math.max(a, c[1]);
+                if (a >= s[1]) break;
+            }
+            if (a < s[1]) out.add(new double[] {a, s[1]});
+        }
+        return out;
+    }
+
+    static boolean samePieces(List<double[]> x, List<double[]> y) {
+        if (x.size() != y.size()) return false;
+        for (int i = 0; i < x.size(); i++)
+            if (Double.compare(x.get(i)[0], y.get(i)[0]) != 0 || Double.compare(x.get(i)[1], y.get(i)[1]) != 0) return false;
+        return true;
+    }
+
+    /**
+     * Screen time with left out apps over years (Trends): the searched cuts give exactly the pieces of the old loop, in the
+     * same order, on 3000 seeded made up cases (overlapping, nested, touching, empty and long cuts, sessions out of order,
+     * a cut or session without a number), and three years of sessions and cuts take well under a second.
+     */
+    static void subtractAsBefore() {
+        java.util.Random r = new java.util.Random(20261124L);
+        int same = 0, cases = 3000;
+        for (int t = 0; t < cases; t++) {
+            List<double[]> ss = new ArrayList<double[]>(), cs = new ArrayList<double[]>();
+            int ns = r.nextInt(30), nc = r.nextInt(30);
+            for (int i = 0; i < ns; i++) {
+                double a = r.nextInt(500) + (r.nextBoolean() ? 0.5 : 0);
+                ss.add(new double[] {a, a + r.nextInt(r.nextInt(4) == 0 ? 200 : 20)});
+            }
+            for (int i = 0; i < nc; i++) {
+                double a = r.nextInt(500);
+                int k = r.nextInt(10);
+                double len = k == 0 ? 0 : k == 1 ? 300 + r.nextInt(300) : r.nextInt(25);
+                cs.add(new double[] {a, a + len});
+            }
+            if (t % 97 == 0 && nc > 0) cs.get(r.nextInt(nc))[1] = Double.NaN;
+            if (t % 89 == 0 && ns > 0) ss.get(r.nextInt(ns))[0] = Double.NaN;
+            if (t % 83 == 0 && nc > 0) cs.get(r.nextInt(nc))[0] = Double.NaN;
+            if (samePieces(ScreenTime.subtract(ss, cs), subtractOld(ss, cs))) same++;
+        }
+        eq("subtract: the same pieces as the old loop on every made up case", same, cases);
+        List<double[]> ss = new ArrayList<double[]>(), cs = new ArrayList<double[]>();
+        double day = 86400;
+        for (int d = 0; d < 3 * 365; d++) {
+            for (int i = 0; i < 80; i++) ss.add(new double[] {d * day + i * 900, d * day + i * 900 + 300});
+            for (int i = 0; i < 20; i++) cs.add(new double[] {d * day + i * 3600 + 100, d * day + i * 3600 + 160});
+        }
+        long t0 = System.nanoTime();
+        List<double[]> fast = ScreenTime.subtract(ss, cs);
+        long ms = (System.nanoTime() - t0) / 1000000;
+        check("subtract: three years (87600 sessions, 21900 cuts) under a second", ms < 1000, ms + " ms");
+        List<double[]> some = new ArrayList<double[]>(ss.subList(ss.size() - 800, ss.size()));
+        check("subtract: the last ten days of three years as the old loop", samePieces(ScreenTime.subtract(some, cs), subtractOld(some, cs)));
+        eq("subtract: three years, pieces", fast.size(), 87600 + 21900);
+    }
+
     /** Apps in front and apps left out of screen time (1.15). */
     static void screenApps() {
         final int ON = ScreenTime.APP_ON, OFF = ScreenTime.APP_OFF, SOFF = ScreenTime.OFF;
@@ -5064,6 +5201,7 @@ public class CoreTest {
         List<double[]> touch = new ArrayList<double[]>();
         touch.add(new double[] {100, 200});
         check("subtract: touching edges keep everything", near(ScreenTime.minutes(ScreenTime.subtract(screen, touch), 0, 400), 200 / 60.0));
+        subtractAsBefore();
 
         java.util.Set<String> only = new java.util.HashSet<String>(java.util.Arrays.asList(m));
         eq("ranges: only the picked apps", ScreenTime.ranges(a, only).size(), 2);

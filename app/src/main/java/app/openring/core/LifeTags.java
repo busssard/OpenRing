@@ -16,23 +16,31 @@ import java.util.TreeMap;
  * chips Today shows by default, own tags, a stretch of days turned into single days, and every sentence the screens show.
  * Phase 1 stores and shows tags only: nothing here works out an effect or changes a score.
  * <p>
- * A tag is stored per calendar day (yyyy-mm-dd), never as a moment, so travel and clock changes never move it. A tag of day D
- * belongs to the night that starts on the evening of D (shown on Sleep and Readiness the morning after).
+ * A tag is stored per calendar day (yyyy-mm-dd), so travel and clock changes never move it. A tag of day D belongs to the night
+ * that starts on the evening of D (shown on Sleep and Readiness the morning after). Since issue #435 a tag of a moment can also
+ * carry a clock time on its day and a length ({@code LifeTimes}); the day stays what counts.
  */
 public final class LifeTags {
     private LifeTags() {}
 
     public static final String MEDITATION = "meditation", ALCOHOL = "alcohol", CAFFEINE = "caffeine_late", STRESS = "stress",
             WORKOUT = "hard_workout", INTIMACY = "intimacy", HOLIDAY = "holiday", ILLNESS = "illness", TRAVEL = "travel";
+    /** Built in since issue #435 (owner's wish of 21 November), listed after Hard workout. */
+    public static final String SAUNA = "sauna", FRIENDS = "friends";
 
-    /** The fixed tags in the order All factors lists them (the chips of the card first). */
+    /** The fixed tags in the order All factors lists them. */
     public static final List<String> BUILT_IN = Collections.unmodifiableList(java.util.Arrays.asList(MEDITATION, ALCOHOL, CAFFEINE, STRESS, WORKOUT,
-            INTIMACY, HOLIDAY, ILLNESS, TRAVEL));
+            SAUNA, FRIENDS, INTIMACY, HOLIDAY, ILLNESS, TRAVEL));
 
-    /** The chips on Today's row until the person chooses others (Design round: decisions, 17 November). Intimacy is not one. */
-    public static final List<String> DEFAULT_CHIPS = Collections.unmodifiableList(java.util.Arrays.asList(MEDITATION, ALCOHOL, CAFFEINE, STRESS, WORKOUT));
+    /**
+     * The chips on Today's row, in this order, for a person who never chose the chips (issue #435; before it Meditation,
+     * Alcohol, Caffeine late, Stress, Hard workout, decisions of #292). Intimacy is not one (decisions of #292), Holiday is days,
+     * not a moment. A choice the person made always wins ({@link Known}): a tag the choice did not know stays off the card.
+     */
+    public static final List<String> DEFAULT_CHIPS = Collections.unmodifiableList(java.util.Arrays.asList(MEDITATION, SAUNA, FRIENDS, ALCOHOL, STRESS, WORKOUT));
 
-    private static final String[] NAMES = {"Meditation", "Alcohol", "Caffeine late", "Stress", "Hard workout", "Intimacy", "Holiday", "Illness", "Travel"};
+    private static final String[] NAMES = {"Meditation", "Alcohol", "Caffeine late", "Stress", "Hard workout", "Sauna", "Friends", "Intimacy", "Holiday",
+        "Illness", "Travel"};
 
     /** Own tags are stored as this prefix and a number (the moment they were made, in milliseconds). */
     public static final String OWN = "own:";
@@ -55,8 +63,8 @@ public final class LifeTags {
     public static final String BODY_TITLE = "Life factors";
     public static final String MONTH_HINT = "Touch and slide across the days to read what you logged. The arrows page through the months.";
     public static final String NONE_YET = "Nothing logged yet. Tap the chips on Today to log what a day was like.";
-    /** Why phase 1 shows no effect: said once on the Body card. */
-    public static final String NO_EFFECT_YET = "Open Ring only shows what you logged for now. Later versions will compare your nights with and without each factor.";
+    /** Where the effect is (issue #292, phase 2): said once on the Body card's month view. */
+    public static final String NO_EFFECT_YET = "How your nights went after each factor is in the card below.";
     public static final String NOT_SAVED = "Could not save. Please try again.", NOT_UNDONE = "Could not undo. Please try again.";
     public static final String UNREADABLE = "Your life factors could not be read just now. Your logged days are kept; try again later.";
     /** The CSV export's choices (Settings, Export). */
@@ -188,9 +196,18 @@ public final class LifeTags {
                     if (isOwn(c.key) && c.name != null && !c.name.trim().isEmpty()) own.add(c);
                 }
             }
+            // the person chose the chips once (Choose the chips on the card stores every fixed tag): a fixed tag that choice did
+            // not know (Sauna and Friends, new in issue #435) stays off the card; only a person who never chose gets the defaults
+            boolean chose = false;
+            for (String k : BUILT_IN) chose |= by.get(k) != null && by.get(k).shown != null;
+            // an own tag in force with a fixed tag's name (an own "Sauna" made before issue #435): that fixed tag is no default
+            // chip, so the card never shows two chips with one name (review of #444); All factors lists both
+            java.util.Set<String> ownNames = new java.util.HashSet<String>();
+            for (Choice c : own) if (!c.gone) ownNames.add(sameName(c.name));
             for (String k : BUILT_IN) {
                 Choice c = by.get(k);
-                boolean chip = c == null || c.shown == null ? DEFAULT_CHIPS.contains(k) : c.shown != 0;
+                boolean byDefault = !chose && DEFAULT_CHIPS.contains(k) && !ownNames.contains(sameName(builtInName(k)));
+                boolean chip = c == null || c.shown == null ? byDefault : c.shown != 0;
                 all.put(k, new Tag(k, builtInName(k), chip, false));
                 if (c != null && c.ord != null) ord.put(k, c.ord);
             }
@@ -261,7 +278,10 @@ public final class LifeTags {
             return b != null ? b : "Own factor";
         }
 
-        /** The chips on Today's row, in their order: the stored order first, then the list order. */
+        /**
+         * The chips on Today's row, in their order: the stored order first, then the default chips in their order
+         * ({@link #DEFAULT_CHIPS}), then the list order.
+         */
         public List<Tag> chips() {
             List<Tag> out = new ArrayList<Tag>();
             for (Tag t : all.values()) if (t.chip && !t.removed) out.add(t);
@@ -269,9 +289,14 @@ public final class LifeTags {
             Collections.sort(out, new java.util.Comparator<Tag>() {
                 @Override
                 public int compare(Tag a, Tag b) {
-                    Integer oa = ord.get(a.key), ob = ord.get(b.key);
-                    int pa = oa == null ? 1000 + listed.indexOf(a.key) : oa, pb = ob == null ? 1000 + listed.indexOf(b.key) : ob;
-                    return Integer.compare(pa, pb);
+                    return Integer.compare(place(a.key), place(b.key));
+                }
+
+                private int place(String k) {
+                    Integer o = ord.get(k);
+                    if (o != null) return o;
+                    int d = DEFAULT_CHIPS.indexOf(k);
+                    return 1000 + (d >= 0 ? d : DEFAULT_CHIPS.size() + listed.indexOf(k));
                 }
             });
             return out;
@@ -424,15 +449,20 @@ public final class LifeTags {
 
     /**
      * The CSV columns for the tags (Settings, Export, "Include life factors"): every fixed tag but Intimacy, Intimacy only with
-     * {@code intimacy}, then every own tag (removed ones too, their days are kept); none without {@code life}. Header names
-     * are {@code life_} and the key, own tags {@code life_own_} and their name in small letters with anything but letters and
-     * digits as {@code _}, a number added when two would be the same.
+     * {@code intimacy}, then every own tag (removed ones too, their days are kept), then Sauna and Friends; none without
+     * {@code life}. Sauna and Friends came with issue #435 and go last, so a sheet that reads the earlier columns by their
+     * place keeps working (code review of #444); on screen they stay after Hard workout. Header names are {@code life_} and
+     * the key, own tags {@code life_own_} and their name in small letters with anything but letters and digits as {@code _},
+     * a number added when two would be the same.
      */
     public static Map<String, String> csvColumns(Known known, boolean life, boolean intimacy) {
         Map<String, String> out = new LinkedHashMap<String, String>();
         if (!life) return out;
+        List<Tag> order = new ArrayList<Tag>(), last = new ArrayList<Tag>();
+        for (Tag t : known.all.values()) (SAUNA.equals(t.key) || FRIENDS.equals(t.key) ? last : order).add(t);
+        order.addAll(last);
         java.util.Set<String> used = new java.util.HashSet<String>();
-        for (Tag t : known.all.values()) {
+        for (Tag t : order) {
             if (INTIMACY.equals(t.key) && !intimacy) continue;
             String head;
             if (isBuiltIn(t.key)) {
@@ -456,7 +486,8 @@ public final class LifeTags {
      * The demo's made up tags (only ever written into the demo file): meditation most mornings of the easy last week and some
      * before, alcohol on the weekend evenings, a hard workout twice a week, caffeine late and stress in the busy weeks, the
      * short cold of the demo's story (2 days, {@code coldBack} days before today) as Illness, a long weekend away as Holiday
-     * and Travel. Never Intimacy. Today Meditation, yesterday Alcohol and Meditation, so every screen has something to show.
+     * and Travel; a sauna now and then and friends once a week (issue #435, their times in {@code LifeTimes.demo}). Never
+     * Intimacy. Today Meditation, yesterday Alcohol, Meditation and Sauna, so every screen has something to show.
      */
     public static TreeMap<LocalDate, List<String>> demo(LocalDate today, int days, int coldBack) {
         TreeMap<LocalDate, List<String>> out = new TreeMap<LocalDate, List<String>>();
@@ -470,9 +501,38 @@ public final class LifeTags {
             if (!easy && back % 4 == 2) t.add(CAFFEINE);
             if (!easy && back >= 9 && back % 5 == 4) t.add(STRESS);
             if (back > 1 && (dow == 2 || dow == 6) && back != coldBack && back != coldBack + 1) t.add(WORKOUT);
+            // issue #435: a sauna now and then (yesterday's and 8 days ago with a time, LifeTimes.demo), friends once a week
+            if (back == 1 || back == 8 || back == 29) t.add(SAUNA);
+            if (back == 3 || back == 10 || back == 17 || back == 24) t.add(FRIENDS);
             if (back == coldBack + 1 || back == coldBack) t.add(ILLNESS);
             if (back >= 23 && back <= 26) t.add(HOLIDAY);
             if (back == 26 || back == 23) t.add(TRAVEL);
+            if (!t.isEmpty()) out.put(d, t);
+        }
+        return out;
+    }
+
+    /**
+     * Made up tags over the demo's made up year (issue #292, phase 2; only in {@code Demo.enter}, only into the demo file), so the
+     * card "Life factors and your nights" has enough days to show: Meditation on every third day whatever the night (made up as
+     * no effect, "not clear yet"), Alcohol on Friday and Saturday evenings before a night whose HRV was more than 4 % under its
+     * usual and on some others (made up as a clear effect), a hard workout on Tuesdays and Saturdays, Stress now and then, and
+     * Illness on the year's week of illness ({@code ill}). {@code hrvVsUsual}: the HRV of each day's night (the one starting that evening) in % of its usual
+     * ({@code FactorEffect.points}), missing where there is none. Never Intimacy.
+     */
+    public static TreeMap<LocalDate, List<String>> demoYear(LocalDate from, LocalDate to, Map<LocalDate, Double> hrvVsUsual, java.util.Set<LocalDate> ill) {
+        TreeMap<LocalDate, List<String>> out = new TreeMap<LocalDate, List<String>>();
+        for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
+            List<String> t = new ArrayList<String>();
+            long e = d.toEpochDay();
+            int dow = d.getDayOfWeek().getValue();
+            boolean sick = ill != null && ill.contains(d);
+            Double h = hrvVsUsual == null ? null : hrvVsUsual.get(d);
+            if (e % 3 == 0) t.add(MEDITATION);
+            if (!sick && (dow == 5 || dow == 6) && (h != null && h < -4 || e % 10 == 0)) t.add(ALCOHOL);
+            if (!sick && e % 9 == 4) t.add(STRESS);
+            if (!sick && (dow == 2 || dow == 6)) t.add(WORKOUT);
+            if (sick) t.add(ILLNESS);
             if (!t.isEmpty()) out.put(d, t);
         }
         return out;

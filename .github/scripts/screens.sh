@@ -72,6 +72,7 @@ clear_dialogs() {
   return 0
 }
 DIRTY=0
+TOUR_FAIL=0
 shot() {
   sleep "${2:-3}"
   clear_dialogs
@@ -81,8 +82,10 @@ shot() {
 swipe_up() { adb shell input swipe 30 1700 30 500 300; sleep 1; }  # along the left margin, never a tap on a night
 # Every step starts with every tab in the standard layout (owner's wish of 18 November: tiles move and fold, and stay so);
 # the extra is for demo mode only. launch_kept keeps the layout the steps before made (the tiles steps below).
-launch() { adb shell am start -S -W -n $MAIN --ez layout_reset true "$@" >/dev/null; }
-launch_kept() { adb shell am start -S -W -n $MAIN "$@" >/dev/null; }
+# tour -1 (issue #453), with both: the short tour does not start by itself on these starts, so it covers no other shot; a
+# later --ei tour on the same line wins (the tour steps below)
+launch() { adb shell am start -S -W -n $MAIN --ez layout_reset true --ei tour -1 "$@" >/dev/null; }
+launch_kept() { adb shell am start -S -W -n $MAIN --ei tour -1 "$@" >/dev/null; }
 
 log "first start: setup"
 launch
@@ -98,6 +101,21 @@ tap_text() {  # $1 the exact text of a view: taps its middle; fails when not on 
 }
 if tap_text "Get started"; then shot setup-choice 2
 else echo "::warning::issue #373 step: Get started was not on the first screen"; fi
+
+# The short tour (issue #453): until its bubble shows the text $1 (a step's count, or Keep looking on the demo's ending), up
+# to 8 s, since the bubble is placed a moment after the page; tour_shot takes the shot once it is there, else fails the run
+tour_wait() {
+  for i in 1 2 3 4 5 6 7 8; do
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+    adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "$1" && return 0
+    sleep 1
+  done
+  return 1
+}
+tour_shot() {
+  tour_wait "$2" || { echo "::error::issue #453 step: the tour's bubble ($2) did not show for $1"; TOUR_FAIL=1; }
+  shot "$1" 1
+}
 
 log "demo data, turning the phone twice while it is prepared (issue #29)"
 adb shell settings put system accelerometer_rotation 0
@@ -117,7 +135,8 @@ adb logcat -d 2>/dev/null | grep -E "has leaked window" > "$OUT/leaked.txt"
 wait_demo() {  # until the demo is generated and analysed (up to 3 minutes)
   for i in $(seq 1 90); do
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-    if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "made up person"; then return 0; fi
+    # the page, or the short tour's bubble over it (issue #453)
+    if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q -e "made up person" -e "Skip the tour"; then return 0; fi
     sleep 2
   done
 }
@@ -137,6 +156,21 @@ adb shell am force-stop $PKG
 sleep 1
 adb shell am start -W -n $MAIN -a android.intent.action.MAIN -c android.intent.category.LAUNCHER >/dev/null
 wait_demo
+# The short tour (issue #453) starts by itself the first time the demo opens: this start from the launcher has no extras and
+# the app was cleared above. Next twice (Sync, the scores, then the tab bar), then Skip the tour (remembered, so no later
+# start shows it by itself) and a fresh look at the page for the check below; Show the tour again below shows step 1
+# (the page may show a moment before the bubble is placed, so the bubble is waited for)
+if tour_wait "Skip the tour"; then
+  adb logcat -d -s OpenRing:I 2>/dev/null | grep -q "tour: started by itself (demo)" || echo "::warning::issue #453 step: the tour shows, but its line in the log is missing"
+  tap_text "Next" && tour_wait "2 of 7" && tap_text "Next" || echo "::warning::issue #453 step: Next could not be tapped twice"
+  tour_shot tour-tabs "3 of 7"
+  tap_text "Skip the tour" || echo "::warning::issue #453 step: Skip the tour could not be tapped"
+  sleep 2
+  wait_demo
+else
+  echo "::error::the short tour did not start by itself the first time the demo opened (issue #453)"
+  TOUR_FAIL=1
+fi
 if adb shell cat /sdcard/ui.xml 2>/dev/null | grep -q "No data for this day yet"; then
   echo "::error::the demo stayed half built after the app was ended while preparing it (issue #69)"
   exit 1
@@ -181,6 +215,9 @@ launch --ei tab 0 --es card WHAT_WAS;                                 shot today
 launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
 launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
 launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
+# When and how long (issue #435): the sheet opened on Today's row for Sauna (extra life_time, demo mode only; nothing is saved
+# without a tap): From as two wheels, How long as the tag's usual lengths, Save, Without a time
+launch --ei tab 0 --es card WHAT_WAS --ez life_time true;           shot today-life-time 3
 # A night by hand (issue #427), before the left out examples below change the demo file: hand_night (demo mode only, nothing
 # stored) shows today and the day before yesterday as without a device night, so Today asks for last night and the demo's
 # made up night by hand shows on its day; hand_entry opens the entry for last night with two wake marks (nothing is saved)
@@ -195,8 +232,19 @@ launch --ei tab 1; sleep 3
 swipe_up; swipe_up;                       shot sleep-details 1
 # the Details card with Total sleep first, next to Time in bed (issue #409); sleep-details above scrolls past it
 launch --ei tab 1 --es card DETAILS;        shot sleep-details-card 2
+# Sleep sounds (issue #380, phase 1b), demo mode only, which never records: the card with the demo night's clips (tones made in
+# code), the consent before the first night, the microphone test's made up result, the clip list, Settings' part in the Phone block
+launch --ei tab 1 --es card SLEEP_SOUNDS;   shot sleep-sounds-card 2
+launch --es sounds consent;                 shot sleep-sounds-consent 2
+launch --es sounds test;                    shot sleep-sounds-test 2
+launch --es sounds list;                    shot sleep-sounds-list 3
+launch --es settings sounds;                shot settings-sounds 3
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
+# An older day keeps the newer days in the charts (owner, 23 November): 3 days back, the 7 day bars still end today with the
+# picked day's bar highlighted, and Ready's 30 day HRV still ends today with a line on the picked day
+launch --ei tab 1 --es day "$(date -d '3 days ago' +%F)" --es card TOTAL_SLEEP;   shot sleep-week-picked 2
+launch --ei tab 2 --es day "$(date -d '3 days ago' +%F)" --es card HRV;           shot ready-month-picked 2
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
@@ -401,6 +449,23 @@ shot body-life 1
 launch --ei tab 4 --es card LIFE_FACTORS --ei life_read 1; sleep 3
 scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body for the read day"
 shot body-life-touch 1
+# how the nights went after each factor (issue #292, phase 2): the card with every row folded, then Alcohol's row opened (the
+# demo's made up clear effect: the sentence, the range bar, the chart of the nights touched on its newest night after Alcohol)
+# and Meditation's (a number that is not clear yet); extra life_effect is a factor's key, demo mode only
+launch --ei tab 4 --es card LIFE_FACTORS_AND; sleep 3
+scroll_to "LIFE FACTORS AND YOUR NIGHTS" 3 || echo "::warning::issue #292 step: the card Life factors and your nights was not found on Body"
+shot body-life-effect 1
+launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect alcohol; sleep 3
+scroll_to "After alcohol" 4 || echo "::warning::issue #292 step: Alcohol's row was not open on Body"
+shot body-life-effect-clear 1
+launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect meditation; sleep 3
+scroll_to "After meditation" 4 || echo "::warning::issue #292 step: Meditation's row was not open on Body"
+shot body-life-effect-unclear 1
+# the demo's sauna yesterday at 19:00 for 45 minutes as a band on yesterday's heart rate (issue #435), touched in the band (82 % of
+# the chart's width is about 19:20), and the line under the chart: what the ring measured during it next to the day's average
+launch --ei tab 4 --es day "$(date -d '1 day ago' +%F)" --es card HEART_RATE_TODAY; sleep 3
+if touch_desc "Heart rate of the day with your logged times" 82; then shot body-life-band 1
+else echo "::warning::issue #435 step: the day's heart rate chart with the sauna band was not on screen to touch it"; shot body-life-band 1; fi
 launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
 scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1
@@ -516,6 +581,17 @@ else echo "::warning::issue #374 phase 2 step: the card DID SOMETHING CHANGE? wa
 launch --ei trends 2 --ei trends_measure 10 --ei trends_period 2; shot trends-steps-year 4
 launch --ei trends 0 --ei devices 1;        shot trends-watch-only 4
 launch --es settings top;                   shot settings
+# The short tour (issue #453): Show the tour again on the demo's card in Settings opens it at its first step (Sync); then
+# the steps by the extra tour: the scores, the chart on Sleep (the tour opens the tab), its tile's title, the life factors on
+# Today (scrolled to), the gear, and the demo's ending with Add my device and Keep looking
+if tap_text "Show the tour again"; then tour_shot tour-again "1 of 7"
+else echo "::error::issue #453 step: Show the tour again was not on the demo's Settings page"; TOUR_FAIL=1; fi
+launch --ei tour 1;                         tour_shot tour-scores "2 of 7"
+launch --ei tour 3;                         tour_shot tour-chart "4 of 7"
+launch --ei tour 4;                         tour_shot tour-tile "5 of 7"
+launch --ei tour 5;                         tour_shot tour-life "6 of 7"
+launch --ei tour 6;                         tour_shot tour-settings "7 of 7"
+launch --ei tour 7;                         tour_shot tour-end "Keep looking"
 # every section folded, as every time Settings opens (owner's wishes of 3 and 17 November: a title, one status line and a
 # chevron each); stages, watch, period and the others below open their own section first
 launch --es settings blocks;                shot settings-blocks
@@ -742,6 +818,10 @@ fi
 log "no leaked dialogs"
 # two named shots that are the same picture: one of them did not get to its card or state (issue #160)
 ./.github/scripts/same_shots.sh "$OUT" || exit 1
+if [ "$TOUR_FAIL" = 1 ]; then
+  echo "::error::the short tour did not show where it should (see the lines above)"
+  exit 1
+fi
 if [ "$FIRST_CUT" = 1 ]; then
   echo "::error::Today's sentence and line need scrolling on the first screen (see the lines above)"
   exit 1

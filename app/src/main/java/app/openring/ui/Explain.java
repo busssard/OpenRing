@@ -368,23 +368,38 @@ public final class Explain {
             + app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED + " periods. Smaller differences are luck.";
 
     /**
-     * When Best for you stays with Open Ring although another method was a little closer: "drip style was 0.22 days closer (the
-     * days off above are rounded), less than the quarter of a day needed to switch."; under 0.1 days "was only a few hundredths of
-     * a day closer (the days off above are rounded), too little to switch."; else null. The rows above show one decimal, so they
-     * may read 1.4 and 1.3 for a lead of 0.03, or 2.7 and 2.4 (0.3 apart) for a lead of 0.22: the line gives the lead in
-     * hundredths, at most 0.24 (a lead that rounds to 0.25 is still below the margin), and says the rows are rounded.
+     * When Best for you stays with Open Ring although another method was a little closer, on the card How close the estimates
+     * were (under its rows, after {@link #PERIOD_PICK_MARGIN}); else null. See {@link #periodStayWords}.
      */
     public static String periodStay(app.openring.core.analysis.Cycles cy) {
+        return periodStay(cy, true);
+    }
+
+    /** The same line for the card ({@code onCard}) or for Settings' Best for you line ({@link #periodBestNow}); else null. */
+    public static String periodStay(app.openring.core.analysis.Cycles cy, boolean onCard) {
         app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
         if (cy.choice != app.openring.core.analysis.cycleforecast.Methods.BEST || bt.scored() < app.openring.core.analysis.cycleforecast.Backtest.MIN_SCORED) return null;
         int c = bt.closest();
         if (c == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING || bt.best() != app.openring.core.analysis.cycleforecast.Methods.OPEN_RING) return null;
-        double lead = bt.lead(c);
-        String name = app.openring.core.analysis.cycleforecast.Methods.name(c);
-        if (lead < 0.1) return name + " was only a few hundredths of a day closer (the days off above are rounded), too little to switch.";
+        return periodStayWords(app.openring.core.analysis.cycleforecast.Methods.name(c), bt.lead(c), onCard);
+    }
+
+    /**
+     * The stay line for method {@code name}, {@code lead} days closer than Open Ring. On the card: "drip style was 0.22 days closer
+     * (the days off above are rounded), less than the quarter of a day needed to switch."; under 0.1 days "was only a few
+     * hundredths of a day closer (the days off above are rounded), too little to switch." The rows above show one decimal, so
+     * they may read 1.4 and 1.3 for a lead of 0.03, or 2.7 and 2.4 (0.3 apart) for a lead of 0.22: the line gives the lead in
+     * hundredths, at most 0.24 (a lead that rounds to 0.25 is still below the margin), and says the rows are rounded. Settings
+     * has no such rows and does not show the margin (issue #440): "drip style was 0.22 days closer, less than the quarter of a day
+     * Best for you needs to switch."; under 0.1 days "was only a few hundredths of a day closer, too little for Best for you to
+     * switch." A lead of 0.1 is 0.1 also when the subtraction leaves it a hair below, as {@code Backtest.best()} compares.
+     */
+    public static String periodStayWords(String name, double lead, boolean onCard) {
+        String rounded = onCard ? " (the days off above are rounded)" : "";
+        if (lead < 0.1 - 1e-9) return name + " was only a few hundredths of a day closer" + rounded + (onCard ? ", too little to switch." : ", too little for Best for you to switch.");
         double shown = Math.min(Math.round(lead * 100), 24) / 100.0;
-        return name + " was " + String.format(java.util.Locale.getDefault(), "%.2f", shown)
-                + " days closer (the days off above are rounded), less than the quarter of a day needed to switch.";
+        return name + " was " + String.format(java.util.Locale.getDefault(), "%.2f", shown) + " days closer" + rounded
+                + (onCard ? ", less than the quarter of a day needed to switch." : ", less than the quarter of a day Best for you needs to switch.");
     }
 
     /** On the card How close the estimates were, under the methods: the margin, and why Best for you stayed with Open Ring. */
@@ -454,7 +469,7 @@ public final class Explain {
             app.openring.core.analysis.cycleforecast.Backtest.Score b = bt.of(best), o = bt.of(app.openring.core.analysis.cycleforecast.Methods.OPEN_RING);
             s = "Best for you uses " + app.openring.core.analysis.cycleforecast.Methods.name(best) + " now: " + fmt1(b.mae) + " days off on average over " + yourPeriods(b.n)
                     + (best == app.openring.core.analysis.cycleforecast.Methods.OPEN_RING ? "." : ", Open Ring " + fmt1(o.mae) + ".");
-            String stay = periodStay(cy);
+            String stay = periodStay(cy, false);
             if (stay != null) s += " " + stay;
         }
         if (cy.rise != null && !cy.riseUsed) s += " " + cy.riseOff();
@@ -670,12 +685,64 @@ public final class Explain {
     public static final String LIFE_MONTH = "Each dot under a day is one factor you logged for it. The count under the calendar is the number "
             + "of days in that month with each factor.";
     /** What phase 1 does not do. */
-    public static final String LIFE_NO_EFFECT = "Nothing here changes a score. Open Ring does not yet work out what a factor goes with: a "
-            + "pattern needs many days with and without it, and would show what goes together, not what caused it.";
+    public static final String LIFE_NO_EFFECT = "Nothing here changes a score. How your nights went after each factor is in the card Life "
+            + "factors and your nights: a pattern needs many days with and without a factor, and shows what goes together, not what caused it.";
+
+    /** When and how long (issue #435), How it works on Today's row. */
+    public static final String LIFE_TIMES = "Hold a chip, or tap the small clock on a logged one, to say when it started and how long it "
+            + "took. It then shows as a band on that day's charts with time on them, and you can touch the band to read it. The ring "
+            + "does not know what you did: the band shows what was measured while you said it happened.";
+    /** Under the day's heart rate chart: what the numbers of each band are. */
+    public static final String LIFE_DURING = "Heart rate during is the average of the line's quarter hour points that reach into the time "
+            + "you logged; your day is the Average above. Not worn during: the ring had no reading then. Measured values only, they "
+            + "do not say what the factor did.";
+
+    // ------------------------------------------------------------------ life factors and your nights (issue #292, phase 2)
+
+    /** Your usual. */
+    public static final String EFFECT_USUAL = "Each night is compared with your usual: the middle value of up to 30 nights from the 90 days "
+            + "before it (it needs 3).";
+    /** Which nights belong to a factor. */
+    public static final String EFFECT_PAIRS = "A factor logged on a day belongs to the night that starts that evening; every day of several "
+            + "days counts. Nights in a time you left out and days without a ring night are skipped.";
+    /** What is compared. */
+    public static final String EFFECT_COMPARE = "The nights after days with the factor are compared with the nights after days without it, "
+            + "over the last 12 months, from the first day you logged anything (an own factor from the day you made it).";
+    /** The range and clear. */
+    public static final String EFFECT_RANGE = "The range: Open Ring draws your weeks again at random 2000 times, whole weeks at a time, "
+            + "because nights affect each other and a holiday is one stretch, not many separate chances. The range is wide enough to hold "
+            + "the real difference 99 times in 100. Clear means the whole range is on one side of zero.";
+    /** The minimum. */
+    public static final String EFFECT_MIN = "A number shows from 10 nights with the factor and 30 without it. Below that the row counts how "
+            + "many there are so far.";
+    /** Many checks. */
+    public static final String EFFECT_CHANCE = "With many factors and four measures, about 1 check in 100 can look clear by chance alone, so "
+            + "a clear result is worth watching, not a proof.";
+    /** Days not logged. */
+    public static final String EFFECT_NOT_LOGGED = "Days you did not log count as without the factor; the app cannot tell them from days you "
+            + "forgot.";
+    /** The units. */
+    public static final String EFFECT_UNITS = "HRV in % of your usual: 10 % lower means 45 ms where your usual is 50 ms. Lowest heart rate in "
+            + "bpm, temperature in \u00b0C, sleep score in points, each against your usual.";
+    /** The period tracker's two factors. */
+    public static final String EFFECT_CYCLE = "Period days and After ovulation come from your period tracker, not from the chips. After "
+            + "ovulation is the measured rise when there is one, else the estimate; a running cycle without a measured rise is left out.";
+    /** Nothing is stored or scored. */
+    public static final String EFFECT_NOTHING_CHANGES = "Worked out each time from your nights and the days you logged. Nothing is stored and "
+            + "no score changes.";
+
+    /** Every text of the card Life factors and your nights, in How it works order. */
+    public static String[] effectTexts() {
+        return new String[] {EFFECT_USUAL, EFFECT_PAIRS, EFFECT_COMPARE, EFFECT_UNITS, EFFECT_RANGE, EFFECT_MIN, EFFECT_CHANCE, EFFECT_NOT_LOGGED,
+            EFFECT_CYCLE, EFFECT_NOTHING_CHANGES};
+    }
 
     /** Every life factor text, for the tests (plain, no dashes). */
     public static String[] lifeTexts() {
-        return new String[] {LIFE_ROW, LIFE_MORE, LIFE_PRIVATE, LIFE_MONTH, LIFE_NO_EFFECT};
+        java.util.List<String> all = new java.util.ArrayList<String>(java.util.Arrays.asList(LIFE_ROW, LIFE_MORE, LIFE_PRIVATE, LIFE_MONTH, LIFE_NO_EFFECT,
+                LIFE_TIMES, LIFE_DURING));
+        all.addAll(java.util.Arrays.asList(effectTexts()));
+        return all.toArray(new String[0]);
     }
 
     public static final String SHOW_BADGES = "Show badges";
@@ -1084,4 +1151,14 @@ public final class Explain {
             + "days, with a change in it: about 25 minutes more sleep from four months ago, more steps in summer and one week of illness.";
 
     public static final String TRENDS_FAILED = "Your history could not be read this time. Your data is as before. Diagnostics, Log tab, shows why.";
+
+    /**
+     * Sleep sounds (issue #380, phase 1b): how each kind is found, that the labels can be wrong, and that the counts are no
+     * diagnosis (Design review).
+     */
+    public static final String SOUND_KINDS = "How the kinds are found: a sound is a moment clearly louder than the room (10 dB by default, "
+            + "or as set by the microphone test). Snoring: 3 or more similar sounds 2 to 7 seconds apart. Cough like: short, sudden and "
+            + "noisy. Everything else is talking or other sound (a door or a dog too). The labels are rough and can be wrong, and the phone "
+            + "cannot tell whose sound it was: listen to the clip. Snoring minutes are not a test for sleep apnea. If breathing pauses "
+            + "worry you, ask a doctor.";
 }

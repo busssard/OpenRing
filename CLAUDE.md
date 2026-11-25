@@ -17,6 +17,9 @@ completely, then read the two guides it points to before changing anything:
 * Repo visitors read the README on phones; keep it short and plain, no marketing tone.
 * Real health data is private: never commit, print in PRs or post anything derived from real data.
   Screenshots only ever come from demo mode.
+* **Demo mode is an overview, not a copy of the app** (owner, 23 November, on #438): it lets a new person see what
+  the app can do. It does not need every function (no Delete all, no full Settings); do not build or fix features
+  just so they work in demo mode. A short tutorial for new people matters more than demo completeness.
 
 ## How a change should go
 0. **History first.** Before planning, read the issues (open and closed) and pull requests (open and

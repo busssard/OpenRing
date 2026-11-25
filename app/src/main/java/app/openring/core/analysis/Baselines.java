@@ -99,8 +99,17 @@ public final class Baselines {
      * temperature baseline of readiness, and the baseline phase 2 compares each night with (issue #292).
      */
     public static double usual(double[] earlier) {
+        return usual(earlier, MIN_NIGHTS);
+    }
+
+    /**
+     * As {@link #usual(double[])} with its own minimum of values: life factors phase 2 ({@code FactorEffect.USUAL_MIN}) keeps
+     * its minimum in one place for the owner's answer on #443, while readiness's temperature baseline keeps {@link #MIN_NIGHTS}
+     * through {@link #usual(double[])} whatever that answer is.
+     */
+    public static double usual(double[] earlier, int min) {
         double[] window = last(earlier, USUAL_NIGHTS);
-        return Stats.countFinite(window) >= MIN_NIGHTS ? Stats.median(window) : Double.NaN;
+        return Stats.countFinite(window) >= min ? Stats.median(window) : Double.NaN;
     }
 
     /** The last {@code n} values (all of them when there are fewer), as {@code Analyzer.lastValues} takes them from the nights. */

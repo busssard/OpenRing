@@ -26,6 +26,7 @@ import app.openring.data.DaySeries;
 import app.openring.data.Db;
 import app.openring.data.Demo;
 import app.openring.data.Json;
+import app.openring.data.Periods;
 import app.openring.data.Prefs;
 import app.openring.data.ScreenDays;
 import app.openring.data.ShownNights;
@@ -67,6 +68,7 @@ public class TrendsPipelineTest {
         stamp();
         handNights();
         threeYears();
+        periodRingNights();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -814,5 +816,151 @@ public class TrendsPipelineTest {
         check("#374 three years: every night and every day of screen time read", asleep == 3 * 365 && scr >= 3 * 365, asleep + " " + scr);
         check("#374 three years of nights read and grouped under 1.5 s", allMs < 1500, Math.round(allMs) + " ms");
         check("#374 three years: " + periods + " periods", periods > 13 * (156 + 36 + 3), periods);
+    }
+
+    /** Periods.ringNights before the day summaries were read field by field (code health): the reference, kept word for word. */
+    static java.util.TreeMap<LocalDate, Double> oldRingNights(Db db, LocalDate from, LocalDate to, ZoneId zone) {
+        android.database.sqlite.SQLiteDatabase d = db.getReadableDatabase();
+        List<double[]> rows = new ArrayList<double[]>();
+        android.database.Cursor c = d.rawQuery("SELECT start, stop FROM excluded", null);
+        try {
+            while (c.moveToNext()) rows.add(new double[] {c.getDouble(0), c.getDouble(1)});
+        } finally {
+            c.close();
+        }
+        app.openring.core.analysis.LeftOut left = app.openring.core.analysis.LeftOut.of(rows);
+        java.util.TreeMap<LocalDate, Double> out = new java.util.TreeMap<LocalDate, Double>();
+        c = d.rawQuery("SELECT day, json FROM days WHERE day >= ? AND day <= ? ORDER BY day", new String[] {from.toString(), to.toString()});
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = Json.parse(c.getString(1));
+                double t = app.openring.core.analysis.TempRise.ringNight(Json.d(o, "temp"), Json.d(o, "asleep_min"));
+                if (Double.isNaN(t)) continue;
+                LocalDate day = LocalDate.parse(c.getString(0));
+                if (!left.isEmpty() && left.overlaps(day.minusDays(1).atTime(18, 0).atZone(zone).toEpochSecond(), day.atTime(12, 0).atZone(zone).toEpochSecond())) continue;
+                out.put(day, t);
+            }
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /**
+     * Code health: the period tracker's ring nights read only temp and asleep_min from each day summary instead of parsing all
+     * of it. The same nights and values as the old loop, on rows of every odd shape and on three years of the demo's day
+     * summaries (heart rate of the day and burn profile included), with a night someone else wore the ring.
+     */
+    static void periodRingNights() throws Exception {
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate today = LocalDate.parse("2026-11-18");
+        Context src = freshDb("rings-src");
+        Demo.enter(src, null, today, today.atTime(9, 41).atZone(z).toEpochSecond());
+        Db sdb = Db.get(src);
+        List<String[]> demoDays = new ArrayList<String[]>();
+        for (String[] r : sdb.daysJson(today.minusDays(30).toString(), today.minusDays(2).toString())) {
+            if (!Double.isNaN(Json.d(Json.parse(r[1]), "temp"))) demoDays.add(r);
+        }
+        Demo.leave(src);
+
+        // rows of every shape, one per day
+        Context c1 = freshDb("rings-odd");
+        Db db = Db.get(c1);
+        String[] odd = {
+            "{\"temp\":35.21,\"asleep_min\":430}",
+            "{\"asleep_min\":430}",
+            "{\"temp\":null,\"asleep_min\":430}",
+            "{\"temp\":35.3,\"asleep_min\":95}",
+            "{\"temp\":35.31}",
+            "{\"temp\":35.32,\"asleep_min\":null}",
+            "{\"temp\":35.2,\"asleep_min\":4",
+            "not json",
+            "",
+            "{\"temp\":\"35.4\",\"asleep_min\":430}",
+            "{\"temp\":35.33,\"asleep_min\":\"100\"}",
+            "{\"temp\":3.534e1,\"asleep_min\":4.3E2}",
+            "{\"temp\":-0.5,\"asleep_min\":0}",
+            "{\"temp\":35,\"asleep_min\":180}",
+            "{\"temp\":35.35,\"asleep_min\":179.99}",
+            "{\"temp\":{\"a\":1},\"asleep_min\":430}",
+            "{\"temp\":[35.2],\"asleep_min\":430}",
+            "{\"temp\":true,\"asleep_min\":430}",
+            " { \"temp\" : 35.36 , \"asleep_min\" : 430 } ",
+            "{\"radar\":{\"temp\":99},\"asleep_min\":430}",
+            "{\"notes\":\"a \\\"temp\\\":1, b\",\"temp\":35.37}",
+            "{\"hr_day\":[[1,60],[2,61]],\"temp\":35.38,\"met_profile\":[1.1,1.2],\"asleep_min\":400}",
+            "{\"temp\":35.39,\"asleep_min\":400,}",
+            "{}",
+            "[35.2]",
+            // numbers JSON does not write this way take the old way too (sign alone, plus, leading zero, hex, cut short)
+            "{\"temp\":-,\"asleep_min\":430}",
+            "{\"temp\":+35.2,\"asleep_min\":430}",
+            "{\"temp\":035.2,\"asleep_min\":430}",
+            "{\"temp\":0x23,\"asleep_min\":430}",
+            "{\"temp\":35.,\"asleep_min\":430}",
+            "{\"temp\":3.5e,\"asleep_min\":430}",
+            "{\"temp\":3.5e+,\"asleep_min\":430}",
+            "{\"temp\":35.2.1,\"asleep_min\":430}",
+            "{\"temp\":NaN,\"asleep_min\":430}",
+            "{\"temp\":35.41,\"asleep_min\":-0}",
+            "{\"temp\":0.5,\"asleep_min\":1e+3}",
+            "{\"temp\":0,\"asleep_min\":4.3e-0}",
+            "{\"temp\":-35.42,\"asleep_min\":43E1}",
+        };
+        LocalDate first = today.minusDays(odd.length - 1);
+        for (int i = 0; i < odd.length; i++) db.putDay(first.plusDays(i).toString(), odd[i]);
+        java.util.TreeMap<LocalDate, Double> was = oldRingNights(db, first, today, z), now = Periods.ringNights(db, first, today, z);
+        check("ring nights: every odd day summary gives what it gave before", was.equals(now), was.size() + " nights before, " + now.size() + " now");
+        check("ring nights: the odd rows still give some nights and leave others out", was.size() >= 8 && was.size() < odd.length, was.keySet());
+
+        // three years of the demo's real sized day summaries, 1 in 10 nights missing, a short night, a night left out
+        Context c2 = freshDb("rings-3y");
+        final Db big = Db.get(c2);
+        final List<String[]> rows = new ArrayList<String[]>();
+        Random r = new Random(11);
+        final LocalDate from = today.minusDays(3 * 365);
+        long bytes = 0;
+        for (LocalDate d = from; !d.isAfter(today); d = d.plusDays(1)) {
+            if (r.nextDouble() < 0.1) continue;
+            String[] p = demoDays.get(r.nextInt(demoDays.size()));
+            JSONObject o = Demo.moved(Json.parse(p[1]), LocalDate.parse(p[0]), d, z);
+            if (r.nextDouble() < 0.03) o.put("asleep_min", 95);
+            rows.add(new String[] {d.toString(), o.toString()});
+            bytes += o.toString().length();
+        }
+        big.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                for (String[] x : rows) big.putDay(x[0], x[1]);
+            }
+        });
+        LocalDate left = today.minusDays(200);
+        big.addExcluded(left.minusDays(1).atTime(23, 0).atZone(z).toEpochSecond(), left.atTime(3, 0).atZone(z).toEpochSecond(), 9100);
+        java.util.TreeMap<LocalDate, Double> a = null, b = null;
+        double oldMs = Double.MAX_VALUE, newMs = Double.MAX_VALUE;
+        for (int k = 0; k < 4; k++) { // the first round warms the code up; the best of the other three counts
+            long t0 = System.nanoTime();
+            a = oldRingNights(big, from, today, z);
+            long t1 = System.nanoTime();
+            b = Periods.ringNights(big, from, today, z);
+            long t2 = System.nanoTime();
+            if (k > 0) {
+                oldMs = Math.min(oldMs, (t1 - t0) / 1e6);
+                newMs = Math.min(newMs, (t2 - t1) / 1e6);
+            }
+        }
+        System.out.printf(Locale.US, "    ring nights, three years (%d day summaries, %d KB on average each): %.0f ms before, %.0f ms now%n",
+                rows.size(), bytes / rows.size() / 1024, oldMs, newMs);
+        check("ring nights: three years of day summaries give the same nights and temperatures as before", a.equals(b) && a.size() > 900, a.size() + " and " + b.size());
+        check("ring nights: the night someone else wore the ring stays out", !b.containsKey(left), left);
+        check("ring nights: every temperature bit for bit as before", sameBits(a, b), null);
+    }
+
+    static boolean sameBits(java.util.TreeMap<LocalDate, Double> a, java.util.TreeMap<LocalDate, Double> b) {
+        if (a.size() != b.size()) return false;
+        for (Map.Entry<LocalDate, Double> e : a.entrySet()) {
+            if (Double.doubleToLongBits(e.getValue()) != Double.doubleToLongBits(b.get(e.getKey()))) return false;
+        }
+        return true;
     }
 }
