@@ -591,6 +591,151 @@ public final class Charts {
         }
     }
 
+    // ------------------------------------------------------------------- sleep sounds strip
+
+    /**
+     * The Sounds strip under the night's stages (issue #380, phase 1c): the marks of the sounds the phone kept on the stages'
+     * time axis (the sleep window, the same label column), the time it listened as a line along the bottom and the times it did
+     * not as shaded bands. Touch reads the marks within {@link app.openring.core.SoundMarks#REACH_DP} of the finger, else what
+     * the phone did at that moment ({@link app.openring.core.SoundMarks#tip}); the marks read are handed to {@link #onPick}, so
+     * the card can show them with Play. Marks outside the window are not drawn (the card says how many).
+     */
+    public static final class SoundStrip extends Scrub {
+        /** Told the marks a touch reads (empty when the readout goes). */
+        public interface OnPick {
+            void picked(java.util.List<app.openring.core.SleepSounds.Mark> marks);
+        }
+
+        private final java.util.List<app.openring.core.SleepSounds.Mark> marks;
+        private final java.util.List<app.openring.core.SoundMarks.Gap> gaps;
+        private final double from, to, listenStart, listenStop;
+        private final String ended;
+        private ZoneId zone = ZoneId.systemDefault();
+        private OnPick onPick;
+        private java.util.List<app.openring.core.SleepSounds.Mark> picked = new java.util.ArrayList<app.openring.core.SleepSounds.Mark>();
+        /** The screen test's touch (extra sounds_mark, demo mode only): opens touched on the first snoring stretch. */
+        private boolean touchSnore;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), label = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+
+        /**
+         * @param from the sleep window's start (the stages' axis), unix seconds
+         * @param to its end
+         * @param listenStart when the phone started listening
+         * @param listenStop when it was last known to listen, NaN when unknown
+         * @param ended why it stopped, null while it runs
+         */
+        public SoundStrip(Context c, java.util.List<app.openring.core.SleepSounds.Mark> marks, java.util.List<app.openring.core.SoundMarks.Gap> gaps,
+                double from, double to, double listenStart, double listenStop, String ended) {
+            super(c);
+            this.marks = marks;
+            this.gaps = gaps;
+            this.from = from;
+            this.to = to;
+            this.listenStart = listenStart;
+            this.listenStop = listenStop;
+            this.ended = ended;
+            label.setColor(Ui.TEXT_3);
+            label.setTextSize(Ui.dp(c, 10));
+            label.setTypeface(Ui.REGULAR);
+            setContentDescription("Sleep sounds through the night, touch to read them");
+        }
+
+        /** The zone the night's times are shown in (issue #22). */
+        public SoundStrip zone(ZoneId z) {
+            if (z != null) zone = z;
+            return this;
+        }
+
+        public SoundStrip onPick(OnPick l) {
+            onPick = l;
+            return this;
+        }
+
+        public SoundStrip touchSnore(boolean on) {
+            touchSnore = on;
+            return this;
+        }
+
+        private float x(double t, float left, float w) {
+            return left + (float) (app.openring.core.NightStrip.frac(t, from, to) * (w - left));
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float w = getWidth(), h = getHeight();
+            Context c = getContext();
+            float left = Ui.dp(c, NIGHT_LABEL_DP);
+            float marksH = Math.min(h, Ui.dp(c, STRIP_BARS_DP));
+            float top = h - marksH;
+            cv.drawText(app.openring.core.SoundMarks.LABEL, 0, top + marksH * 0.62f, label);
+            if (!(to > from) || w <= left) return;
+            // listening: a line along the bottom from start to stop, broken where a gap is
+            float line = Ui.dp(c, 2);
+            p.setColor(Ui.alpha(Ui.TEMP, 0.4f));
+            for (double[] span : app.openring.core.SoundMarks.listening(listenStart, listenStop, gaps, from, to)) {
+                cv.drawRect(x(span[0], left, w), h - line, x(span[1], left, w), h, p);
+            }
+            // not listening: shaded bands
+            p.setColor(Ui.alpha(Ui.WARN, 0.18f));
+            for (app.openring.core.SoundMarks.Gap g : gaps) {
+                if (g.stop < from || g.start > to) continue;
+                float x0 = x(Math.max(from, g.start), left, w), x1 = Math.max(x0 + Ui.dp(c, 1), x(Math.min(to, g.stop), left, w));
+                cv.drawRect(x0, top, x1, h, p);
+            }
+            float tick = Ui.dp(c, 2), dot = Ui.dp(c, 3) / 2f;
+            for (app.openring.core.SleepSounds.Mark m : marks) {
+                if (Math.max(m.start, m.stop) < from || m.start > to) continue;
+                boolean sel = picked.contains(m);
+                float a = m.sound ? 1f : 0.4f;
+                float x0 = x(Math.max(from, m.start), left, w);
+                if (app.openring.core.analysis.SoundDetector.SNORE.equals(m.kind)) {
+                    float x1 = Math.max(x0 + tick, x(Math.min(to, m.stop), left, w));
+                    p.setColor(sel ? Ui.TEXT : Ui.alpha(Ui.TEMP, 0.55f * a));
+                    r.set(x0, top + marksH * 0.4f, x1, h - line);
+                    cv.drawRoundRect(r, tick, tick, p);
+                } else if (app.openring.core.analysis.SoundDetector.COUGH.equals(m.kind)) {
+                    p.setColor(sel ? Ui.TEXT : Ui.alpha(Ui.TEMP, a));
+                    cv.drawRect(x0 - tick / 2, top + marksH * 0.5f, x0 + tick / 2, h - line, p);
+                } else {
+                    p.setColor(sel ? Ui.TEXT : Ui.alpha(Ui.TEMP, a));
+                    cv.drawRect(x0 - tick / 2, top + dot * 2, x0 + tick / 2, h - line, p);
+                    cv.drawCircle(x0, top + dot * 2, dot, p);
+                }
+            }
+            if (touchSnore && Float.isNaN(scrubX)) {
+                // the screen test's touch: the middle of the first snoring stretch in the window
+                for (app.openring.core.SleepSounds.Mark m : marks) {
+                    if (app.openring.core.analysis.SoundDetector.SNORE.equals(m.kind) && m.start >= from && m.start <= to) {
+                        scrubX = x((m.start + Math.min(to, m.stop)) / 2, left, w);
+                        break;
+                    }
+                }
+                touchSnore = false;
+            }
+            java.util.List<app.openring.core.SleepSounds.Mark> now = new java.util.ArrayList<app.openring.core.SleepSounds.Mark>();
+            if (!Float.isNaN(scrubX)) {
+                float sx = Math.max(left, Math.min(w, scrubX));
+                double t = from + (sx - left) / (w - left) * (to - from);
+                double reach = Ui.dp(c, app.openring.core.SoundMarks.REACH_DP) / (w - left) * (to - from);
+                now = app.openring.core.SoundMarks.pick(marks, t, reach);
+                drawTip(cv, sx, top, h, app.openring.core.SoundMarks.tip(marks, gaps, listenStart, listenStop, ended, t, reach, zone));
+            }
+            if (!now.equals(picked)) {
+                picked = now;
+                // the rows with Play change after this frame, never while drawing; the marks read are drawn in white
+                final java.util.List<app.openring.core.SleepSounds.Mark> told = now;
+                post(new Runnable() {
+                    @Override
+                    public void run() {
+                        invalidate();
+                        if (onPick != null) onPick.picked(told);
+                    }
+                });
+            }
+        }
+    }
+
     // ---------------------------------------------------------------------- line chart
 
     public static final class LineChart extends Scrub {

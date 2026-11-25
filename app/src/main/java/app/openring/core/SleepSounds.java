@@ -145,10 +145,12 @@ public final class SleepSounds {
         return Texts.count(files, "clip", "clips") + ", " + (mb < 0.1 ? "under 0.1 MB" : String.format(Locale.US, "%.1f MB", mb));
     }
 
-    /** HH:mm of {@code unix} in {@code zone}. */
+    /**
+     * HH:mm of {@code unix} in {@code zone}, rounded to the nearest minute as the night timeline shows times (issue #138), so
+     * the card, the clip list, the Sounds strip and the timeline show the same minute for a mark (issue #380, phase 1c).
+     */
     public static String clock(double unix, ZoneId zone) {
-        ZonedDateTime t = Instant.ofEpochSecond((long) Math.floor(unix)).atZone(zone);
-        return String.format(Locale.US, "%02d:%02d", t.getHour(), t.getMinute());
+        return app.openring.core.analysis.WakeUps.clock(unix, zone);
     }
 
     /** The day whose Sleep tab shows a night that started at {@code start}: the date 12 hours after the start (23:10 Friday is Saturday's). */

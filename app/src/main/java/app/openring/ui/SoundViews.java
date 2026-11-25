@@ -11,8 +11,12 @@ import android.widget.Toast;
 
 import java.io.File;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 import app.openring.core.SleepSounds;
+import app.openring.core.SoundMarks;
+import app.openring.core.analysis.TimelineRow;
 import app.openring.data.Prefs;
 import app.openring.data.SoundNight;
 import app.openring.data.Sounds;
@@ -20,7 +24,7 @@ import app.openring.data.Sounds;
 /**
  * Sleep sounds on the Sleep tab (issue #380, phase 1b): the card with the night's marks and their clips (Play), Listen tonight
  * and Stop listening, the way to set it up (consent, the microphone, its test), and one player for every clip of the app.
- * Marks on the night's timeline come in phase 1c.
+ * Phase 1c: the Sounds strip under the night's stages ({@link #strip}) and the rows of the night timeline ({@link #timelineRows}).
  */
 final class SoundViews {
     private SoundViews() {}
@@ -89,11 +93,13 @@ final class SoundViews {
             card.addView(Ui.body(c, SleepSounds.summary(n.marks())));
             Tiles.summary(card, Ui.fmt(n.clips.size(), 0) + (n.clips.size() == 1 ? " sound" : " sounds"));
             if (!n.clips.isEmpty()) card.addView(Ui.text(c, SleepSounds.COUNTS_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));
-            String ended = SleepSounds.endedLine(n.ended, n.stop, d.zone), gap = SleepSounds.gapLine(n.silent);
+            // in the zone of the night, as the stages and the Sounds strip show it (phase 1c)
+            java.time.ZoneId nz = zone(d);
+            String ended = SleepSounds.endedLine(n.ended, n.stop, nz), gap = SleepSounds.gapLine(n.silent);
             if (ended != null) card.addView(Ui.text(c, ended, 12, Ui.WARN, Ui.REGULAR));
             if (gap != null) card.addView(Ui.text(c, gap, 12, Ui.WARN, Ui.REGULAR));
             card.addView(Ui.gap(c, 6));
-            for (int i = 0; i < n.clips.size() && i < CARD_ROWS; i++) card.addView(row(c, n.clips.get(i), d.soundFolder, d.zone));
+            for (int i = 0; i < n.clips.size() && i < CARD_ROWS; i++) card.addView(row(c, n.clips.get(i), d.soundFolder, nz));
             TextView all = button(c, card, n.clips.size() > CARD_ROWS ? SleepSounds.ALL_CLIPS + " (" + n.clips.size() + ")" : SleepSounds.ALL_CLIPS, Ui.SLEEP);
             all.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -153,6 +159,68 @@ final class SoundViews {
         card.addView(test);
         notes(c, card);
         return card;
+    }
+
+    // ------------------------------------------------------------------------------------- phase 1c: the night's timeline
+
+    /**
+     * The zone the Sleep tab shows {@code d}'s night in, the stages' zone: the ring's night's own when that night is shown,
+     * else the day's (the watch's night, a night by hand, no night). Marks are shown in it (phase 1c).
+     */
+    static java.time.ZoneId zone(DayData d) {
+        boolean watchShown = d.merged != null && d.merged.watchNight != null;
+        return !watchShown && d.night != null ? d.zoneOf(d.night) : d.zone;
+    }
+
+    /**
+     * The Sounds strip under the stages in {@code parent} (the card "Sleep depth through the night"), on the stages' axis from
+     * {@code from} to {@code to} in {@code zone}: the strip, the rows with Play of the marks a touch reads, the note and how
+     * many marks lie outside the window. Nothing when the day has no night listened.
+     */
+    static void strip(final Context c, final DayData d, LinearLayout parent, double from, double to, final java.time.ZoneId zone) {
+        final Sounds.Night n = d.soundsOk ? d.soundNight : null;
+        if (n == null || !(to > from)) return;
+        final List<SleepSounds.Mark> marks = new ArrayList<SleepSounds.Mark>();
+        for (Sounds.Clip k : n.clips) marks.add(k.mark());
+        final LinearLayout picked = Ui.vbox(c);
+        Charts.SoundStrip strip = new Charts.SoundStrip(c, marks, n.gaps, from, to, n.start, n.stop, n.ended).zone(zone)
+                .touchSnore(markPending && Prefs.of(c).demo())
+                .onPick(new Charts.SoundStrip.OnPick() {
+                    @Override
+                    public void picked(List<SleepSounds.Mark> read) {
+                        picked.removeAllViews();
+                        // each mark read, with Play while its sound is there (the clip with the same mark)
+                        for (SleepSounds.Mark m : read) {
+                            int i = marks.indexOf(m);
+                            if (i >= 0) picked.addView(row(c, n.clips.get(i), d.soundFolder, zone));
+                        }
+                    }
+                });
+        parent.addView(Ui.gap(c, 6));
+        parent.addView(strip, Ui.sized(c, -1, 56));
+        parent.addView(picked);
+        parent.addView(Ui.text(c, SoundMarks.STRIP_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));
+        String outside = SoundMarks.outsideLine(SoundMarks.before(marks, from), SoundMarks.after(marks, to));
+        if (outside != null) parent.addView(Ui.text(c, outside, 11, Ui.TEXT_3, Ui.REGULAR));
+    }
+
+    /** The screen test's touch (extra sounds_mark, demo mode only): the Sounds strip opens touched on the demo's snoring. */
+    static boolean markPending;
+
+    /** The night timeline's rows of {@code d}'s night listened, in {@code zone}; null when there is none. */
+    static List<TimelineRow> timelineRows(DayData d, java.time.ZoneId zone) {
+        Sounds.Night n = d.soundsOk ? d.soundNight : null;
+        if (n == null) return null;
+        return SoundMarks.rows(n.marks(), n.gaps, n.start, n.stop, n.ended, zone);
+    }
+
+    /** Under the night timeline {@code card}: how many short times not listening the strip shades. */
+    static void timelineNote(Context c, LinearLayout card, DayData d) {
+        Sounds.Night n = d.soundsOk ? d.soundNight : null;
+        String line = n == null ? null : SoundMarks.shortGapsLine(SoundMarks.shortGaps(n.gaps));
+        if (line == null) return;
+        card.addView(Ui.gap(c, 4));
+        card.addView(Ui.text(c, line, 11, Ui.TEXT_3, Ui.REGULAR));
     }
 
     /** The battery note and the no diagnosis sentence under the card. */

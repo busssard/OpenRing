@@ -340,6 +340,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
      * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
      * rise it marks (phase 2),
+     * sounds_mark (boolean, demo mode only) opens the Sleep tab's Sounds strip touched on the demo's snoring stretch, with its
+     * row and Play (issue #380, phase 1c),
      * period_how (boolean, demo mode only) opens How it works on the Period card, in Your cycles and on the night
      * temperature card (issue #363),
      * drip (boolean, demo mode only) opens Import from drip with a made up drip file (the preview only, nothing is imported in
@@ -410,6 +412,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         PeriodCard.askPending = i.getBooleanExtra("period_ask", false) && Prefs.of(this).demo();
         // screen test: the marked temperature rise of phase 2, read by touch on its first high night, demo mode only
         PeriodAnalysis.risePending = i.getBooleanExtra("period_rise", false) && Prefs.of(this).demo();
+        // screen test: the Sounds strip under the night's stages touched on the demo's snoring stretch (issue #380, phase 1c)
+        SoundViews.markPending = i.getBooleanExtra("sounds_mark", false) && Prefs.of(this).demo();
         // screen test: How it works opened on the Period card, in Your cycles and on the night temperature card (owner's feedback
         // of 3 November, issue #363), demo mode only
         if (i.getBooleanExtra("period_how", false) && Prefs.of(this).demo()) {
