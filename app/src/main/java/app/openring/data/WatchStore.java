@@ -10,6 +10,7 @@ import java.util.Locale;
 
 import app.openring.core.Texts;
 import app.openring.core.withings.Frame;
+import app.openring.core.withings.Proto;
 import app.openring.core.withings.Records;
 
 /**
@@ -700,7 +701,64 @@ public final class WatchStore {
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_workouts"), "workout", "workouts")).append(", ")
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_battery"), "charge reading", "charge readings")).append(", ")
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_moves"), "intensity and climb record", "intensity and climb records")).append('\n');
+        // issue #469: what the watch says it is, and the record parts not decoded yet (types and counts only)
+        Proto.Hello h = newestHello(db, null);
+        b.append("  From its newest hello: ");
+        if (h == null) b.append("none stored\n");
+        else b.append("name ").append(or(h.name)).append(", model ").append(or(h.model)).append(", firmware number ")
+                .append(h.firmware < 0 ? "(none)" : String.valueOf(h.firmware)).append('\n');
+        b.append("  Record parts not decoded: ");
+        java.util.Map<Integer, Long> skipped = skippedParts(db);
+        if (skipped.isEmpty()) b.append("none");
+        boolean first = true;
+        for (java.util.Map.Entry<Integer, Long> e : skipped.entrySet()) {
+            if (!first) b.append(", ");
+            first = false;
+            b.append(Frame.hexType(e.getKey())).append(' ').append(String.format(Locale.US, "%,d", e.getValue()));
+        }
+        b.append('\n');
         return b.toString();
+    }
+
+    private static String or(String s) {
+        return s == null || s.isEmpty() ? "(none)" : s;
+    }
+
+    /**
+     * The newest whole hello answer stored for {@code device} (any watch for null), read again from {@code watch_raw}
+     * (issue #469: the model text is not stored on its own), or null when there is none. Newest session first: the hello is
+     * the first answer of each, so this reads a row or two.
+     */
+    public static Proto.Hello newestHello(Db db, String device) {
+        String sql = "SELECT body FROM watch_raw WHERE type = " + Proto.HELLO + (device == null ? "" : " AND device = ?") + " ORDER BY session DESC, seq DESC";
+        Cursor c = db.getReadableDatabase().rawQuery(sql, device == null ? null : new String[] {device});
+        try {
+            while (c.moveToNext()) {
+                byte[] body = c.getBlob(0);
+                if (!Frame.whole(body)) continue;
+                Proto.Hello h = Proto.hello(body);
+                if (h.name != null) return h;
+            }
+        } finally {
+            c.close();
+        }
+        return null;
+    }
+
+    /**
+     * Per part type, how many parts of the stored data answers the decoder does not read ({@link Records#skippedParts}),
+     * sorted by type: types and counts only, never a value (issue #469).
+     */
+    public static java.util.Map<Integer, Long> skippedParts(Db db) {
+        java.util.Map<Integer, Long> out = new java.util.TreeMap<Integer, Long>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT body FROM watch_raw WHERE type IN (" + Proto.ACTIVITY + ", " + Proto.HEART_RATE + ", "
+                + Proto.MOVEMENT + ")", null);
+        try {
+            while (c.moveToNext()) Records.skippedParts(c.getBlob(0), out);
+        } finally {
+            c.close();
+        }
+        return out;
     }
 
     private static double[] range(Db db) {

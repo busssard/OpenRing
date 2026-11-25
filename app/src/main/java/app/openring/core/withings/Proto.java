@@ -262,10 +262,24 @@ public final class Proto {
         return Frame.message(SYNC_ASK_REPLY);
     }
 
-    /** What the hello's answer names: the watch's name and firmware number, either null when not there. */
+    /**
+     * What the hello's answer names: the watch's name, its model text (empty when the watch sends an empty one; issue
+     * #469) and firmware number, null or -1 when not there.
+     */
     public static final class Hello {
-        public String name;
+        public String name, model;
         public long firmware = -1;
+    }
+
+    /** Settings, Watch, Model before the first sync (issue #469). */
+    public static final String MODEL_UNKNOWN = "not known yet (after the first sync)";
+    /** Settings, Watch, Model when the watch's hello names no model. */
+    public static final String MODEL_NONE = "not named by the watch";
+
+    /** The value of the Model line in Settings, Watch: the model text of the newest hello {@code h} (null: none stored yet). */
+    public static String modelLine(Hello h) {
+        if (h == null) return MODEL_UNKNOWN;
+        return h.model == null || h.model.trim().isEmpty() ? MODEL_NONE : h.model.trim();
     }
 
     /**
@@ -283,7 +297,8 @@ public final class Proto {
         if (h.name == null) return h;
         if (text(b, at) == null || text(b, at) == null) return h;
         at[0] += 4;
-        if (text(b, at) == null) return h;
+        h.model = text(b, at);
+        if (h.model == null) return h;
         at[0] += 4;
         if (at[0] + 4 <= b.length) h.firmware = Frame.u32(b, at[0]);
         return h;

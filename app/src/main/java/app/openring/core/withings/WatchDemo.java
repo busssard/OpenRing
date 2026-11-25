@@ -18,11 +18,20 @@ public final class WatchDemo {
 
     /** The made up watch's address and name. */
     public static final String ADDRESS = "00:00:5E:00:53:51", NAME = "Steel HR (demo)";
+    /** The made up watch's model text in its hello (issue #469). */
+    public static final String MODEL = "HWA03 (demo)";
 
     // ---------------------------------------------------------------- answers as the watch sends them
 
+    /** The hello's answer with an empty model text, byte for byte as before issue #469. */
     public static byte[] helloReply(String name, long firmware) {
+        return helloReply(name, "", firmware);
+    }
+
+    /** The hello's answer: name, address text, another text (empty), the model text (issue #469) and the firmware number. */
+    public static byte[] helloReply(String name, String model, long firmware) {
         byte[] n = name.getBytes(StandardCharsets.UTF_8), mac = "00:00:00:00:00:00".getBytes(StandardCharsets.UTF_8);
+        byte[] mo = model.getBytes(StandardCharsets.UTF_8);
         java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
         b.write(0); b.write(0); b.write(0); b.write(1);
         b.write(n.length);
@@ -31,7 +40,8 @@ public final class WatchDemo {
         b.write(mac, 0, mac.length);
         b.write(0);
         for (int i = 0; i < 4; i++) b.write(0);
-        b.write(0);
+        b.write(mo.length);
+        b.write(mo, 0, mo.length);
         for (int i = 0; i < 4; i++) b.write(0);
         byte[] fw = Frame.be32(firmware);
         b.write(fw, 0, 4);
@@ -239,7 +249,7 @@ public final class WatchDemo {
             for (int i = 0; i < hrs.size(); i++) if (hrT.get(i) >= from && hrT.get(i) < cap - 900) hpart.add(hrs.get(i));
             long session = cap * 1000;
             int seq = 0;
-            out.add(new Msg(session, seq++, cap, helloReply(NAME, 1971)));
+            out.add(new Msg(session, seq++, cap, helloReply(NAME, MODEL, 1971)));
             out.add(new Msg(session, seq++, cap, empty(Proto.CONNECT)));
             if (d == 17) pct = 100; // charged once
             out.add(new Msg(session, seq++, cap, batteryReply(pct, 2, 3000 + pct * 10)));

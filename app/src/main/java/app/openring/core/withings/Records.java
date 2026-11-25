@@ -175,6 +175,32 @@ public final class Records {
         }
     }
 
+    /** The part types of a data answer this decoder reads ({@link Rec#part}, the time and the end part). */
+    public static final int[] READ_PARTS ={Proto.END, Proto.REC_TIME, Proto.REC_DURATION, Proto.REC_STEPS, Proto.REC_CALORIES, Proto.REC_CALORIES_2,
+        Proto.REC_SLEEP, Proto.REC_WORKOUT, Proto.REC_RUN, Proto.REC_SWIM, Proto.REC_HEART_RATE};
+
+    /** True when the decoder reads parts of this type in a data answer. */
+    public static boolean reads(int partType) {
+        for (int t : READ_PARTS) if (t == partType) return true;
+        return false;
+    }
+
+    /**
+     * Counts, per part type, the parts of one data answer message (activity, movement, heart rate) that this decoder does
+     * not read, into {@code into} (issue #469: what a new watch sends that is not decoded yet; types and counts only, never a
+     * value). Other messages and bytes that are no whole message add nothing.
+     */
+    public static void skippedParts(byte[] msg, java.util.Map<Integer, Long> into) {
+        if (!Frame.whole(msg)) return;
+        int type = Frame.type(msg);
+        if (type != Proto.ACTIVITY && type != Proto.HEART_RATE && type != Proto.MOVEMENT) return;
+        for (Frame.Part p : Frame.parts(msg)) {
+            if (reads(p.type)) continue;
+            Long n = into.get(p.type);
+            into.put(p.type, n == null ? 1L : n + 1);
+        }
+    }
+
     /** Decodes messages in order, each with its captured time. */
     public static Decoded decode(List<byte[]> msgs, List<Long> captured) {
         Decoded d = new Decoded();

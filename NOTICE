@@ -26,3 +26,8 @@ The Withings watch setup, sync, alarm and hand calibration (core/withings/Proto,
 Records) use message and part numbers, field layouts and the order of messages read in the same
 Gadgetbridge Withings Steel HR support (AGPL); facts only, written down in our own words in
 docs/ARCHITECTURE.md and implemented anew. No code taken.
+
+The Withings ScanWatch family's sync channel (core/withings/WatchUuid, ble/WatchChannel, issue #469)
+uses one fact from the description of Gadgetbridge's ScanWatch pull request (Codeberg pull request
+7266, AGPL): its watches show the Withings service with other numbers in its fourth group, so every
+set is tried. Facts only, written in our own words and implemented anew. No code taken.
