@@ -12861,7 +12861,8 @@ public class PipelineTest {
         session251(db, 1000, made251(T251, 80), T251 + 86400);
         String rows = watchRows251(db), kv = kv469(db);
         String lines = app.openring.data.WatchStore.checkLines(db);
-        check("#469 Steel HR history: its hello in the Data check, no model", lines.contains("\n  From its newest hello: name Steel HR test, model (none), firmware number 1971\n"), lines);
+        check("#469 Steel HR history: its hello in the Data check, no model", lines.contains("\n  Model from its newest hello: (none)\n"), lines);
+        check("#469 the Data check still holds no watch name or firmware (#251)", !lines.contains("Steel") && !lines.contains("1971"), lines);
         check("#469 Steel HR history: no record part skipped", lines.endsWith("\n  Record parts not decoded: none\n"), lines);
         check("#469 Settings' Model line for it", app.openring.core.withings.Proto.modelLine(app.openring.data.WatchStore.newestHello(db, DEV251))
                 .equals(app.openring.core.withings.Proto.MODEL_NONE), null);
@@ -12882,14 +12883,17 @@ public class PipelineTest {
         rows = watchRows251(db);
         kv = kv469(db);
         lines = app.openring.data.WatchStore.checkLines(db);
-        check("#469 the newest whole hello: name, model and firmware", lines.contains("\n  From its newest hello: name ScanWatch test, model HWA09 test, firmware number 2000\n"), lines);
+        check("#469 the newest whole hello's model, not its name or firmware", lines.contains("\n  Model from its newest hello: HWA09 test\n")
+                && !lines.contains("ScanWatch test") && !lines.contains("2000"), lines);
         check("#469 the skipped part counted by type, no value", lines.endsWith("\n  Record parts not decoded: 0x0962 3\n") && !lines.contains("95"), lines);
         check("#469 Settings reads the model of this watch only", "HWA09 test".equals(app.openring.core.withings.Proto.modelLine(app.openring.data.WatchStore.newestHello(db, DEV251)))
                 && app.openring.data.WatchStore.newestHello(db, "other watch") == null, null);
         check("#469 reading changed no row and no kv again", watchRows251(db).equals(rows) && kv469(db).equals(kv), null);
         check("#469 the rows of the parts it reads are still decoded", db.count("SELECT COUNT(*) FROM watch_steps WHERE start >= " + (T251 + 90000)) == 3, null);
         app.openring.data.WatchStore.decodeAgain(db);
-        check("#469 decoded again (a new decoder, a restore): the same lines", app.openring.data.WatchStore.checkLines(db).equals(lines), null);
+        String again = app.openring.data.WatchStore.checkLines(db);
+        String mine = lines.substring(lines.indexOf("  Model from its newest hello"));
+        check("#469 decoded again (a new decoder, a restore): the same model and skipped parts", again.endsWith(mine), again);
 
         // two years of the made up watch: read in a moment
         Context big = phone254("openring469-big");
@@ -12910,7 +12914,7 @@ public class PipelineTest {
         String bl = app.openring.data.WatchStore.checkLines(bd);
         long ms = (System.nanoTime() - t0) / 1000000;
         System.out.println("    #469 Data check watch lines, two years (" + hist.size() + " messages): " + ms + " ms");
-        check("#469 two years: the made up model and no skipped part, under 3 s", bl.contains("model " + app.openring.core.withings.WatchDemo.MODEL + ", firmware number 1971")
+        check("#469 two years: the made up model and no skipped part, under 3 s", bl.contains("\n  Model from its newest hello: " + app.openring.core.withings.WatchDemo.MODEL + "\n")
                 && bl.endsWith("Record parts not decoded: none\n") && ms < 3000, ms + " " + bl);
         clean254();
     }

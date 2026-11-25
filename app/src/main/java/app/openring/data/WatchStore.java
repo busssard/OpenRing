@@ -701,12 +701,10 @@ public final class WatchStore {
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_workouts"), "workout", "workouts")).append(", ")
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_battery"), "charge reading", "charge readings")).append(", ")
                 .append(Texts.count(db.count("SELECT COUNT(*) FROM watch_moves"), "intensity and climb record", "intensity and climb records")).append('\n');
-        // issue #469: what the watch says it is, and the record parts not decoded yet (types and counts only)
+        // issue #469: the model the watch names, and the record parts not decoded yet (types and counts only). Not its name or
+        // firmware: the copy is posted, and the Data check never held either (issue #251)
         Proto.Hello h = newestHello(db, null);
-        b.append("  From its newest hello: ");
-        if (h == null) b.append("none stored\n");
-        else b.append("name ").append(or(h.name)).append(", model ").append(or(h.model)).append(", firmware number ")
-                .append(h.firmware < 0 ? "(none)" : String.valueOf(h.firmware)).append('\n');
+        b.append("  Model from its newest hello: ").append(h == null ? "no hello stored" : or(h.model)).append('\n');
         b.append("  Record parts not decoded: ");
         java.util.Map<Integer, Long> skipped = skippedParts(db);
         if (skipped.isEmpty()) b.append("none");

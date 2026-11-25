@@ -1120,8 +1120,8 @@ read, no Device Information or Battery service, silent until asked).
   part `0x0928` (Android version). The answer's part `0x0101`: a number, then texts with a length byte first (name, address,
   another text), a number, a model text, a number, the firmware number, a number. Our hello is byte for byte the public
   recording's (a JVM test). The model text (issue #469) is not stored on its own: Settings, Watch, Model and the Data check
-  ("From its newest hello: name, model, firmware number") read it from the newest whole hello in `watch_raw`
-  (`WatchStore.newestHello`). The Data check also counts, per part type, the parts of the stored data answers the decoder
+  ("Model from its newest hello"; not the watch's name or firmware, which the Data check never holds, #251) read it from
+  the newest whole hello in `watch_raw` (`WatchStore.newestHello`). The Data check also counts, per part type, the parts of the stored data answers the decoder
   does not read ("Record parts not decoded", `Records.skippedParts`; types and counts only, never a value), so a report from a
   new watch shows what it sends that is not decoded yet.
 * Connect `0x0111` (empty). Battery `0x0504`, answer part `0x0504`: percent, state (0 charging, 1 low, other normal),
