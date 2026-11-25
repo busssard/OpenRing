@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import app.openring.core.LifeTags;
+import app.openring.core.LifeTimes;
 
 /**
  * The life factors the person logs (issue #292, phase 1): which tags a calendar day has, and the person's own tags and
@@ -19,7 +20,8 @@ import app.openring.core.LifeTags;
  * backup, the phone's row winning ({@link #read}, {@link #merge}). Nothing here starts an analysis or changes a score, and
  * nothing of it is ever listed by the Data check, written to the log or shown in a notification.
  * <ul>
- * <li>{@code life_days}: one row per day and tag; {@code time} "HH:MM" or null (phase 1 stores none); {@code span} the id
+ * <li>{@code life_days}: one row per day and tag; {@code time} "HH:MM" (the local clock time on that day) or null, and since
+ * schema 15 {@code minutes} the length or null (issue #435, "When and how long?", {@link #setTime}); {@code span} the id
  * shared by the days of one several day entry (its time in milliseconds), null for a single day; {@code made} unix seconds;
  * {@code gone} 1 when the person took the tag off the day.</li>
  * <li>{@code life_tags}: one row per tag the person changed: own tags with their {@code name}, and for any tag whether it is
@@ -37,7 +39,7 @@ public final class LifeLog {
 
     /** Each table's columns and their types (T text, I integer, R real), in the order {@link Rows} keeps them. */
     private static final String[][] COLUMNS = {
-        {"day, tag, time, span, made, gone", "TTTIRI"},
+        {"day, tag, time, minutes, span, made, gone", "TTTIIRI"},
         {"key, name, shown, ord, made, gone", "TTIIRI"},
     };
 
@@ -52,18 +54,43 @@ public final class LifeLog {
                 + " gone INTEGER NOT NULL DEFAULT 0)");
     }
 
+    /**
+     * Schema 15 (issue #435): {@code life_days.minutes}, the length of a logged time (null: none). Only adds the column, and only
+     * when it is missing, so it is safe to run twice and an upgrade stopped before it goes on; no row changes (every row keeps
+     * its values, {@code minutes} null). A restored older backup gets it the same way.
+     */
+    static void add15(SQLiteDatabase db) {
+        if (!hasColumn(db, "life_days", "minutes")) db.execSQL("ALTER TABLE life_days ADD COLUMN minutes INTEGER");
+    }
+
+    /** Whether {@code table} has {@code column} ({@code PRAGMA table_info}, which every SQLite the app runs on has). */
+    static boolean hasColumn(SQLiteDatabase db, String table, String column) {
+        Cursor c = db.rawQuery("PRAGMA table_info(" + table + ")", null);
+        try {
+            while (c.moveToNext()) if (column.equals(c.getString(1))) return true;
+            return false;
+        } finally {
+            c.close();
+        }
+    }
+
     // ------------------------------------------------------------------------------------- one day's row
 
     /** One row of {@code life_days}, removal marks included. */
     public static final class Row {
         public final String day, tag;
+        /** "HH:MM" or null, and the length in minutes or null (issue #435). */
+        public final String time;
+        public final Integer minutes;
         public final Long span;
         public final double made;
         public final boolean gone;
 
-        Row(String day, String tag, Long span, double made, boolean gone) {
+        Row(String day, String tag, String time, Integer minutes, Long span, double made, boolean gone) {
             this.day = day;
             this.tag = tag;
+            this.time = time;
+            this.minutes = minutes;
             this.span = span;
             this.made = made;
             this.gone = gone;
@@ -71,7 +98,7 @@ public final class LifeLog {
 
         @Override
         public String toString() {
-            return day + " " + tag + " " + span + " " + made + (gone ? " gone" : "");
+            return day + " " + tag + " " + span + " " + made + (gone ? " gone" : "") + (time == null && minutes == null ? "" : " " + time + " " + minutes);
         }
     }
 
@@ -125,9 +152,9 @@ public final class LifeLog {
         }
     }
 
-    /** One day's row of one tag, on or as a removal mark: one statement. */
+    /** One day's row of one tag, on or as a removal mark, without a time: one statement. */
     private static void write(SQLiteDatabase w, String day, String tag, double made, boolean gone) {
-        w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, span, made, gone) VALUES (?, ?, NULL, NULL, ?, ?)",
+        w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, NULL, NULL, NULL, ?, ?)",
                 new Object[] {day, tag, made, gone ? 1L : 0L});
     }
 
@@ -167,8 +194,63 @@ public final class LifeLog {
             write(db.getWritableDatabase(), date(day), tag(tag), made, true);
             return;
         }
-        db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, span, made, gone) VALUES (?, ?, NULL, ?, ?, ?)",
-                new Object[] {date(before.day), tag(before.tag), before.span, before.made, before.gone ? 1L : 0L});
+        db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                new Object[] {date(before.day), tag(before.tag), before.time, before.minutes == null ? null : (Object) (long) before.minutes, before.span,
+                    before.made, before.gone ? 1L : 0L});
+    }
+
+    /**
+     * "When and how long?" (issue #435): {@code tag} on {@code day} in force with the start {@code time} ("HH:MM", the local
+     * clock time of that day) and {@code minutes} (null: none), or both null for "Without a time". The day is logged if it was
+     * not; a day of a several day entry keeps its span id. One transaction (the span is read inside it), so a stop leaves the
+     * row as it was. Undo puts back the row {@link #row} read before ({@link #restore}).
+     */
+    public static void setTime(Db db, String day, String tag, String time, Integer minutes, double made) {
+        String d = date(day);
+        tag(tag);
+        if (time != null && LifeTimes.parse(time) < 0) throw new IllegalArgumentException("not a time");
+        if (time == null && minutes != null || !LifeTimes.validLength(minutes)) throw new IllegalArgumentException("not a length");
+        // a day tag (Stress, Holiday, Illness, Travel) has no time; "Without a time" is fine for any tag
+        if (time != null && !LifeTimes.timed(tag)) throw new IllegalArgumentException("not a tag of a moment");
+        SQLiteDatabase w = db.getWritableDatabase();
+        w.beginTransaction();
+        try {
+            Row was = row(db, d, tag);
+            Long span = was != null && !was.gone ? was.span : null;
+            w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, ?, ?, ?, ?, 0)",
+                    new Object[] {d, tag, time, minutes == null ? null : (Object) (long) minutes, span, made});
+            stop(1);
+            w.setTransactionSuccessful();
+        } finally {
+            w.endTransaction();
+        }
+    }
+
+    /**
+     * Every day in force with a time (issue #435), oldest first: the day, the key as stored (an alias is read as its factor by
+     * the caller, {@code LifeTimes.find} and {@code LifeTimes.bands}), the time and the length. A row whose day or time is not
+     * one (only a damaged file could hold it) is left out; a length that cannot be is read as none.
+     */
+    public static List<LifeTimes.Entry> times(Db db) {
+        List<LifeTimes.Entry> out = new ArrayList<LifeTimes.Entry>();
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT day, tag, time, minutes FROM life_days WHERE gone = 0 AND time IS NOT NULL ORDER BY day, tag", null);
+        try {
+            while (c.moveToNext()) {
+                LocalDate day;
+                try {
+                    day = LocalDate.parse(c.getString(0));
+                } catch (RuntimeException e) {
+                    continue;
+                }
+                String time = c.getString(2);
+                if (LifeTimes.parse(time) < 0) continue;
+                Integer m = c.isNull(3) ? null : (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, c.getLong(3)));
+                out.add(new LifeTimes.Entry(day, c.getString(1), time, LifeTimes.validLength(m) ? m : null));
+            }
+        } finally {
+            c.close();
+        }
+        return out;
     }
 
     /** Tests only: a several day entry throws after this many rows, as a stop half way would. */
@@ -186,7 +268,8 @@ public final class LifeLog {
 
     /**
      * {@code tag} on every day from {@code from} to {@code to} (both included), one row per day sharing the span id
-     * {@code span}, in one transaction: a stop half way writes none of them. Returns the days written; none when {@code to} is
+     * {@code span}, in one transaction: a stop half way writes none of them. A day that has the tag already keeps its time and
+     * length (issue #435); a removal mark is taken back without one. Returns the days written; none when {@code to} is
      * before {@code from}.
      */
     public static int setSpan(Db db, LocalDate from, LocalDate to, String tag, long span, double made) {
@@ -198,7 +281,11 @@ public final class LifeLog {
         try {
             int n = 0;
             for (LocalDate d : days) {
-                w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, span, made, gone) VALUES (?, ?, NULL, ?, ?, 0)",
+                // a day that already has the tag keeps its time and length (a Sauna at 19:00 stays when Sauna becomes several
+                // days); UPDATE then INSERT OR IGNORE, as SQLite's upsert needs Android 11 and the app runs from Android 8
+                w.execSQL("UPDATE life_days SET span = ?, made = ?, time = CASE WHEN gone = 0 THEN time END, minutes = CASE WHEN gone = 0 THEN minutes END, gone = 0"
+                        + " WHERE day = ? AND tag = ?", new Object[] {span, made, d.toString(), tag});
+                w.execSQL("INSERT OR IGNORE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, NULL, NULL, ?, ?, 0)",
                         new Object[] {d.toString(), tag, span, made});
                 if (++n == failSpanAfter) throw new IllegalStateException("test stop");
             }
@@ -211,10 +298,11 @@ public final class LifeLog {
 
     /** The row of {@code tag} on {@code day} (a removal mark included), or null when there never was one. */
     public static Row row(Db db, String day, String tag) {
-        Cursor c = db.getReadableDatabase().rawQuery("SELECT day, tag, span, made, gone FROM life_days WHERE day = ? AND tag = ?",
+        Cursor c = db.getReadableDatabase().rawQuery("SELECT day, tag, span, made, gone, time, minutes FROM life_days WHERE day = ? AND tag = ?",
                 new String[] {date(day), tag});
         try {
-            return c.moveToFirst() ? new Row(c.getString(0), c.getString(1), c.isNull(2) ? null : c.getLong(2), c.getDouble(3), c.getInt(4) != 0) : null;
+            return c.moveToFirst() ? new Row(c.getString(0), c.getString(1), c.isNull(5) ? null : c.getString(5), c.isNull(6) ? null : (int) c.getLong(6),
+                    c.isNull(2) ? null : c.getLong(2), c.getDouble(3), c.getInt(4) != 0) : null;
         } finally {
             c.close();
         }
@@ -293,10 +381,15 @@ public final class LifeLog {
      * #422), in one transaction.
      */
     public static String addOwn(Db db, String typed, long millis) {
-        String name = LifeTags.cleanName(typed);
-        if (name == null) return null;
         LifeTags.Known k = known(db);
-        String same = LifeTags.sameName(name);
+        // the name of a removed own tag brings it back even when a fixed tag has that name since (an own "Sauna" removed before
+        // issue #435 made Sauna a fixed tag, review of #444): checked before the fixed names refuse it
+        String typedSame = LifeTags.sameName(typed);
+        boolean removedOwn = false;
+        for (LifeTags.Tag t : k.all.values()) removedOwn |= t.removed && LifeTags.isOwn(t.key) && LifeTags.sameName(t.name).equals(typedSame);
+        String name = removedOwn ? typed : LifeTags.cleanName(typed);
+        if (name == null) return null;
+        String same = removedOwn ? typedSame : LifeTags.sameName(name);
         for (LifeTags.Tag t : k.own()) if (LifeTags.sameName(t.name).equals(same)) return null;
         // the name of a removed own tag brings that tag back (with its days), never a second key with the same name
         for (LifeTags.Tag t : k.all.values()) {
@@ -393,11 +486,13 @@ public final class LifeLog {
 
     /**
      * The demo's made up tags ({@code core/LifeTags.demo}, never Intimacy), written into {@code db}, the demo file (its build
-     * emptied it), never the real one, in one transaction; the several day entries share their span id as typed ones do.
+     * emptied it), never the real one, in one transaction; the several day entries share their span id as typed ones do; a few
+     * have a time and a length ({@code core/LifeTimes.demo}, issue #435).
      */
     static void demo(final Db db, LocalDate today, final double now, int days, int coldBack) {
         final TreeMap<LocalDate, List<String>> tags = LifeTags.demo(today, days, coldBack);
         final List<LocalDate[]> spans = LifeTags.demoSpans(today, coldBack);
+        final List<LifeTimes.Entry> times = LifeTimes.demo(today);
         db.inTransaction(new Runnable() {
             @Override
             public void run() {
@@ -411,8 +506,10 @@ public final class LifeLog {
                                 if (!e.getKey().isBefore(s[0]) && !e.getKey().isAfter(s[1])) span = (long) (now * 1000) + i;
                             }
                         }
-                        w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, span, made, gone) VALUES (?, ?, NULL, ?, ?, 0)",
-                                new Object[] {e.getKey().toString(), t, span, now});
+                        LifeTimes.Entry at = LifeTimes.find(times, e.getKey(), t, null);
+                        w.execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, ?, ?, ?, ?, 0)",
+                                new Object[] {e.getKey().toString(), t, at == null ? null : at.time,
+                                    at == null || at.minutes == null ? null : (Object) (long) (int) at.minutes, span, now});
                     }
                 }
             }

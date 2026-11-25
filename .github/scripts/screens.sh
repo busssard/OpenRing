@@ -181,6 +181,9 @@ launch --ei tab 0 --es card WHAT_WAS;                                 shot today
 launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
 launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
 launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
+# When and how long (issue #435): the sheet opened on Today's row for Sauna (extra life_time, demo mode only; nothing is saved
+# without a tap): From as two wheels, How long as the tag's usual lengths, Save, Without a time
+launch --ei tab 0 --es card WHAT_WAS --ez life_time true;           shot today-life-time 3
 # A night by hand (issue #427), before the left out examples below change the demo file: hand_night (demo mode only, nothing
 # stored) shows today and the day before yesterday as without a device night, so Today asks for last night and the demo's
 # made up night by hand shows on its day; hand_entry opens the entry for last night with two wake marks (nothing is saved)
@@ -401,6 +404,11 @@ shot body-life 1
 launch --ei tab 4 --es card LIFE_FACTORS --ei life_read 1; sleep 3
 scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors card was not found on Body for the read day"
 shot body-life-touch 1
+# the demo's sauna yesterday at 19:00 for 45 minutes as a band on yesterday's heart rate (issue #435), touched in the band (82 % of
+# the chart's width is about 19:20), and the line under the chart: what the ring measured during it next to the day's average
+launch --ei tab 4 --es day "$(date -d '1 day ago' +%F)" --es card HEART_RATE_TODAY; sleep 3
+if touch_desc "Heart rate of the day with your logged times" 82; then shot body-life-band 1
+else echo "::warning::issue #435 step: the day's heart rate chart with the sauna band was not on screen to touch it"; shot body-life-band 1; fi
 launch --ei tab 4 --es card YOUR_CYCLES; sleep 3
 scroll_to "YOUR CYCLES" 3 || echo "::warning::issue #252 step: the Your cycles card was not found on Body, body-cycles shows where the swipes ended"
 shot body-cycles 1

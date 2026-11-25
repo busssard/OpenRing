@@ -339,7 +339,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * phone_ask (boolean, demo mode only) shows Activity's card that asks for Physical activity instead of the demo's phone steps
      * (issue #329; nothing is asked without a tap, and demo mode never asks),
      * hand_night (boolean, demo mode only) shows today and the day before yesterday as without a device night, hand_entry
-     * (boolean, demo mode only) opens the entry of a night by hand for last night with two wake marks (issue #427).
+     * (boolean, demo mode only) opens the entry of a night by hand for last night with two wake marks (issue #427),
+     * life_time (boolean, demo mode only) opens "When and how long?" for Sauna on Today's row (issue #435; nothing is saved).
      */
     void handleExtras(Intent i) {
         if (i == null) return;
@@ -395,6 +396,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("battery_open", false) && Prefs.of(this).demo()) BatteryViews.open[0] = true;
         // the life factors row's More opened on Today (issue #292), for the screen test, demo mode only
         if (i.getBooleanExtra("life_more", false) && Prefs.of(this).demo()) LifeCard.moreOpen[0] = true;
+        // "When and how long?" opened on Today's row (issue #435), for the screen test, demo mode only; nothing saved without a tap
+        LifeCard.timePending = i.getBooleanExtra("life_time", false) && Prefs.of(this).demo();
         // Body's life factors month view with a past day read (issue #292): days before today, demo mode only
         LifeCard.readPending = Prefs.of(this).demo() ? Math.max(-1, i.getIntExtra("life_read", -1)) : -1;
         // screen test: the drip import's preview of a made up file (issue #252, phase 1b), demo mode only; demo never imports
