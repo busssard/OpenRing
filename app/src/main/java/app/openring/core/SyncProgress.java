@@ -176,10 +176,6 @@ public final class SyncProgress {
             return true;
         }
 
-        public synchronized boolean running() {
-            return running;
-        }
-
         /** The current data step's share, 0 to 0.99, or -1 when it is no data step or no record came yet. */
         synchronized double within() {
             if (!dataStep(key) || newest <= 0) return -1;
