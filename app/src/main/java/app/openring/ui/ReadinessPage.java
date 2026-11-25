@@ -7,25 +7,20 @@ import android.widget.LinearLayout;
 
 import org.json.JSONObject;
 
-import app.openring.core.analysis.Scores;
+import java.util.Locale;
+
+import app.openring.core.analysis.DaySummary;
 import app.openring.core.analysis.Stats;
 import app.openring.data.Json;
 import app.openring.ui.Pages.Nav;
 
-/** The Readiness tab and last night's body signals (issue #293, phase 0: moved out of {@link Pages} unchanged). */
+/** The Readiness tab and last night's body signals (issue #293, phase 0: moved out of {@link Pages}; its sentences are in core/analysis/DaySummary). */
 final class ReadinessPage {
     private ReadinessPage() {}
 
+    /** The sentence under the Readiness score, {@code core/analysis/DaySummary.headline} (issue #293, phase 0b). */
     static String headline(DayData d) {
-        double r = d.score("readiness");
-        if (!Double.isNaN(r)) {
-            if (r >= Scores.OPTIMAL) return "You're well recovered. A good day to push a little.";
-            if (r >= Scores.GOOD) return "You're in good shape. Keep a steady pace today.";
-            return "Your body is asking for rest. Take it easy today.";
-        }
-        double s = d.score("sleep");
-        if (!Double.isNaN(s)) return s >= Scores.OPTIMAL ? "You slept really well." : s >= Scores.GOOD ? "You slept reasonably well." : "Last night's sleep was short or restless.";
-        return "Keep wearing your ring to build your picture.";
+        return DaySummary.headline(d.score("readiness"), d.score("sleep"));
     }
 
     static View view(Context c, DayData d, Nav nav) {
@@ -150,16 +145,10 @@ final class ReadinessPage {
         LinearLayout right = Ui.vbox(c);
         right.setGravity(Gravity.END);
         right.addView(Ui.text(c, Ui.fmt(value, dp) + " " + unit, 15, Double.isNaN(value) ? Ui.TEXT_3 : Ui.TEXT, Ui.MEDIUM));
-        String u;
-        int col = Ui.TEXT_3;
-        if (Double.isNaN(usual) || Double.isNaN(value)) {
-            u = "usual value after a few nights";
-        } else {
-            double diff = value - usual;
-            boolean better = lowerIsBetter ? diff < 0 : diff > 0;
-            u = "usual " + Ui.fmt(usual, dp) + (Math.abs(diff) < Math.pow(10, -dp) ? "" : (diff > 0 ? ", higher" : ", lower"));
-            if (Math.abs(diff) >= Math.max(Math.abs(usual) * 0.05, Math.pow(10, -dp))) col = better ? Ui.GOOD : Ui.WARN;
-        }
+        // the line and its colour (5 % from the usual) are core/analysis/DaySummary's (issue #293, phase 0b)
+        String u = DaySummary.signalLine(value, usual, dp, Locale.getDefault());
+        int tone = DaySummary.signalTone(value, usual, dp, lowerIsBetter);
+        int col = tone == DaySummary.BETTER ? Ui.GOOD : tone == DaySummary.WORSE ? Ui.WARN : Ui.TEXT_3;
         right.addView(Ui.text(c, u, 11, col, Ui.REGULAR));
         row.addView(right);
         return row;

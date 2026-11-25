@@ -13,12 +13,12 @@ import org.json.JSONObject;
 import java.util.List;
 import java.util.Locale;
 
-import app.openring.core.Texts;
+import app.openring.core.analysis.DaySummary;
 import app.openring.core.analysis.Scores;
 import app.openring.data.Json;
 import app.openring.ui.Pages.Nav;
 
-/** The Today tab (issue #293, phase 0: moved out of {@link Pages} unchanged). */
+/** The Today tab (issue #293, phase 0: moved out of {@link Pages}; the digest sentence is in core/analysis/DaySummary). */
 final class TodayPage {
     private TodayPage() {}
 
@@ -368,38 +368,29 @@ final class TodayPage {
 
     /**
      * The readiness sentence and the sleep debt under the day's line (no filler when {@code forLine}), without the sleep debt
-     * when the line said it ({@code noDebt}).
+     * when the line said it ({@code noDebt}). The sentence is {@code core/analysis/DaySummary.digest} (issue #293, phase 0b);
+     * here only the stored values are read.
      */
     static String digest(DayData d, boolean forLine, boolean noDebt) {
-        StringBuilder sb = new StringBuilder();
         JSONObject rd = d.scoreObj("readiness");
+        String[] labels = null;
+        double[] scores = null;
         if (rd != null) {
             JSONArray cs = rd.optJSONArray("contributors");
-            JSONObject worst = null, best = null;
-            for (int i = 0; cs != null && i < cs.length(); i++) {
+            int n = cs == null ? 0 : cs.length();
+            labels = new String[n];
+            scores = new double[n];
+            for (int i = 0; i < n; i++) {
                 JSONObject o = cs.optJSONObject(i);
-                if (worst == null || o.optDouble("score") < worst.optDouble("score")) worst = o;
-                if (best == null || o.optDouble("score") > best.optDouble("score")) best = o;
+                labels[i] = o.optString("label");
+                scores[i] = o.optDouble("score");
             }
-            // the same ladder as the labels and colours on the Readiness page (issue #200)
-            String line = best == null ? "" : Texts.contributorLine(best.optString("label"), worst.optString("label"),
-                    worst.optDouble("score"), Locale.getDefault());
-            sb.append(line.isEmpty() ? ". " : line + " ");
-            if (rd.optBoolean("provisional")) sb.append("Your baselines are still forming, so scores will become more personal over the next two weeks. ");
         }
         JSONObject debt = d.day == null ? null : d.day.optJSONObject("sleep_debt");
-        if (noDebt) {
-            // the day's sentence above already gives the sleep debt
-        } else if (debt != null && debt.optBoolean("valid")) {
-            double m = debt.optDouble("debt_min", 0);
-            if (m >= 180) sb.append("You carry about ").append(Ui.hm(m)).append(" of sleep debt. ");
-        } else if (debt == null && HistoryViews.watch(d)) {
-            // only the watch: its sleep debt by the ring's rule, the number of the Sleep tab (owner's report of 14 November)
-            double[] w = d.deviceHistory.debt(d.date);
-            if (w[1] > 0 && w[0] >= 180) sb.append("You carry about ").append(Ui.hm(w[0])).append(" of sleep debt. ");
-        }
-        // under the day's line the card has its own sentence, so no filler
-        if (sb.length() == 0 && !forLine) sb.append("Synced and analysed on this phone. Nothing left the device.");
-        return sb.toString().trim();
+        // only the watch: its sleep debt by the ring's rule, the number of the Sleep tab (owner's report of 14 November)
+        double[] watch = !noDebt && debt == null && HistoryViews.watch(d) ? d.deviceHistory.debt(d.date) : null;
+        double debtMin = DaySummary.debtMin(debt != null, debt != null && debt.optBoolean("valid"),
+                debt == null ? Double.NaN : debt.optDouble("debt_min", 0), watch);
+        return DaySummary.digest(labels, scores, rd != null && rd.optBoolean("provisional"), debtMin, noDebt, forLine, Locale.getDefault());
     }
 }

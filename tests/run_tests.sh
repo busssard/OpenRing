@@ -36,6 +36,9 @@ bash tests/test_ci_scripts.sh
 # the sleep sound detector (issue #380), compiled on its own line so other new suites never touch the same line
 javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/SoundTest.java
 java $JAVA_OPTS -cp "$OUT" SoundTest
+# the sentences of the tabs against the code before the move (issue #293, phase 0b), on lines of their own
+javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/DaySummaryTest.java
+java $JAVA_OPTS -cp "$OUT" DaySummaryTest
 # nights entered by hand (issue #427), compiled on its own line so other new suites never touch the same line
 javac -source 8 -target 8 -Xlint:-options -cp "$OUT" -d "$OUT" tests/java/HandTest.java
 java $JAVA_OPTS -cp "$OUT" HandTest
