@@ -1241,6 +1241,69 @@ public class CoreTest {
         check("#329 job due: by default nothing is due", !BackgroundJob.due(fresh).run() && fresh.keyState == KeyState.NONE && fresh.zone != null);
     }
 
+    /** Owner's report of 23 November: an older day keeps the newer values in the charts, the window moves only past them. */
+    static void dayWindow() {
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 23);
+        eq("window: today ends today", app.openring.core.DayWindow.end(today, today, 7), today);
+        eq("window: yesterday still ends today (newer value stays)", app.openring.core.DayWindow.end(today.minusDays(1), today, 7), today);
+        eq("window: 6 days back still ends today", app.openring.core.DayWindow.end(today.minusDays(6), today, 7), today);
+        eq("window: 7 days back moves by one day", app.openring.core.DayWindow.end(today.minusDays(7), today, 7), today.minusDays(1));
+        eq("window: 40 days back in a 30 day chart ends 11 days back", app.openring.core.DayWindow.end(today.minusDays(40), today, 30), today.minusDays(11));
+        eq("window: a day after today (clock moved) ends on it", app.openring.core.DayWindow.end(today.plusDays(1), today, 7), today.plusDays(1));
+        eq("window: no today known ends on the picked day", app.openring.core.DayWindow.end(today.minusDays(3), null, 7), today.minusDays(3));
+        // stepping back one day at a time never jumps by more than a day
+        java.time.LocalDate prev = app.openring.core.DayWindow.end(today, today, 30);
+        boolean smooth = true, shown = true;
+        for (int k = 1; k <= 400; k++) {
+            java.time.LocalDate p = today.minusDays(k), e = app.openring.core.DayWindow.end(p, today, 30);
+            if (java.time.temporal.ChronoUnit.DAYS.between(e, prev) > 1) smooth = false;
+            if (app.openring.core.DayWindow.index(p, e, 30) < 0) shown = false;
+            prev = e;
+        }
+        check("window: stepping back 400 days moves at most a day per step", smooth);
+        check("window: the picked day is always in the window", shown);
+        eq("window: the picked day's place (yesterday in 7 days ending today)", app.openring.core.DayWindow.index(today.minusDays(1), today, 7), 5);
+        eq("window: today is the last place", app.openring.core.DayWindow.index(today, today, 7), 6);
+        eq("window: moved window, the picked day is the oldest", app.openring.core.DayWindow.index(today.minusDays(7), today.minusDays(1), 7), 0);
+        eq("window: outside is -1", app.openring.core.DayWindow.index(today.minusDays(9), today, 7), -1);
+
+        // code review of #455: the numbers of a picked day never follow the drawn window. Each day's value is its day number;
+        // the picked day and every later day hold 1000, so any of them in the usual value would show at once.
+        final java.time.LocalDate picked = today.minusDays(3);
+        app.openring.core.DayWindow.Value v = new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(java.time.LocalDate day) {
+                return day.isBefore(picked) ? day.toEpochDay() : 1000;
+            }
+        };
+        eq("window: the chart of the picked day still ends today", app.openring.core.DayWindow.end(picked, today, 15), today);
+        double usual = app.openring.core.DayWindow.usual(picked, v);
+        double want = 0;
+        for (int k = 1; k <= 14; k++) want += picked.minusDays(k).toEpochDay();
+        check("usual: an older day's usual value is the mean of the 14 days before it (" + usual + ")", Math.abs(usual - want / 14) < 1e-9);
+        double[] up = app.openring.core.DayWindow.values(picked, 30, v), drawn = app.openring.core.DayWindow.values(app.openring.core.DayWindow.end(picked, today, 30), 30, v);
+        check("values: ending at the picked day, the oldest first", up.length == 30 && up[0] == picked.minusDays(29).toEpochDay() && up[29] == 1000 && up[28] == picked.minusDays(1).toEpochDay());
+        check("values: the drawn window holds the newer days, the picked day's values do not", drawn[29] == 1000 && drawn[26] == 1000 && drawn[25] == picked.minusDays(1).toEpochDay());
+        app.openring.core.DayWindow.Value few = new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(java.time.LocalDate day) {
+                return day.equals(picked.minusDays(2)) || day.equals(picked.minusDays(9)) ? 50 : Double.NaN;
+            }
+        };
+        check("usual: fewer than 3 nights before the day give no usual value", Double.isNaN(app.openring.core.DayWindow.usual(picked, few)));
+        app.openring.core.DayWindow.Value three = new app.openring.core.DayWindow.Value() {
+            @Override
+            public double of(java.time.LocalDate day) {
+                return day.equals(picked.minusDays(1)) ? 40 : day.equals(picked.minusDays(14)) ? 50 : day.equals(picked.minusDays(7)) ? 60
+                        : day.equals(picked.minusDays(15)) || !day.isBefore(picked) ? 999 : Double.NaN;
+            }
+        };
+        eq("usual: 3 nights within the 14 days before (not the 15th, not the day itself)", app.openring.core.DayWindow.usual(picked, three), 50.0);
+        eq("average label: none when the chart ends on the picked day", app.openring.core.DayWindow.upTo(today, today, 30), "");
+        eq("average label: said when the chart also shows newer days", app.openring.core.DayWindow.upTo(picked, today, 30), " in the 30 days up to the day you picked");
+        eq("average label: a moved window ends 6 days after the picked day", app.openring.core.DayWindow.upTo(today.minusDays(9), today.minusDays(3), 7), " in the 7 days up to the day you picked");
+    }
+
     public static void main(String[] args) throws Exception {
         permissionSettings();
         keyState199();
@@ -1337,6 +1400,7 @@ public class CoreTest {
         start373();
         syncPlan();
         periodSettingsHidden();
+        dayWindow();
         startCards373();
         startScreens373();
         System.out.println(passed + " passed, " + failed + " failed");
