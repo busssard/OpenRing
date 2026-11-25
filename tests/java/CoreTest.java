@@ -419,6 +419,72 @@ public class CoreTest {
             if (!same) differs++;
         }
         eq("timeline: random nights give the rows of the code before the move", differs, 0);
+        timelineRows380(st, s, e, left, utc);
+    }
+
+    /**
+     * Timeline rows with their time and kind (code health of issue #380): the same texts as before with each row's moment,
+     * and other rows sorted in by time without moving the night's own rows.
+     */
+    static void timelineRows380(int[] st, double s, double e, List<double[]> left, java.time.ZoneId utc) {
+        List<TimelineRow> rows = WakeUps.rows(st, s, e, s + 600, 48.4, left, utc, Locale.US);
+        List<String[]> pairs = WakeUps.timeline(st, s, e, s + 600, 48.4, left, utc, Locale.US);
+        boolean same = rows.size() == pairs.size();
+        for (int i = 0; same && i < rows.size(); i++) same = Arrays.equals(rows.get(i).pair(), pairs.get(i));
+        check("timeline rows: the same clocks and texts as the timeline", same && rows.size() == 9);
+        eq("timeline rows: a left out time is its own kind", rows.get(0).kind, TimelineRow.LEFT_OUT);
+        eq("timeline rows: its moment is its start", rows.get(0).at, s - 1800);
+        eq("timeline rows: the window's start is a night row", rows.get(1).kind, TimelineRow.NIGHT);
+        eq("timeline rows: the window's start at its moment", rows.get(1).at, s);
+        eq("timeline rows: the lowest heart rate at its moment", rows.get(3).at, s + 600);
+        eq("timeline rows: the window's end at its moment", rows.get(7).at, e);
+        eq("timeline rows: the left out time after it", rows.get(8).kind, TimelineRow.LEFT_OUT);
+
+        // merge: nothing to add gives the rows unchanged (a copy)
+        List<TimelineRow> none = TimelineRow.merge(rows, null);
+        check("merge: null adds nothing", none.equals(rows) && none != rows);
+        check("merge: an empty list adds nothing", TimelineRow.merge(rows, new ArrayList<TimelineRow>()).equals(rows));
+        // sound rows: before the window, inside (between wake ups, the same moment as a row), after it; given out of order
+        List<TimelineRow> extra = new ArrayList<TimelineRow>();
+        extra.add(new TimelineRow(e + 120, TimelineRow.LISTEN, "x", "after the end"));
+        extra.add(new TimelineRow(s - 300, TimelineRow.LISTEN, "x", "before the start"));
+        extra.add(new TimelineRow(s + 600, TimelineRow.SOUND, "x", "with the lowest heart rate"));
+        extra.add(new TimelineRow(s + 1000, TimelineRow.SOUND, "x", "between wake ups"));
+        extra.add(new TimelineRow(s + 1000, TimelineRow.SOUND, "x", "the same moment, given later"));
+        List<TimelineRow> m = TimelineRow.merge(rows, extra);
+        StringBuilder got = new StringBuilder();
+        for (TimelineRow r : m) got.append(r.text).append('\n');
+        eq("merge: sorted in by time, the night's rows in their order", got.toString(),
+                "Left out from 21:30 to 21:50 (someone else wore the ring)\n"
+                + "before the start\n"
+                + "Start of the sleep window\n"
+                + "Fell asleep after 5 min\n"
+                + "Lowest heart rate, 48 bpm\n"
+                + "with the lowest heart rate\n"
+                + "Awake for 2 min, back asleep 22:17\n"
+                + "between wake ups\n"
+                + "the same moment, given later\n"
+                + "Awake for 3 min, back asleep 22:41\n"
+                + "Woke up\n"
+                + "End of the sleep window\n"
+                + "after the end\n"
+                + "Left out from 22:50 to 23:00 (someone else wore the ring)\n");
+        eq("merge: the rows given are not changed", extra.get(0).text, "after the end");
+        // taking the extra rows out again gives the night's rows exactly, on random nights
+        Random rnd = new Random(380);
+        int moved = 0;
+        for (int t = 0; t < 500; t++) {
+            int[] g = new int[1 + rnd.nextInt(300)];
+            for (int i = 0; i < g.length; i++) g[i] = 1 + rnd.nextInt(4);
+            double a = 1_700_000_000 + rnd.nextInt(400 * 86400), b = a + g.length * 30;
+            List<TimelineRow> base = WakeUps.rows(g, a, b, a + rnd.nextDouble() * (b - a), 50, new ArrayList<double[]>(), utc, Locale.US);
+            List<TimelineRow> more = new ArrayList<TimelineRow>();
+            for (int k = rnd.nextInt(8); k > 0; k--) more.add(new TimelineRow(a - 3600 + rnd.nextDouble() * (b - a + 7200), TimelineRow.SOUND, "x", "s"));
+            List<TimelineRow> back = new ArrayList<TimelineRow>();
+            for (TimelineRow r : TimelineRow.merge(base, more)) if (!TimelineRow.SOUND.equals(r.kind)) back.add(r);
+            if (!back.equals(base)) moved++;
+        }
+        eq("merge: random nights keep their own rows in order", moved, 0);
     }
 
     /** The night timeline rows exactly as ui/Pages.timeline built them before the move to WakeUps.timeline. */
