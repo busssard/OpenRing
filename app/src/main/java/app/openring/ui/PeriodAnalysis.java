@@ -243,8 +243,10 @@ final class PeriodAnalysis {
             dots.marks(ring, Ui.LIFE);
             if (touch) dots.touch(cf.newest(chosen));
         }
-        // a readout with the factors has up to 4 lines: a little more room
-        box.addView(dots, Ui.sized(c, -1, factors ? 170 : 130));
+        // a readout with the factors has more lines: room for the longest, so it never covers the whole chart
+        int lines = 1;
+        for (String tip : tips) lines = Math.max(lines, tip.split("\n").length);
+        box.addView(dots, Ui.sized(c, -1, 130 + 17 * (lines - 1)));
         if (chosen != null) {
             android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
             key(sb, "\u25CB", Ui.LIFE, CycleFactors.legendRing(name));
