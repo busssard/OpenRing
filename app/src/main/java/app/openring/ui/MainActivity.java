@@ -961,7 +961,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
     private int tourPending = -1;
     /** The tour started after the first sync; the tour does not start by itself on this start (screen test, extra tour -1). */
     private boolean tourFirst, tourQuiet;
-    /** The newest good sync (ring or watch) this screen knew at its last look, 0 for none: the first sync starts the tour. */
+    /**
+     * The newest good sync (ring or watch) this screen knew at its last look, 0 for none: the first sync starts the tour. Only
+     * in memory; setup's saved mark ({@code Prefs.tourAfterSetup}, issue #476) covers a screen created again after that sync.
+     */
     private long syncedBefore;
 
     static long synced(Prefs p) {
@@ -985,7 +988,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         int pending = tourPending;
         tourPending = -1;
         int why = pending >= 0 ? app.openring.core.Tour.NONE
-                : app.openring.core.Tour.autoStart(p.demo(), p.tourSeen(), Tiles.editing() || tourQuiet, syncedBefore, now);
+                : app.openring.core.Tour.autoStart(p.demo(), p.tourSeen(), Tiles.editing() || tourQuiet, p.tourAfterSetup(), syncedBefore, now);
         boolean first = pending >= 0 ? tourFirst : why == app.openring.core.Tour.FIRST_SYNC;
         syncedBefore = now;
         if (pending < 0 && why == app.openring.core.Tour.NONE) return;
@@ -993,6 +996,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             android.widget.Toast.makeText(this, "Save or leave Rearrange tiles first.", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
+        // started by itself once (issue #476): setup's mark is used up, it never starts again by itself
+        if (why == app.openring.core.Tour.FIRST_SYNC) p.setTourAfterSetup(false);
         if (why != app.openring.core.Tour.NONE) {
             android.util.Log.i("OpenRing", "tour: started by itself (" + (why == app.openring.core.Tour.DEMO ? "demo" : "first sync") + ")");
         }

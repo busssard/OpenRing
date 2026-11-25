@@ -492,7 +492,19 @@ public final class Prefs {
      * One flag for both; not in backups (a hint, not data, so the backup format stays as it is).
      */
     public boolean tourSeen() { return sp.getBoolean("tour_seen", false); }
-    public void setTourSeen() { sp.edit().putBoolean("tour_seen", true).apply(); }
+    public void setTourSeen() { sp.edit().putBoolean("tour_seen", true).remove("tour_after_setup").apply(); }
+
+    /**
+     * Setup ended before any sync (issue #476): the tour starts after the first sync that works, also when the main screen was
+     * created again in between (Android ended the app, the watch setup synced first). Cleared when the tour starts or is
+     * done or skipped ({@link #setTourSeen}). A hint like {@code tour_seen}, not in backups. Written at once: setup opens
+     * another screen right after.
+     */
+    public boolean tourAfterSetup() { return sp.getBoolean("tour_after_setup", false); }
+    public void setTourAfterSetup(boolean on) {
+        if (on) sp.edit().putBoolean("tour_after_setup", true).commit();
+        else sp.edit().remove("tour_after_setup").commit();
+    }
 
     // ---- automatic backups (issue #242) ----
     /** The version code noted at the last start, 0 when none was noted yet. */
