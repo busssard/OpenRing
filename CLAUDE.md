@@ -19,7 +19,8 @@ completely, then read the two guides it points to before changing anything:
   Screenshots only ever come from demo mode.
 * **Demo mode is an overview, not a copy of the app** (owner, 23 November, on #438): it lets a new person see what
   the app can do. It does not need every function (no Delete all, no full Settings); do not build or fix features
-  just so they work in demo mode. A short tutorial for new people matters more than demo completeness.
+  just so they work in demo mode. Keeping demo and real data apart still matters (a demo action must never touch real
+  data). A short tutorial for new people matters more than demo completeness.
 
 ## How a change should go
 0. **History first.** Before planning, read the issues (open and closed) and pull requests (open and
