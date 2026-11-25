@@ -681,6 +681,18 @@ public class TrendsPipelineTest {
         List<Trends.Day> longer = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
         check("#427 Trends starts with a night by hand older than the ring's data", longer.get(0).date.equals(early) && longer.get(0).v[Trends.ASLEEP] == 480
                 && longer.get(0).src[Trends.ASLEEP] == Trends.HAND, longer.get(0).date);
+        // issue #459 (code review of 9295aa0): the ring's nights at Calm, nights by hand before, between none and after them:
+        // Sleep's Further analysis has one level (Calm), no "each night at its own detail level" line, as Trends
+        db.getWritableDatabase().execSQL("UPDATE nights SET json = replace(replace(json, '\"stage_detail\":0', '\"stage_detail\":2'), '\"stage_detail\":1', '\"stage_detail\":2')");
+        long calmNights = db.count("SELECT COUNT(*) FROM nights WHERE main = 1 AND json LIKE '%\"stage_detail\":2%'");
+        SleepHistory all = SleepHistory.load(db, "0000-01-01", today.toString(), z);
+        boolean handFirst = app.openring.data.HandNights.withoutRingNight(db, "0000-01-01", today.toString(), z).size() == 2;
+        check("#459 Sleep: Calm ring nights with nights by hand (the first night by hand), Further analysis at Calm, not mixed",
+                calmNights == ringJs.size() && handFirst && all.nights == ringJs.size() + 2 && all.stageDetail == app.openring.core.analysis.StageFilter.CALM,
+                calmNights + " " + all.nights + " " + all.stageDetail);
+        SleepHistory onlyHand = SleepHistory.load(db, early.toString(), early.toString(), z);
+        check("#459 Sleep: a period with only a night by hand counts as Detailed, as before", onlyHand.nights == 1
+                && onlyHand.stageDetail == app.openring.core.analysis.StageFilter.DETAILED, onlyHand.nights + " " + onlyHand.stageDetail);
     }
 
     /** Three years of nights and days (copies of the demo's) and of screen sessions: read and grouped under 1.5 s. */

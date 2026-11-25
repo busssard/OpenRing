@@ -36,6 +36,7 @@ public final class ShownNights {
 
     /** Which devices a day is shown with: worked out by the day load from the settings and what is paired, never stored. */
     public static final class Devices {
+        // every field below is part of key() (Trends' stamp, issue #459): a new field must be added there too
         /** The main device ({@link MainDevice#RING}, {@code WATCH} or {@code PHONE}) as the day load shows it. */
         public final int main;
         /** The ring's results are shown (false only for the demo shown as without a ring). */
