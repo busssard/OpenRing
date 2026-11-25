@@ -479,6 +479,26 @@ ring nights (22:30 until 7), once a day, after the consent, with the microphone 
 `sound_threshold`, `sound_tested`, `sound_margin`, `sound_remind`; never the consent. The demo file gets last night's made up
 sounds (`Sounds.demo`: tones made in code in `no_backup/sounds-demo`, never a voice). Marks on the night timeline come in 1c.
 
+**Sleep sounds, phase 1c: the marks on the night.** Reading only: no schema, setting or row changes. `data/Sounds` reads each night's
+`sound_gaps` rows into `Night.gaps` (every kind, in the same range as its marks; `silent` stays the silence total) and gives the zone a
+night is shown in (`Sounds.zone`: the day's zone by `Exporter.dayZone`, the day found with the zone noted at the night's start), which
+the clip list uses instead of the phone's zone now. `core/SoundMarks` (pure Java, `SoundTest`) decides everything shown: the readout
+of a mark ("02:14, talking or other sound, 6 s", "02:12 to 02:26, snoring, 14 min", " (sound deleted)" when its sound is gone; the hour
+that happens twice gets "(first time)"), of a gap ("04:10 to 04:22, not listening: another app used the microphone" for silence, "the
+phone lost the audio" for system), before and after listening and in between ("03:00, listening, no sound kept"); the marks a touch
+reads (within 8 dp, the shortest first, so a cough inside a snoring stretch is found); the listening spans without the gaps; the marks
+before and after the sleep window (not drawn on the strip, a line names them); and the timeline rows (started, each mark, each gap of a
+minute or more, stopped with "Android ended it" for system; shorter gaps counted under the card). `SleepSounds.clock` is the
+timeline's clock (`WakeUps.clock`, the nearest minute), so the card, the clip list, the strip and the timeline show the same minute.
+Screens: `Charts.SoundStrip` (a `Scrub`, 56 dp: the marks in the lower 24 dp in `Ui.TEMP`, snoring a bar, a cough a half tick, talking
+a tick with a dot, a gone sound faded, the listening line along the bottom, gaps shaded in `Ui.WARN`) under the stages and Movement on
+the ring's and the watch's night pages (`SoundViews.strip`, in the stages' zone), with the rows (and Play) of the marks a touch reads
+under it; the night timeline gets the rows through `TimelineRow.merge` (sound rows with a yellow clock). Code health first: the
+timeline's rows carry their moment and kind (`core/analysis/TimelineRow`, `WakeUps.rows`; `WakeUps.timeline` gives the same pairs as
+before), and `Charts.Strip` (Movement) is a `Scrub` read by touch ("02:05 to 02:10, 4.0 s of motion per reading": the ring's motion
+event reports seconds of motion per reading, the bars are 5 minute averages), its bar width from the series' own step
+(`core/NightStrip`). Nights by hand have no stage chart, so no strip; the marks are not drawn on the heart rate charts.
+
 **Nights by hand (issue #427).** A night slept without the ring and the watch, entered on one screen (`ui/HandNightActivity`): a bar
 from 18:00 the evening before to 14:00 on the day, in the day's zone (19 or 21 hours on a clock change night), with In bed and Up
 handles, every time snapped to 5 minutes, the night at least 30 minutes; the default times are the median clock times of the last

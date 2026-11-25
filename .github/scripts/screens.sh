@@ -239,6 +239,12 @@ launch --es sounds consent;                 shot sleep-sounds-consent 2
 launch --es sounds test;                    shot sleep-sounds-test 2
 launch --es sounds list;                    shot sleep-sounds-list 3
 launch --es settings sounds;                shot settings-sounds 3
+# Sleep sounds on the night (issue #380, phase 1c): the Sounds strip under the stages and Movement (talking, the snoring stretch,
+# the cough, the deleted sound, 12 minutes not listening shaded), the strip touched on the snoring stretch with its row and Play
+# (extra sounds_mark, demo mode only), and the night timeline with the sound rows in yellow
+launch --ei tab 1 --es card SLEEP_DEPTH;    shot sleep-sounds-strip 2
+launch --ei tab 1 --ez sounds_mark true --es card SLEEP_DEPTH; shot sleep-sounds-strip-touch 2
+launch --ei tab 1 --es card NIGHT_TIMELINE; shot sleep-timeline-sounds 3
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 # An older day keeps the newer days in the charts (owner, 23 November): 3 days back, the 7 day bars still end today with the
