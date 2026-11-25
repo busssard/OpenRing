@@ -380,7 +380,7 @@ public class CoreTest {
         eq("step: equals the old rule on random nights", stepDiffers, 0);
         try {
             String root = "app/src/main/java/app/openring/ui/";
-            for (String f : new String[] {"Pages.java", "SettingsActivity.java"}) {
+            for (String f : new String[] {"SleepPage.java", "SettingsActivity.java"}) {
                 String src = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + f).toPath()), "UTF-8");
                 check("step: " + f + " uses WakeUps.step, no copy of the rule", src.contains("WakeUps.step(")
                         && !src.contains("st.length == 0 ? 30 :"));
@@ -10440,7 +10440,7 @@ public class CoreTest {
             String root = "app/src/main/java/app/openring/";
             String main = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/MainActivity.java").toPath()), "UTF-8");
             String setup = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/SetupActivity.java").toPath()), "UTF-8");
-            String pages = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/Pages.java").toPath()), "UTF-8");
+            String pages = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/TodayPage.java").toPath()), "UTF-8");
             String prefs = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "data/Prefs.java").toPath()), "UTF-8");
             check("#373 the main screen decides with Start.opensSetup and the watch", main.contains("app.openring.core.Start.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null, prefs.watchAddress() != null)")
                     && !main.contains("app.openring.core.KeyState.opensSetup("));

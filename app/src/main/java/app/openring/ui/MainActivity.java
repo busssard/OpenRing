@@ -378,7 +378,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("layout_reset", false) && Prefs.of(this).demo()) Prefs.of(this).resetTiles(null);
         // Further analysis shown open once (its tile is folded in the standard layout); nothing is saved
         if (i.getBooleanExtra("analysis", false)) Tiles.openOnce.add(app.openring.core.Layout.tab(Pages.SLEEP) + ":" + Pages.ANALYSIS_KEY);
-        if (i.hasExtra("period")) Pages.analysisPeriod = i.getIntExtra("period", 1);
+        if (i.hasExtra("period")) SleepPage.analysisPeriod = i.getIntExtra("period", 1);
         String card = i.getStringExtra("card");
         cardPending = card != null && Prefs.of(this).demo() ? card.replace('_', ' ') : null;
         String day = i.getStringExtra("day");

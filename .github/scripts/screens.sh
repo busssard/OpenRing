@@ -257,7 +257,7 @@ launch --ei tab 2;                          shot readiness
 swipe_up; swipe_up;                       shot readiness-contributors 1   # temperature line as the card below (issue #163)
 # touch the "Temperature vs usual" chart (issue #226): the readout shows the newest day with its sign and
 # °C, as the big number above it. The chart has no text of its own, so it is found from the card's line
-# "Deviation from your usual ...": the chart starts 8 dp below that line and is 120 dp high (Pages.java),
+# "Deviation from your usual ...": the chart starts 8 dp below that line and is 120 dp high (ReadinessPage.java),
 # so the tap goes 68 dp below it (the chart's middle) and 10 px inside its right end, where the newest
 # dot is (the readout takes the dot nearest the touch). Slow swipes (no fling) until the chart is on screen
 # (the first run found nothing after 3 short swipes: the Contributors list above it is long).
