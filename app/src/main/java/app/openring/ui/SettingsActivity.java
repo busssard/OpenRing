@@ -1414,8 +1414,17 @@ public final class SettingsActivity extends Activity implements RingManager.List
         sw.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                // demo mode never changes the real setting or the real alarm (issue #481); the rebuild puts the switch back
+                // (not setChecked here, which would call this listener again)
+                if (demo) {
+                    say(app.openring.core.SleepSounds.DEMO_NO_RECORD);
+                    fillSoundsCard();
+                    return;
+                }
                 p.setSoundRemind(on);
                 app.openring.sync.SoundReminder.planLater(SettingsActivity.this);
+                // the line under the switch ("Next at ..." or "Bedtime notification: Off.") follows the tap (issue #481)
+                fillSoundsCard();
             }
         });
         LinearLayout.LayoutParams swl = Ui.matchWrap();

@@ -61,6 +61,7 @@ public class SoundTest {
         thresholdFromTest();
         usualTimes();
         keepChoices();
+        remindSwitch();
         texts1b();
         wavFile();
         demoTones();
@@ -791,6 +792,29 @@ public class SoundTest {
         eq("the until deleted line", app.openring.core.SleepSounds.keepLine(0), "Clips keep their sound until you delete them.");
         check("Settings opened at sleep sounds opens the Phone block", app.openring.core.SettingsBlocks.of("sounds") == app.openring.core.SettingsBlocks.PHONE
                 && app.openring.core.SettingsBlocks.startsOpen(app.openring.core.SettingsBlocks.PHONE, "sounds"));
+    }
+
+    /**
+     * Issue #481, a source check (ui/ needs Android): Settings' "Remind me at bedtime" refuses in demo mode before it saves
+     * anything (the real setting and alarm stay), and rebuilds the card after a change, so its "Next at ..." or "Off" line follows.
+     */
+    static void remindSwitch() {
+        String src;
+        try {
+            src = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("app/src/main/java/app/openring/ui/SettingsActivity.java")), "UTF-8");
+        } catch (java.io.IOException e) {
+            check("#481 SettingsActivity.java read", false, e);
+            return;
+        }
+        int sw = src.indexOf("sw.setText(\"Remind me at bedtime\")");
+        int from = src.indexOf("public void onCheckedChanged(", sw);
+        int to = src.indexOf("LinearLayout.LayoutParams swl", from);
+        String l = sw < 0 || from < 0 || to < 0 ? "" : src.substring(from, to);
+        int demo = l.indexOf("if (demo) {"), refuse = l.indexOf("say(app.openring.core.SleepSounds.DEMO_NO_RECORD);"), ret = l.indexOf("return;"),
+                save = l.indexOf("p.setSoundRemind(on);"), plan = l.indexOf("SoundReminder.planLater("), refill = l.lastIndexOf("fillSoundsCard();");
+        check("#481 demo mode refuses before the setting or the alarm is touched", demo >= 0 && demo < refuse && refuse < ret && ret < save && ret < plan, l);
+        check("#481 the card is rebuilt after saving, so the bedtime line follows the switch", save >= 0 && save < plan && plan < refill, l);
+        check("#481 no setChecked inside the listener (it would call itself again)", !l.isEmpty() && !l.contains("setChecked("), l);
     }
 
     /** The texts of the card, the consent and the notifications: plain, no dashes, every number explained. */
