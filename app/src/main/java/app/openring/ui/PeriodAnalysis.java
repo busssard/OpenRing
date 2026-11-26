@@ -243,9 +243,10 @@ final class PeriodAnalysis {
             dots.marks(ring, Ui.LIFE);
             if (touch) dots.touch(cf.newest(chosen));
         }
-        // a readout with the factors has more lines: room for the longest, so it never covers the whole chart
+        // a readout with the factors has more lines: room for the longest above the dots, so it never covers them (review of #488)
         int lines = 1;
         for (String tip : tips) lines = Math.max(lines, tip.split("\n").length);
+        dots.lines(lines);
         box.addView(dots, Ui.sized(c, -1, 130 + 17 * (lines - 1)));
         if (chosen != null) {
             android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
@@ -474,6 +475,14 @@ final class PeriodAnalysis {
         private boolean[] ring;
         /** A dot to show touched once drawn (after a chip tap), -1 for none. */
         private int touchAt = -1;
+        /** The longest readout's lines: the dots start below it (review of #488), 1 for a readout of one line. */
+        private int lines = 1;
+
+        /** Room above the dots for a readout of {@code n} lines. */
+        Dots lines(int n) {
+            lines = Math.max(1, n);
+            return this;
+        }
 
         Dots(Context c, double[] x, double[] y, boolean[] faded, String[] tips, double line, double band, String unit, String description) {
             super(c);
@@ -516,7 +525,8 @@ final class PeriodAnalysis {
         protected void onDraw(Canvas cv) {
             Context c = getContext();
             float w = getWidth(), h = getHeight();
-            float left = Ui.dp(c, 30), right = w - Ui.dp(c, 8), top = Ui.dp(c, 26), bottom = h - Ui.dp(c, 18);
+            // each line past the first adds one line of the readout (11.5 dp text, 1.25 line height) above the dots
+            float left = Ui.dp(c, 30), right = w - Ui.dp(c, 8), top = Ui.dp(c, 26 + 14.375f * (lines - 1)), bottom = h - Ui.dp(c, 18);
             double lo = Double.POSITIVE_INFINITY, hi = Double.NEGATIVE_INFINITY;
             for (double v : y) {
                 lo = Math.min(lo, v);

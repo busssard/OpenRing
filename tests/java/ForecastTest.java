@@ -990,6 +990,12 @@ public class ForecastTest {
         l.add(key);
     }
 
+    /** Whether no line of {@code tip} passes {@link CycleFactors#WRAP} characters (review of #488: 40 fit a 360 dp phone). */
+    static boolean narrow(String tip) {
+        for (String l : tip.split("\n")) if (l.length() > CycleFactors.WRAP) return false;
+        return true;
+    }
+
     static CycleFactors cf(Cycles cy, List<FactorEffect.Factor> f) {
         return CycleFactors.of(cy, cy.backtest().of(cy.methodId), f);
     }
@@ -1031,9 +1037,9 @@ public class ForecastTest {
         check("#383 phase 2: no faded dot when logging started before the scored cycles", !c.anyUnknown("illness"), null);
         check("#383 phase 2: the newest period with a factor", c.newest("stress") == 1 && c.newest("illness") == 0 && c.newest("meditation") == -1, null);
         check("#383 phase 2: a known cycle with nothing logged", c.tip(2, null, en).equals("Nothing logged that cycle."), c.tip(2, null, en));
-        check("#383 phase 2: the readout names the factors with their cycle days", c.tip(0, null, en).equals("Logged that cycle: Illness 1 day (day 1),\nTravel 1 day (day 28)"),
+        check("#383 phase 2: the readout names the factors with their cycle days", c.tip(0, null, en).equals("Logged that cycle:\nIllness 1 day (day 1),\nTravel 1 day (day 28)"),
                 c.tip(0, null, en));
-        check("#383 phase 2: the marked factor comes first", c.tip(0, "travel", en).startsWith("Logged that cycle: Travel 1 day (day 28),"), c.tip(0, "travel", en));
+        check("#383 phase 2: the marked factor comes first", c.tip(0, "travel", en).startsWith("Logged that cycle:\nTravel 1 day (day 28),"), c.tip(0, "travel", en));
         check("#383 phase 2: one cycle, the decisions' sentence", c.line("illness", en).equals("The period on " + cy.date(cy.cycles.get(3).next, en)
                 + " came on the expected day; you logged Illness that cycle (1 day)."), c.line("illness", en));
 
@@ -1050,7 +1056,7 @@ public class ForecastTest {
         c = cf(cy, f2);
         check("#383 phase 2: the inputs are not changed", f2.get(0).days.equals(copy) && f2.size() == 3, null);
         check("#383 phase 2: a cycle before any logging is unknown, not without", c.state(0, "illness") == UNKNOWN && c.state(0, "meditation") == UNKNOWN, null);
-        check("#383 phase 2: its readout", c.tip(0, null, en).equals("Before you started logging life factors (" + cy.date(C0.plusDays(120), en) + ")."), c.tip(0, null, en));
+        check("#383 phase 2: its readout", c.tip(0, null, en).replace("\n", " ").equals("Before you started logging life factors (" + cy.date(C0.plusDays(120), en) + ").") && narrow(c.tip(0, null, en)), c.tip(0, null, en));
         check("#383 phase 2: the cycle logging started in: with, and unknown for what was not logged there yet",
                 c.state(1, "illness") == WITH && c.state(1, "meditation") == UNKNOWN && c.state(2, "illness") == WITHOUT && c.state(2, "meditation") == WITH, null);
         check("#383 phase 2: an own tag counts from the day it was made", c.state(1, "own:7") == UNKNOWN && c.state(2, "own:7") == WITH, null);
@@ -1058,8 +1064,8 @@ public class ForecastTest {
         m.remove(C0.plusDays(122));
         tag(m, C0.plusDays(160), "illness");
         c = cf(cy, tags(m, made, "illness", "Illness", "meditation", "Meditation"));
-        check("#383 phase 2: the cycle logging started in, with nothing logged since", c.tip(1, null, en).equals("Nothing logged that cycle since you started on "
-                + cy.date(C0.plusDays(120), en) + "."), c.tip(1, null, en));
+        check("#383 phase 2: the cycle logging started in, with nothing logged since", c.tip(1, null, en).replace("\n", " ").equals("Nothing logged that cycle since you started on "
+                + cy.date(C0.plusDays(120), en) + ".") && narrow(c.tip(1, null, en)), c.tip(1, null, en));
 
         // 3. only scored cycles (a far one between), each method in use, the late days as the backtest's
         int[] far = {28, 29, 28, 57, 28, 29, 28, 30, 27};
@@ -1129,7 +1135,11 @@ public class ForecastTest {
         String[] lines = tipAll.split("\n");
         for (String l : lines) wrapped &= l.length() <= CycleFactors.WRAP;
         check("#383 phase 2: the readout wrapped, the marked factor first, then the list order", wrapped
-                && tipAll.equals("Logged that cycle: Illness 2 days (days 5 to 6),\nMeditation 31 days (days 1 to 31),\nStress 1 day (day 3)"), tipAll);
+                && tipAll.equals("Logged that cycle:\nIllness 2 days (days 5 to 6),\nMeditation 31 days (days 1 to 31),\nStress 1 day (day 3)"), tipAll);
+        check("#383 review: lines of at most 40 characters", CycleFactors.WRAP == 40, CycleFactors.WRAP);
+        boolean allNarrow = true;
+        for (int i = 0; i < ut.n; i++) allNarrow &= narrow(c.tip(i, "stress", en)) && narrow(c.tip(i, null, en));
+        check("#383 review: every readout's factor lines fit", allNarrow, null);
         String tip6 = c.tip(p6, null, en);
         check("#383 phase 2: scattered days give the count only", tip6.contains("Stress 2 days") && !tip6.contains("Stress 2 days ("), tip6);
         // the words: only describing, plain
@@ -1186,7 +1196,9 @@ public class ForecastTest {
      * moves no period start. Auckland to Honolulu (a calendar day happens twice, one date) and back (a calendar day skipped,
      * nothing logged on it), Travel logged on the days away, the period logged the day after landing; an own tag made at 23:50
      * in Honolulu (the next day in Auckland) and logged that Honolulu day. Worked out with the phone's zone on each side of
-     * the line: the same.
+     * the line: the same. The made day here is worked out by the test itself; the real conversion of an own tag's key in
+     * {@code data/LifeEffects.tagFactors} is tested in {@code EffectPipelineTest.ownTagZone} (review of #488), where a zone bug
+     * changes the result.
      */
     static void dateLine() {
         java.util.TimeZone was = java.util.TimeZone.getDefault();

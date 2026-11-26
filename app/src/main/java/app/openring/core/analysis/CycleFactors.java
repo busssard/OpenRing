@@ -30,8 +30,11 @@ import app.openring.core.analysis.cycleforecast.Backtest;
 public final class CycleFactors {
     /** How a cycle stands to one factor. */
     public static final int WITH = 0, WITHOUT = 1, UNKNOWN = 2;
-    /** The touch readout's lines are wrapped at about this many characters (the first line of the readout is about as long). */
-    public static final int WRAP = 50;
+    /**
+     * The touch readout's lines are wrapped at this many characters: 40 at 11.5 dp fit the chart on a 360 dp phone (the
+     * Design review said about 40; 50 was too wide, review of #488).
+     */
+    public static final int WRAP = 40;
 
     public static final String MARK = "Mark a life factor";
     public static final String CHANCE = "This shows what was logged next to each period, not what moved it. With few cycles a difference can be chance.";
@@ -155,8 +158,8 @@ public final class CycleFactors {
         Period p = periods.get(i);
         if (p.logged.isEmpty()) {
             if (p.cycle.next.isAfter(first) && !p.cycle.start.isBefore(first)) return NOTHING;
-            if (!p.cycle.next.isAfter(first)) return "Before you started logging life factors (" + cycles.date(first, loc) + ").";
-            return "Nothing logged that cycle since you started on " + cycles.date(first, loc) + ".";
+            if (!p.cycle.next.isAfter(first)) return words("Before you started logging life factors (" + cycles.date(first, loc) + ").");
+            return words("Nothing logged that cycle since you started on " + cycles.date(first, loc) + ".");
         }
         List<String> keys = new ArrayList<String>();
         if (chosen != null && p.logged.containsKey(chosen)) keys.add(chosen);
@@ -180,14 +183,34 @@ public final class CycleFactors {
         return s;
     }
 
-    /** {@code prefix} and the items joined with commas, a new line before an item that would pass {@link #WRAP}. */
+    /** {@code s} broken at its spaces so no line passes {@link #WRAP} (a word longer than that stays whole on its line). */
+    static String words(String s) {
+        StringBuilder all = new StringBuilder(), line = new StringBuilder();
+        for (String w : s.split(" ")) {
+            if (line.length() > 0 && line.length() + 1 + w.length() > WRAP) {
+                all.append(line).append('\n');
+                line.setLength(0);
+            }
+            if (line.length() > 0) line.append(' ');
+            line.append(w);
+        }
+        return all.append(line).toString();
+    }
+
+    /**
+     * {@code prefix} and the items joined with commas, a new line before an item that would pass {@link #WRAP}; the prefix
+     * stands on its own line when the first item does not fit after it (review of #488).
+     */
     static String wrap(String prefix, List<String> items) {
         StringBuilder all = new StringBuilder();
         StringBuilder line = new StringBuilder(prefix);
         boolean firstOnLine = true;
         for (int i = 0; i < items.size(); i++) {
             String piece = items.get(i) + (i + 1 < items.size() ? "," : "");
-            if (!firstOnLine && line.length() + 1 + piece.length() > WRAP) {
+            if (i == 0 && line.length() > 0 && line.length() + piece.length() > WRAP) {
+                all.append(line.toString().trim()).append('\n');
+                line = new StringBuilder(piece);
+            } else if (!firstOnLine && line.length() + 1 + piece.length() > WRAP) {
                 all.append(line).append('\n');
                 line = new StringBuilder(piece);
             } else {

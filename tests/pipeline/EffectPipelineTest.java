@@ -47,6 +47,7 @@ public class EffectPipelineTest {
         demo();
         threeYears();
         cacheKey();
+        ownTagZone();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -227,5 +228,62 @@ public class EffectPipelineTest {
                 && cf.line(LifeTags.ILLNESS, Locale.US).endsWith("; you logged Illness that cycle (" + Demo.ILL_DAYS + " days)."), cf.line(LifeTags.ILLNESS, Locale.US));
         check("#383 demo: reading changes nothing stored", stored(db).equals(before), null);
         check("#383 demo: worked out in under 100 ms", ms < 100, ms);
+    }
+
+    /**
+     * Review of #488: the date line test in ForecastTest worked out the made day itself, so it could not fail on a zone bug. Here
+     * the real conversion, {@link LifeEffects#tagFactors}, turns an own tag's key (the moment it was made, in millis) into its
+     * made day: made at 23:50 in Honolulu on the first day of a cycle (09:50 the next day in UTC, the next evening in Auckland),
+     * logged only in the cycle after. In Honolulu that cycle counts as without it and the cycle before is unknown; a conversion in
+     * any other zone would make the day after, and the cycle unknown. The phone's own zone (the JVM default) must not matter.
+     */
+    static void ownTagZone() {
+        int[] h = {29, 28, 30, 29, 28, 29, 30};
+        java.util.TreeMap<LocalDate, Integer> log = new java.util.TreeMap<LocalDate, Integer>();
+        LocalDate s = LocalDate.of(2023, 1, 9);
+        for (int i = 0; i <= h.length; i++) {
+            for (int k = 0; k < 5; k++) log.put(s.plusDays(k), k < 2 ? Cycles.HEAVY : Cycles.MEDIUM);
+            if (i < h.length) s = s.plusDays(h[i]);
+        }
+        Cycles cy = Cycles.of(log, null, s.plusDays(6));
+        app.openring.core.analysis.cycleforecast.Backtest.Score use = cy.backtest().of(cy.methodId);
+        CycleFactors none = CycleFactors.of(cy, use, new java.util.ArrayList<FactorEffect.Factor>());
+        int j = none.periods.size() - 2;
+        boolean shape = j >= 1 && none.periods.get(j - 1).cycle.next.equals(none.periods.get(j).cycle.start);
+        check("#383 review: two scored cycles in a row before the newest", shape, none.periods.size());
+        if (!shape) return;
+        LocalDate start = none.periods.get(j).cycle.start;
+        ZoneId hnl = ZoneId.of("Pacific/Honolulu");
+        long millis = start.atTime(23, 50).atZone(hnl).toInstant().toEpochMilli();
+        String own = LifeTags.ownKey(millis);
+        LifeTags.Known known = new LifeTags.Known(java.util.Arrays.asList(new LifeTags.Choice(own, "Market visit", null, null, false)));
+        java.util.Map<LocalDate, List<String>> days = new java.util.TreeMap<LocalDate, List<String>>();
+        days.put(none.periods.get(j + 1).cycle.start.plusDays(2), java.util.Arrays.asList(own));
+        // logging started long before (a factor counts from the first day anything was logged, an own tag from its made day)
+        days.put(none.periods.get(0).cycle.start, java.util.Arrays.asList(LifeTags.ILLNESS));
+        java.util.TimeZone was = java.util.TimeZone.getDefault();
+        boolean same = true;
+        String first = null;
+        try {
+            for (String phone : new String[] {"UTC", "Pacific/Auckland", "Pacific/Honolulu", "Europe/Zurich"}) {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(phone));
+                CycleFactors cf = CycleFactors.of(cy, use, LifeEffects.tagFactors(known, days, hnl));
+                String got = cf.state(j - 1, own) + " " + cf.state(j, own) + " " + cf.state(j + 1, own);
+                if (first == null) first = got;
+                same &= got.equals(first);
+            }
+        } finally {
+            java.util.TimeZone.setDefault(was);
+        }
+        String want = CycleFactors.UNKNOWN + " " + CycleFactors.WITHOUT + " " + CycleFactors.WITH;
+        check("#383 review: made in Honolulu on a cycle's first day: the cycle before unknown, that cycle without, the next with", want.equals(first), first);
+        check("#383 review: the phone's zone does not change it", same, null);
+        CycleFactors auckland = CycleFactors.of(cy, use, LifeEffects.tagFactors(known, days, ZoneId.of("Pacific/Auckland")));
+        check("#383 review: the zone given is the one used (in Auckland it was made the next day, so that cycle is unknown)",
+                auckland.state(j, own) == CycleFactors.UNKNOWN && auckland.state(j + 1, own) == CycleFactors.WITH, auckland.state(j, own));
+        LifeTags.Known gone = new LifeTags.Known(java.util.Arrays.asList(new LifeTags.Choice(own, "Market visit", null, null, true)));
+        boolean left = true;
+        for (FactorEffect.Factor f : LifeEffects.tagFactors(gone, days, hnl)) left &= !f.key.equals(own);
+        check("#383 review: a removed own tag gives no factor", left, null);
     }
 }

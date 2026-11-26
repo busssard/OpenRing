@@ -248,9 +248,11 @@ factors and your nights: one factor per name, removed own tags left out, each co
 from the day it was made). A factor counts for a period when it was logged on any day of the cycle that period ended, from its period's
 first day to the day before the next start, by calendar day: periods and tags are both stored as dates, so no clock or time zone moves a
 factor into another cycle (Travel and Holiday are what was logged, never read from zone changes; `ForecastTest` works a trip across the
-date line out in five zones). A cycle is with the factor, without it (the whole cycle after the factor could be logged) or unknown
+date line out in five zones; `EffectPipelineTest.ownTagZone` turns an own tag's key into its made day through `tagFactors` itself, where a
+zone bug changes the result). A cycle is with the factor, without it (the whole cycle after the factor could be logged) or unknown
 (before). `DayData.load` works it out in the background (`d.periodFactors`, also without a ring). On "How close the estimates were" every
-dot's readout names the factors of its cycle with their days; the chips "Mark a life factor" ring the periods with one factor in
+dot's readout names the factors of its cycle with their days (lines of at most 40 characters, `CycleFactors.WRAP`, which fit a 360 dp
+phone; the chart grows by the longest readout's extra lines and the dots start below it, `Dots.lines`, so the readout never covers them); the chips "Mark a life factor" ring the periods with one factor in
 `Ui.LIFE` and fade the unknown ones, a tap touches the newest ringed period, and one line only describes (one cycle: "The period on 4 Jan
 came 3 days later than expected; you logged Illness that cycle (5 days)."; from two: the averages with and without; in every cycle: none
 to set against), always followed by "not what moved it". The picked chip is kept in memory only. The estimate does not use any of it.
