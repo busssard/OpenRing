@@ -57,6 +57,64 @@ public final class SyncProgress {
         return b.toString();
     }
 
+    /** The title of the sync notification (sync/SyncService). */
+    public static final String NOTIFICATION_TITLE = "Syncing your ring";
+
+    /**
+     * The sync notification's text under {@link #NOTIFICATION_TITLE}: a {@link #ringLine} without the words the title
+     * already says, "About 40 % (1234 events so far)", "1234 events so far", or "Copying what the ring recorded" before the
+     * first batch; any other line ("Connecting", a failure) as it is. The notification itself shows the sync runs in the
+     * background, so "in the background" is left out too.
+     */
+    public static String notificationText(String status) {
+        if (status == null) return "";
+        if (!status.startsWith(NOTIFICATION_TITLE)) return status;
+        String rest = status.substring(NOTIFICATION_TITLE.length());
+        if (rest.startsWith(" in the background")) rest = rest.substring(" in the background".length());
+        if (rest.startsWith(",")) rest = rest.substring(1);
+        rest = rest.trim();
+        if (rest.startsWith("(") && rest.endsWith(")") && rest.indexOf('(', 1) < 0) rest = rest.substring(1, rest.length() - 1).trim();
+        if (rest.isEmpty()) return "Copying what the ring recorded";
+        return Character.toUpperCase(rest.charAt(0)) + rest.substring(1);
+    }
+
+    // ------------------------------------------------------------------------------ guarded calls of the display
+
+    /** A change to what the screens show; true tells them now. */
+    public interface Show {
+        boolean apply();
+    }
+
+    /**
+     * Applies {@code s} and runs {@code tell} when it says so. Any RuntimeException of either is swallowed: the display can
+     * never end, change or hold up a sync (WatchSync calls every change of {@code WatchSync.SHOWN} through this).
+     */
+    public static void show(Show s, Runnable tell) {
+        try {
+            if (s.apply()) tell.run();
+        } catch (RuntimeException e) {
+            // display only: the sync goes on as it would without it
+        }
+    }
+
+    /**
+     * A session's step reports for a sync: first handed on to {@code also} (may be null) exactly as before, unguarded, then
+     * to {@code display}, whose RuntimeException is swallowed. So a broken display gives the session the same steps.
+     */
+    public static Session.Progress guard(final Session.Progress also, final Session.Progress display) {
+        return new Session.Progress() {
+            @Override
+            public void step(String key, int state) {
+                if (also != null) also.step(key, state);
+                try {
+                    display.step(key, state);
+                } catch (RuntimeException e) {
+                    // display only
+                }
+            }
+        };
+    }
+
     // ------------------------------------------------------------------------------------------------ the watch
 
     /** The plain name of a watch session step ({@link Session} and {@link WatchSetup} keys); the key itself for any other. */
@@ -96,7 +154,7 @@ public final class SyncProgress {
      * returns true when the screen should be told now ({@link #SHOW_MS}).
      */
     public static final class Watch {
-        private boolean running, background, saving, planned;
+        private boolean running, background, saving, planned, connecting;
         /** Step now, 1 based (0 before the hello), and how many there are: the hello plus the session's own steps. */
         private int index, total;
         private String key;
@@ -106,15 +164,25 @@ public final class SyncProgress {
         private long lastShown = Long.MIN_VALUE / 2;
         private double shownFraction = -1;
 
-        /** A sync begins (before it connects): "Syncing your watch: connecting". */
+        /**
+         * A sync begins: "Syncing your watch: getting ready" while it decodes what earlier syncs stored and waits for the
+         * ring to be free (review of 2fc3d99: that can take long, and nothing is connecting yet).
+         */
         public synchronized boolean start(boolean background) {
             running = true;
             this.background = background;
-            saving = planned = false;
+            saving = planned = connecting = false;
             index = total = 0;
             key = null;
             newest = 0;
             shownFraction = -1;
+            return true;
+        }
+
+        /** The sync goes to the watch now (it holds the ring lock): "Syncing your watch: connecting". */
+        public synchronized boolean connecting() {
+            if (!running) return false;
+            connecting = true;
             return true;
         }
 
@@ -192,7 +260,7 @@ public final class SyncProgress {
             if (background) b.append(" in the background");
             b.append(": ");
             if (saving) return b.append("saving what came").toString();
-            if (index <= 0 || key == null) return b.append("connecting").toString();
+            if (index <= 0 || key == null) return b.append(connecting ? "connecting" : "getting ready").toString();
             if (planned) b.append("step ").append(index).append(" of ").append(total).append(", ");
             b.append(stepName(key));
             double w = within();

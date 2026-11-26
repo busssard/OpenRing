@@ -1134,14 +1134,24 @@ public final class MainActivity extends Activity implements RingManager.Listener
         }
     };
 
+    /** The status line's tap during a watch sync: what its step and percent mean (review of 2fc3d99), short as a toast. */
+    private final View.OnClickListener explainWatch = new View.OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            android.widget.Toast.makeText(MainActivity.this, app.openring.core.SyncProgress.WATCH_EXPLAIN, android.widget.Toast.LENGTH_LONG).show();
+        }
+    };
+
     void updateStatus() {
         RingManager m = RingManager.get(this);
-        // only the line about an unreadable key is a button (TalkBack announces it as one, review of #281)
+        // the line about an unreadable key is a button (TalkBack announces it as one, review of #281), a watch sync's line too (below)
         // a watch sync, by hand or the background job's, with its step and percent (issue #478); a ring task's line wins
         String watch = app.openring.ble.WatchSync.SHOWN.line();
         boolean tap = !m.busy() && watch == null && keyState == app.openring.core.KeyState.UNREADABLE;
-        statusStrip.setOnClickListener(tap ? enterKey : null);
-        statusStrip.setClickable(tap);
+        // a watch sync's line explains its numbers on a tap, as Settings does under its line
+        boolean explain = !m.busy() && watch != null;
+        statusStrip.setOnClickListener(tap ? enterKey : explain ? explainWatch : null);
+        statusStrip.setClickable(tap || explain);
         boolean busy = m.busy();
         String err = Prefs.of(this).lastSyncError();
         if (busy || watch != null) {

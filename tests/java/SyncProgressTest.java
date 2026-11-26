@@ -44,6 +44,7 @@ public class SyncProgressTest {
         throttle();
         never();
         sameSession();
+        guards();
         sources();
         System.out.println("sync progress: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -79,6 +80,24 @@ public class SyncProgressTest {
         eq("percent: about", SyncProgress.about(0.4), "about 40 %");
         eq("percent: never over 100", SyncProgress.about(3), "about 100 %");
         eq("percent: never under 0", SyncProgress.about(-1), "about 0 %");
+        // the notification's text: its title says "Syncing your ring", the text does not repeat it (review of 2fc3d99)
+        eq("notification: the title", SyncProgress.NOTIFICATION_TITLE, "Syncing your ring");
+        eq("notification: with a percent", SyncProgress.notificationText(SyncProgress.ringLine(1234, 0.4, false)), "About 40 % (1234 events so far)");
+        eq("notification: the background job's", SyncProgress.notificationText(SyncProgress.ringLine(1234, 0.4, true)), "About 40 % (1234 events so far)");
+        eq("notification: no percent", SyncProgress.notificationText(SyncProgress.ringLine(12, -1, false)), "12 events so far");
+        eq("notification: before the first batch", SyncProgress.notificationText(SyncProgress.ringLine(0, -1, false)), "Copying what the ring recorded");
+        eq("notification: before the first batch, background", SyncProgress.notificationText(SyncProgress.ringLine(0, -1, true)), "Copying what the ring recorded");
+        eq("notification: other lines as they are", SyncProgress.notificationText("Connecting to your ring"), "Connecting to your ring");
+        eq("notification: none", SyncProgress.notificationText(null), "");
+        for (int ev : new int[] {0, 1, 1234}) {
+            for (double f : new double[] {-1, 0, 0.4, 0.999, 1}) {
+                for (boolean bg : new boolean[] {false, true}) {
+                    String t = SyncProgress.notificationText(SyncProgress.ringLine(ev, f, bg));
+                    check("notification: no repeat of the title in " + t, !t.toLowerCase(Locale.ROOT).contains("syncing") && !t.isEmpty()
+                            && (Character.isUpperCase(t.charAt(0)) || Character.isDigit(t.charAt(0))), t);
+                }
+            }
+        }
     }
 
     static void names() {
@@ -100,7 +119,8 @@ public class SyncProgressTest {
         for (Session.Step s : WatchSetup.closeCalibrationFirst(WatchSetup.sync(plan, profile(true), alarm(true), 0), plan)) {
             check("names: the sync's step " + s.key + " has its name", named.contains(s.key));
         }
-        String[] texts = {SyncProgress.WATCH_EXPLAIN, SyncProgress.ringLine(5, 0.5, true)};
+        String[] texts = {SyncProgress.WATCH_EXPLAIN, SyncProgress.ringLine(5, 0.5, true), SyncProgress.notificationText(SyncProgress.ringLine(0, -1, false)),
+            SyncProgress.notificationText(SyncProgress.ringLine(5, 0.5, true))};
         for (String t : texts) check("texts: no dash as punctuation: " + t, !t.contains(" - ") && !t.contains("–") && !t.contains("—"));
     }
 
@@ -135,6 +155,8 @@ public class SyncProgressTest {
         eq("watch: nothing before a sync", w.line(), null);
         eq("watch: no bar before a sync", w.fraction(), -1.0);
         check("watch: a start tells the screen", w.start(false));
+        eq("watch: getting ready while stored messages are decoded and the ring is busy", w.line(), "Syncing your watch: getting ready");
+        check("watch: connecting tells the screen", w.connecting());
         eq("watch: connecting", w.line(), "Syncing your watch: connecting");
         eq("watch: no bar while the steps are not known", w.fraction(), -1.0);
         Session.Plan plan = WatchTest.plan();
@@ -166,9 +188,12 @@ public class SyncProgressTest {
         eq("watch: no bar after the end", w.fraction(), -1.0);
         check("watch: steps after the end are not shown", !w.step(WatchSetup.TIME, Session.STARTED, 9000) && w.line() == null);
         check("watch: saving after the end is not shown", !w.saving() && w.line() == null);
+        check("watch: connecting after the end is not shown", !w.connecting() && w.line() == null);
 
         // a new sync starts afresh; the background job's says so
         w.start(true);
+        eq("watch: the background job's, getting ready", w.line(), "Syncing your watch in the background: getting ready");
+        w.connecting();
         eq("watch: the background job's", w.line(), "Syncing your watch in the background: connecting");
         w.plan(WatchSetup.sync(plan, profile(false), alarm(true), 0).size(), 10000, 1000, 1000, 1000);
         w.step(Session.HELLO, Session.STARTED, 0);
@@ -382,6 +407,82 @@ public class SyncProgressTest {
         }
     }
 
+    /**
+     * The made up session with the plan's own progress {@code heard}; with {@code broken} also through the guards WatchSync
+     * uses ({@link SyncProgress#guard}, {@link SyncProgress#show}) to a display that throws on every call.
+     */
+    static Run guarded(final List<String> heard, boolean broken) throws Exception {
+        WatchTest.FakeWatch fw = new WatchTest.FakeWatch();
+        Session.Plan plan = WatchTest.plan();
+        plan.steps = WatchSetup.sync(plan, profile(true), alarm(true), 0);
+        final WatchTest.Store store = new WatchTest.Store();
+        Session.Progress also = (key, state) -> heard.add(key + " " + state);
+        Session.Sink sink = store;
+        if (broken) {
+            plan.progress = SyncProgress.guard(also, (key, state) -> {
+                throw new IllegalStateException("display " + key);
+            });
+            sink = new Session.Sink() {
+                @Override
+                public void received(byte[] msg) throws IOException {
+                    store.received(msg);
+                    SyncProgress.show(() -> {
+                        throw new ArrayIndexOutOfBoundsException(msg.length);
+                    }, () -> heard.add("told"));
+                    SyncProgress.show(() -> true, () -> {
+                        throw new IllegalStateException("the screens are gone");
+                    });
+                }
+
+                @Override
+                public void damaged(byte[] bytes, int type) throws IOException {
+                    store.damaged(bytes, type);
+                }
+            };
+        } else {
+            plan.progress = also;
+        }
+        WatchTest.Lines log = new WatchTest.Lines();
+        Run out = new Run();
+        out.r = Session.run(fw, plan, new WatchTest.Gate(), sink, log);
+        out.sent = fw.sent;
+        out.stored = store.got;
+        out.log = log.lines;
+        return out;
+    }
+
+    /** A display that throws RuntimeException on every call, behind the guards, changes nothing of the session (review of 2fc3d99). */
+    static void guards() throws Exception {
+        List<String> plainSteps = new ArrayList<String>(), brokenSteps = new ArrayList<String>();
+        Run plain = guarded(plainSteps, false), broken = guarded(brokenSteps, true);
+        check("guard: the made up watch synced", plain.r.ended == null && plain.r.heartDone && plain.sent.size() > 10, plain.r.ended);
+        check("guard: the same bytes sent in the same order", same(plain.sent, broken.sent));
+        check("guard: the same messages stored", same(plain.stored, broken.stored));
+        eq("guard: the same end", broken.r.ended, plain.r.ended);
+        eq("guard: the same steps done", new ArrayList<String>(broken.r.done), new ArrayList<String>(plain.r.done));
+        eq("guard: the same counts", broken.r.received + "/" + broken.r.bytes + "/" + broken.r.doneSent, plain.r.received + "/" + plain.r.bytes + "/" + plain.r.doneSent);
+        eq("guard: the same log", broken.log, plain.log);
+        eq("guard: the plan's own progress hears every step as before, never a tell of a failed display", brokenSteps, plainSteps);
+        check("guard: the steps were heard", plainSteps.size() > 10, plainSteps.size());
+        // the guards on their own
+        final int[] told = {0};
+        SyncProgress.show(() -> true, () -> told[0]++);
+        SyncProgress.show(() -> false, () -> told[0]++);
+        eq("guard: show tells only when the change says so", told[0], 1);
+        boolean threw = false;
+        try {
+            SyncProgress.guard((k, s) -> {
+                throw new IllegalStateException("the plan's own");
+            }, (k, s) -> told[0]++).step("x", Session.STARTED);
+        } catch (IllegalStateException e) {
+            threw = true;
+        }
+        check("guard: the plan's own progress is not guarded, as before (its error ends the step as it did)", threw);
+        eq("guard: then the display is not called", told[0], 1);
+        SyncProgress.guard(null, (k, s) -> told[0]++).step("x", Session.STARTED);
+        eq("guard: no plan progress, the display alone", told[0], 2);
+    }
+
     static String read(String path) throws IOException {
         return new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
     }
@@ -476,22 +577,50 @@ public class SyncProgressTest {
         int calls = 0;
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim();
-            if (!t.matches(".*SHOWN\\.(start|step|message|plan|saving|end)\\(.*")) continue;
+            if (!t.matches(".*SHOWN\\.(start|connecting|step|message|plan|saving|end)\\(.*")) continue;
             calls++;
             String before = lines[i - 1].trim(), two = lines[i - 2].trim();
             check("source: WatchSync line " + (i + 1) + " is inside a guarded apply()", before.equals("public boolean apply() {") && two.equals("@Override"));
         }
-        eq("source: six places tell the progress", calls, 6);
-        check("source: shown() swallows any error", ws.contains("if (s.apply()) ring.showChanged();\n        } catch (RuntimeException e) {"));
+        eq("source: seven places tell the progress", calls, 7);
+        check("source: shown() goes through the guard in core", ws.contains("private static void shown(final RingManager ring, Show s) {\n        SyncProgress.show(s, new Runnable() {")
+                && ws.contains("import app.openring.core.SyncProgress.Show;") && !ws.contains("interface Show"));
+        String sp = read(base + "core/SyncProgress.java");
+        check("source: the guard swallows any error", sp.contains("try {\n            if (s.apply()) tell.run();\n        } catch (RuntimeException e) {"));
+        // connecting is shown once the ring is free, before the sync's own steps, and changes nothing of their order
+        int free = ws.indexOf("boolean ran = ring.whileRingFree(new Runnable() {"), conn = ws.indexOf("return SHOWN.connecting();"),
+                lockedCall = ws.indexOf("out[0] = locked(ctx, a, address, ring, mode, progress, more, stop);");
+        check("source: connecting inside the ring's turn, before the sync", free > 0 && conn > free && lockedCall > conn);
+        check("source: the start comes after the watch lock and before the stored messages are decoded",
+                ws.indexOf("if (!RingGate.RING.watch.tryLock()) return ALREADY;") < ws.indexOf("return SHOWN.start(stop != null);")
+                        && ws.indexOf("return SHOWN.start(stop != null);") < ws.indexOf("String early = decodeStored(ctx, ring, mode);"));
+        // the end before the unlock (a next sync's start is never ended by this one), one more tell after it (review of 2fc3d99)
+        List<String> fin = block(ws, "return SHOWN.end();", "RingGate.RING.watch.unlock();");
+        check("source: the end comes right before the unlock", fin != null && fin.size() == 4, fin);
+        List<String> after = block(ws, "RingGate.RING.watch.unlock();", "});");
+        eq("source: after the unlock only one more tell", after, Arrays.asList(
+                "RingGate.RING.watch.unlock();",
+                "// once more after the unlock: the update end() posted can run before it, and Settings keeps its line until",
+                "// running() is false (review of 2fc3d99); display only, after everything the sync does",
+                "if (mode == SYNC) shown(ring, new Show() {",
+                "@Override",
+                "public boolean apply() {",
+                "return true;",
+                "}",
+                "});"));
         int addRaw = ws.indexOf("WatchStore.addRaw(db, session, seq[0]++, address, msg, captured);");
         int shownMsg = ws.indexOf("return SHOWN.message(msg, SystemClock.elapsedRealtime());");
         check("source: a message is stored before it is shown", addRaw > 0 && shownMsg > addRaw);
         check("source: the setup, alarm and hands keep their progress", ws.contains("plan.progress = mode == SYNC ? shownSteps(ring, progress) : mode != HANDS ? progress : new Session.Progress() {"));
-        check("source: shownSteps hands on first, as the plan's progress did", ws.contains("if (also != null) also.step(key, state);\n                shown(ring, new Show() {"));
+        check("source: shownSteps hands on first through the guard, as the plan's progress did", ws.contains("return SyncProgress.guard(also, new Session.Progress() {")
+                && sp.contains("if (also != null) also.step(key, state);\n                try {\n                    display.step(key, state);"));
         check("source: the watch's damaged bytes are not shown", block(ws, "public void damaged(byte[] bytes, int type) throws IOException {", "}").toString().indexOf("SHOWN") < 0);
         // the progress never decides anything: its answers are only used to tell the screens
-        check("source: no answer of the progress is used but to tell the screens", count(ws, "SHOWN.") == count(ws, "SHOWN.start(") + count(ws, "SHOWN.step(")
+        check("source: no answer of the progress is used but to tell the screens", count(ws, "SHOWN.") == count(ws, "SHOWN.start(") + count(ws, "SHOWN.connecting(") + count(ws, "SHOWN.step(")
                 + count(ws, "SHOWN.message(") + count(ws, "SHOWN.plan(") + count(ws, "SHOWN.saving(") + count(ws, "SHOWN.end("));
-        check("source: core/SyncProgress knows no Android", !read(base + "core/SyncProgress.java").contains("import android"));
+        check("source: core/SyncProgress knows no Android", !sp.contains("import android"));
+        String svc = read(base + "sync/SyncService.java");
+        check("source: the notification's title and its text without the title's words", svc.contains(".setContentTitle(app.openring.core.SyncProgress.NOTIFICATION_TITLE)")
+                && svc.contains("build(app.openring.core.SyncProgress.notificationText(RingManager.get(this).status()))"));
     }
 }

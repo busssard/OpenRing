@@ -226,6 +226,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
         // that ended shows how it went
         String l = app.openring.ble.WatchSync.SHOWN.line();
         if (watchLine != null) {
+            if (watchExplain != null) watchExplain.setVisibility(l != null ? View.VISIBLE : View.GONE);
+            // a sync that ended: WatchSync tells the screens once more after its unlock, so running() is false by then
             if (l != null) watchLine.setText(l);
             else if (!watchSyncing && !app.openring.ble.WatchSync.running()) fillWatchCard();
         } else if (l != null && watchCard != null) {
@@ -1098,6 +1100,8 @@ public final class SettingsActivity extends Activity implements RingManager.List
     private static volatile boolean watchSyncing;
     /** The watch card's line while a watch sync runs, null otherwise (issue #478). */
     private TextView watchLine;
+    /** The explanation of the step and percent under {@link #watchLine}, shown only while a sync shows them (not for the setup, alarm or hands). */
+    private TextView watchExplain;
 
     void fillWatchCard() {
         final LinearLayout card = watchCard;
@@ -1170,12 +1174,16 @@ public final class SettingsActivity extends Activity implements RingManager.List
             }
         }, "watch battery").start();
         watchLine = null;
+        watchExplain = null;
         if (watchSyncing || app.openring.ble.WatchSync.running()) {
             // its step and percent, kept up to date by onRingStatus (issue #478)
             String l = app.openring.ble.WatchSync.SHOWN.line();
             watchLine = Ui.text(this, l != null ? l : "Syncing the watch, this takes up to two minutes.", 13, Ui.TEXT_2, Ui.REGULAR);
             card.addView(watchLine);
-            card.addView(Ui.text(this, app.openring.core.SyncProgress.WATCH_EXPLAIN, 12, Ui.TEXT_3, Ui.REGULAR));
+            // it explains the step and percent, so only while they show (the setup, alarm and hands have none)
+            watchExplain = Ui.text(this, app.openring.core.SyncProgress.WATCH_EXPLAIN, 12, Ui.TEXT_3, Ui.REGULAR);
+            watchExplain.setVisibility(l != null ? View.VISIBLE : View.GONE);
+            card.addView(watchExplain);
         } else if (p.watchError() != null) {
             card.addView(Ui.text(this, p.watchError(), 13, Ui.WARN, Ui.REGULAR));
         }

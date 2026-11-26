@@ -42,7 +42,7 @@ public final class SyncService extends Service implements RingManager.Listener {
         PendingIntent pi = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_ring)
-                .setContentTitle("Syncing your ring")
+                .setContentTitle(app.openring.core.SyncProgress.NOTIFICATION_TITLE)
                 .setContentText(text)
                 // the plain sentences after a failed sync are longer than one line (issue #91)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
@@ -135,7 +135,8 @@ public final class SyncService extends Service implements RingManager.Listener {
     public void onRingStatus() {
         if (!running) return;
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.notify(ID, build(RingManager.get(this).status()));
+        // the ring's line without the words of the title ("About 40 % (1234 events so far)", review of 2fc3d99)
+        nm.notify(ID, build(app.openring.core.SyncProgress.notificationText(RingManager.get(this).status())));
     }
 
     @Override

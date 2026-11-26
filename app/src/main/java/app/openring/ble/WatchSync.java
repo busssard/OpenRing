@@ -21,6 +21,8 @@ import java.util.concurrent.TimeUnit;
 
 import app.openring.core.Protocol;
 import app.openring.core.RingGate;
+import app.openring.core.SyncProgress;
+import app.openring.core.SyncProgress.Show;
 import app.openring.core.withings.Frame;
 import app.openring.core.withings.Records;
 import app.openring.core.withings.Session;
@@ -74,28 +76,26 @@ public final class WatchSync {
      * Display only: it hears what the session already reports, every call to it is guarded ({@link #shown}), and nothing it
      * holds is ever sent to the watch.
      */
-    public static final app.openring.core.SyncProgress.Watch SHOWN = new app.openring.core.SyncProgress.Watch();
+    public static final SyncProgress.Watch SHOWN = new SyncProgress.Watch();
 
-    /** What changed the shown progress; true tells the screens now. */
-    private interface Show {
-        boolean apply();
+    /**
+     * Applies {@code s} to {@link #SHOWN} and tells the screens when due, through {@link SyncProgress#show}, which swallows
+     * any error, so a sync never notices it (the guard lives in core so the JVM tests run it, review of 2fc3d99).
+     */
+    private static void shown(final RingManager ring, Show s) {
+        SyncProgress.show(s, new Runnable() {
+            @Override
+            public void run() {
+                ring.showChanged();
+            }
+        });
     }
 
-    /** Applies {@code s} to {@link #SHOWN} and tells the screens when due; any error is swallowed, so a sync never notices it. */
-    private static void shown(RingManager ring, Show s) {
-        try {
-            if (s.apply()) ring.showChanged();
-        } catch (RuntimeException e) {
-            // display only: the sync goes on as it would without it
-        }
-    }
-
-    /** The session's step reports for a sync: handed on to {@code also} (may be null), then shown, each guarded on its own. */
+    /** The session's step reports for a sync: handed on to {@code also} (may be null) as before, then shown, guarded ({@link SyncProgress#guard}). */
     private static Session.Progress shownSteps(final RingManager ring, final Session.Progress also) {
-        return new Session.Progress() {
+        return SyncProgress.guard(also, new Session.Progress() {
             @Override
             public void step(final String key, final int state) {
-                if (also != null) also.step(key, state);
                 shown(ring, new Show() {
                     @Override
                     public boolean apply() {
@@ -103,7 +103,7 @@ public final class WatchSync {
                     }
                 });
             }
-        };
+        });
     }
 
     /**
@@ -191,6 +191,13 @@ public final class WatchSync {
             boolean ran = ring.whileRingFree(new Runnable() {
                 @Override
                 public void run() {
+                    // the ring is free and the stored messages are decoded: the line says "connecting" from here (display only)
+                    if (mode == SYNC) shown(ring, new Show() {
+                        @Override
+                        public boolean apply() {
+                            return SHOWN.connecting();
+                        }
+                    });
                     try {
                         out[0] = locked(ctx, a, address, ring, mode, progress, more, stop);
                     } catch (RuntimeException e) {
@@ -219,6 +226,14 @@ public final class WatchSync {
                 }
             });
             RingGate.RING.watch.unlock();
+            // once more after the unlock: the update end() posted can run before it, and Settings keeps its line until
+            // running() is false (review of 2fc3d99); display only, after everything the sync does
+            if (mode == SYNC) shown(ring, new Show() {
+                @Override
+                public boolean apply() {
+                    return true;
+                }
+            });
         }
     }
 
