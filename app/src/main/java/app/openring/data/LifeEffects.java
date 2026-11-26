@@ -103,6 +103,17 @@ public final class LifeEffects {
      * out, their days are kept but they are not logged any more); then the period tracker's two when {@code cycles} has a period.
      */
     static List<FactorEffect.Factor> factors(LifeTags.Known known, Map<LocalDate, List<String>> lifeDays, Cycles cycles, LocalDate today, ZoneId zone) {
+        List<FactorEffect.Factor> out = tagFactors(known, lifeDays, zone);
+        out.addAll(FactorEffect.cycle(cycles, today));
+        return out;
+    }
+
+    /**
+     * The logged tags as factors (every tag in force with a logged day, fixed tags first in the list order, then own tags; removed
+     * ones left out), each counting from the first day anything was logged, an own tag from the day it was made (in {@code zone};
+     * a day logged before that still counts). Also for the period tracker's "How close the estimates were" (issue #383, phase 2).
+     */
+    public static List<FactorEffect.Factor> tagFactors(LifeTags.Known known, Map<LocalDate, List<String>> lifeDays, ZoneId zone) {
         Map<String, String> names = new LinkedHashMap<String, String>();
         Map<String, LocalDate> made = new java.util.HashMap<String, LocalDate>();
         if (known != null) {
@@ -118,8 +129,6 @@ public final class LifeEffects {
                 }
             }
         }
-        List<FactorEffect.Factor> out = FactorEffect.tags(lifeDays == null ? new TreeMap<LocalDate, List<String>>() : lifeDays, names, made);
-        out.addAll(FactorEffect.cycle(cycles, today));
-        return out;
+        return FactorEffect.tags(lifeDays == null ? new TreeMap<LocalDate, List<String>>() : lifeDays, names, made);
     }
 }

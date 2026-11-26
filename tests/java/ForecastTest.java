@@ -1,5 +1,7 @@
 import app.openring.core.DripCsv;
+import app.openring.core.analysis.CycleFactors;
 import app.openring.core.analysis.Cycles;
+import app.openring.core.analysis.FactorEffect;
 import app.openring.core.analysis.RiseBacktest;
 import app.openring.core.analysis.cycleforecast.Backtest;
 import app.openring.core.analysis.cycleforecast.Forecast;
@@ -94,6 +96,7 @@ public class ForecastTest {
         texts();
         review();
         fairPick();
+        cycleFactors();
         System.out.println("forecast: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -637,7 +640,8 @@ public class ForecastTest {
         check("#383 Settings before 6 periods can be checked, the period it starts from built from the constants (3 + 6 + 1)", app.openring.ui.Explain.periodBestNow(few)
                 .equals("Best for you uses Open Ring until 6 of your periods can be checked (from the 10th period on; now 0).") && app.openring.ui.Explain.periodBestFrom() == 10,
                 app.openring.ui.Explain.periodBestNow(few));
-        check("#383 How it works lists every method once", app.openring.ui.Explain.periodAccuracyHow().size() == Methods.ALL.length + 5);
+        check("#383 How it works lists every method once, and the life factors (phase 2)", app.openring.ui.Explain.periodAccuracyHow().size() == Methods.ALL.length + 6
+                && app.openring.ui.Explain.periodAccuracyHow().contains(CycleFactors.HOW));
         check("#383 Settings' names", Methods.name(Methods.BEST).equals("Best for you") && Methods.name(Methods.DRIP).equals("drip style")
                 && Methods.name(Methods.BAYES).equals("Learns from every cycle"));
     }
@@ -969,5 +973,282 @@ public class ForecastTest {
         System.out.println("    #383 flips of Best for you over 100 regular histories of 40 cycles: " + now + " with the margin, " + before + " before; "
                 + never + " never change");
         check("#383 the margin flips Best for you at most about half as often on regular cycles", now * 2 <= before + 10 && never >= 40, now + " / " + before + ", never " + never);
+    }
+
+    // ------------------------------------------------------------------ phase 2: life factors of each cycle
+
+    /** Tags as the app reads them (FactorEffect.tags): {@code days} day to keys, the names in the list order, own tags' made days. */
+    static List<FactorEffect.Factor> tags(Map<LocalDate, List<String>> days, Map<String, LocalDate> made, String... keyAndName) {
+        Map<String, String> names = new LinkedHashMap<String, String>();
+        for (int i = 0; i + 1 < keyAndName.length; i += 2) names.put(keyAndName[i], keyAndName[i + 1]);
+        return FactorEffect.tags(days, names, made);
+    }
+
+    static void tag(Map<LocalDate, List<String>> m, LocalDate d, String key) {
+        List<String> l = m.get(d);
+        if (l == null) m.put(d, l = new ArrayList<String>());
+        l.add(key);
+    }
+
+    /** Whether no line of {@code tip} passes {@link CycleFactors#WRAP} characters (review of #488: 40 fit a 360 dp phone). */
+    static boolean narrow(String tip) {
+        for (String l : tip.split("\n")) if (l.length() > CycleFactors.WRAP) return false;
+        return true;
+    }
+
+    static CycleFactors cf(Cycles cy, List<FactorEffect.Factor> f) {
+        return CycleFactors.of(cy, cy.backtest().of(cy.methodId), f);
+    }
+
+    static List<String> keys(List<FactorEffect.Factor> l) {
+        List<String> out = new ArrayList<String>();
+        for (FactorEffect.Factor f : l) out.add(f.key);
+        return out;
+    }
+
+    /**
+     * Issue #383, phase 2 (design comment of 25 November): the life factors logged in each scored cycle, by calendar day, from the
+     * period's first day to the day before the next start; with, without and unknown; the texts, which only describe; a trip across
+     * the date line. Made up histories only.
+     */
+    static void cycleFactors() {
+        Locale en = Locale.ENGLISH;
+        final int WITH = CycleFactors.WITH, WITHOUT = CycleFactors.WITHOUT, UNKNOWN = CycleFactors.UNKNOWN;
+        // 1. the window's edges: six 28 day cycles, the scored ones are the 4th to 6th (index 3 to 5)
+        int[] h = rep(28, 6);
+        Cycles cy = Cycles.of(log(h), null, lastStart(h).plusDays(9));
+        Map<LocalDate, List<String>> m = new TreeMap<LocalDate, List<String>>();
+        tag(m, C0, "meditation");                        // the first logged day: everything counts from here
+        tag(m, C0.plusDays(84), "illness");              // the first day of the 4th cycle's period
+        tag(m, C0.plusDays(111), "travel");              // the day before the next start
+        tag(m, C0.plusDays(112), "stress");              // the next start itself: the next cycle
+        CycleFactors c = cf(cy, tags(m, null, "meditation", "Meditation", "illness", "Illness", "travel", "Travel", "stress", "Stress"));
+        check("#383 phase 2: the scored periods are the backtest's", c.periods.size() == 3 && c.periods.get(0).cycle == cy.cycles.get(3), c.periods.size());
+        check("#383 phase 2: a tag on the period's first day and on the day before the next start count for that cycle",
+                c.periods.get(0).logged.keySet().equals(new HashSet<String>(Arrays.asList("illness", "travel"))), c.periods.get(0).logged);
+        check("#383 phase 2: a tag on the day the next period came counts for the next cycle", c.periods.get(1).logged.keySet().equals(Collections.singleton("stress")),
+                c.periods.get(1).logged);
+        int counted = 0;
+        for (CycleFactors.Period p : c.periods) for (List<LocalDate> l : p.logged.values()) counted += l.size();
+        check("#383 phase 2: no day counts in two cycles", counted == 3, counted);
+        check("#383 phase 2: with and without", c.state(0, "illness") == WITH && c.state(1, "illness") == WITHOUT && c.state(2, "travel") == WITHOUT, null);
+        check("#383 phase 2: Meditation, only logged in an unscored cycle, is no chip; the others in the list order",
+                keys(c.chips).equals(Arrays.asList("illness", "travel", "stress")), keys(c.chips));
+        check("#383 phase 2: no faded dot when logging started before the scored cycles", !c.anyUnknown("illness"), null);
+        check("#383 phase 2: the newest period with a factor", c.newest("stress") == 1 && c.newest("illness") == 0 && c.newest("meditation") == -1, null);
+        check("#383 phase 2: a known cycle with nothing logged", c.tip(2, null, en).equals("Nothing logged that cycle."), c.tip(2, null, en));
+        check("#383 phase 2: the readout names the factors with their cycle days", c.tip(0, null, en).equals("Logged that cycle:\nIllness 1 day (day 1),\nTravel 1 day (day 28)"),
+                c.tip(0, null, en));
+        check("#383 phase 2: the marked factor comes first", c.tip(0, "travel", en).startsWith("Logged that cycle:\nTravel 1 day (day 28),"), c.tip(0, "travel", en));
+        check("#383 phase 2: one cycle, the decisions' sentence", c.line("illness", en).equals("The period on " + cy.date(cy.cycles.get(3).next, en)
+                + " came on the expected day; you logged Illness that cycle (1 day)."), c.line("illness", en));
+
+        // 2. unknown before the first logged day, an own tag from the day it was made, a removed tag's day as the first day
+        m = new TreeMap<LocalDate, List<String>>();
+        tag(m, C0.plusDays(120), "own:9");               // a removed own tag (not named): only the first logged day
+        tag(m, C0.plusDays(122), "illness");             // the 5th cycle (112 to 139)
+        tag(m, C0.plusDays(150), "meditation");          // the 6th cycle (140 to 167)
+        tag(m, C0.plusDays(145), "own:7");
+        Map<String, LocalDate> made = new HashMap<String, LocalDate>();
+        made.put("own:7", C0.plusDays(143));             // made in the 6th cycle
+        List<FactorEffect.Factor> f2 = tags(m, made, "illness", "Illness", "meditation", "Meditation", "own:7", "Late dinner");
+        Set<LocalDate> copy = new HashSet<LocalDate>(f2.get(0).days);
+        c = cf(cy, f2);
+        check("#383 phase 2: the inputs are not changed", f2.get(0).days.equals(copy) && f2.size() == 3, null);
+        check("#383 phase 2: a cycle before any logging is unknown, not without", c.state(0, "illness") == UNKNOWN && c.state(0, "meditation") == UNKNOWN, null);
+        check("#383 phase 2: its readout", c.tip(0, null, en).replace("\n", " ").equals("Before you started logging life factors (" + cy.date(C0.plusDays(120), en) + ").") && narrow(c.tip(0, null, en)), c.tip(0, null, en));
+        check("#383 phase 2: the cycle logging started in: with, and unknown for what was not logged there yet",
+                c.state(1, "illness") == WITH && c.state(1, "meditation") == UNKNOWN && c.state(2, "illness") == WITHOUT && c.state(2, "meditation") == WITH, null);
+        check("#383 phase 2: an own tag counts from the day it was made", c.state(1, "own:7") == UNKNOWN && c.state(2, "own:7") == WITH, null);
+        check("#383 phase 2: faded dots for the marked factor before it could be logged", c.anyUnknown("meditation"), null);
+        m.remove(C0.plusDays(122));
+        tag(m, C0.plusDays(160), "illness");
+        c = cf(cy, tags(m, made, "illness", "Illness", "meditation", "Meditation"));
+        check("#383 phase 2: the cycle logging started in, with nothing logged since", c.tip(1, null, en).replace("\n", " ").equals("Nothing logged that cycle since you started on "
+                + cy.date(C0.plusDays(120), en) + ".") && narrow(c.tip(1, null, en)), c.tip(1, null, en));
+
+        // 3. only scored cycles (a far one between), each method in use, the late days as the backtest's
+        int[] far = {28, 29, 28, 57, 28, 29, 28, 30, 27};
+        Cycles base = Cycles.of(log(far), null, lastStart(far).plusDays(5));
+        m = new TreeMap<LocalDate, List<String>>();
+        for (int i = 0; i < 300; i += 3) tag(m, C0.plusDays(i), "alcohol");
+        List<FactorEffect.Factor> fa = tags(m, null, "alcohol", "Alcohol");
+        boolean mapped = true;
+        int checkedMethods = 0;
+        for (int id : Methods.CHOICES) {
+            Cycles w = base.withMethod(id);
+            Backtest.Score use = w.backtest().of(w.methodId);
+            c = cf(w, fa);
+            mapped &= c.periods.size() == use.n && use.n > 0;
+            for (int i = 0; mapped && i < use.n; i++) mapped = c.periods.get(i).cycle == w.cycles.get(use.index[i]) && c.periods.get(i).late == use.late(i);
+            for (CycleFactors.Period p : c.periods) mapped &= p.cycle.length != 57;
+            checkedMethods++;
+        }
+        check("#383 phase 2: the scored periods and their late days for every method, the far cycle left out", mapped && checkedMethods == Methods.CHOICES.length, null);
+
+        // 4. the texts: one cycle, averages, every cycle
+        int[] t = {28, 28, 28, 28, 31, 28, 25, 28};
+        Cycles ct = Cycles.of(log(t), null, lastStart(t).plusDays(4));
+        Backtest.Score ut = ct.backtest().of(ct.methodId);
+        int[] starts = new int[t.length + 1];
+        for (int i = 0; i < t.length; i++) starts[i + 1] = starts[i] + t[i];
+        m = new TreeMap<LocalDate, List<String>>();
+        // Illness on days 5 and 6 of the 5th cycle (index 4), Stress on scattered days of the 5th and 7th, Meditation every day
+        tag(m, C0.plusDays(starts[4] + 4), "illness");
+        tag(m, C0.plusDays(starts[4] + 5), "illness");
+        tag(m, C0.plusDays(starts[4] + 2), "stress");
+        tag(m, C0.plusDays(starts[6] + 9), "stress");
+        tag(m, C0.plusDays(starts[6] + 12), "stress");
+        for (int i = 0; i < starts[t.length]; i++) tag(m, C0.plusDays(i), "meditation");
+        c = cf(ct, tags(m, null, "meditation", "Meditation", "stress", "Stress", "illness", "Illness"));
+        int pi = -1, p6 = -1;
+        for (int i = 0; i < ut.n; i++) {
+            if (ut.index[i] == 4) pi = i;
+            if (ut.index[i] == 6) p6 = i;
+        }
+        int late = ut.late(pi);
+        String came = late == 0 ? "came on the expected day" : "came " + Math.abs(late) + (Math.abs(late) == 1 ? " day " : " days ") + (late > 0 ? "later" : "earlier") + " than expected";
+        check("#383 phase 2: one cycle with the factor, the period's own sentence", c.line("illness", en).equals("The period on " + ct.date(ct.cycles.get(4).next, en)
+                + " " + came + "; you logged Illness that cycle (2 days)."), c.line("illness", en) + " late " + late);
+        check("#383 phase 2: the 31 day cycle came 3 days later than Open Ring expected", late == 3, late);
+        double w = 0, o = 0;
+        int nw = 0, no = 0;
+        for (int i = 0; i < ut.n; i++) {
+            if (c.state(i, "stress") == WITH) {
+                w += ut.late(i);
+                nw++;
+            } else if (c.state(i, "stress") == WITHOUT) {
+                o += ut.late(i);
+                no++;
+            }
+        }
+        w /= nw;
+        o /= no;
+        String avg = Math.abs(w) < 0.5 ? "about on the expected day on average" : String.format(en, "%.1f", Math.abs(w)) + " days " + (w > 0 ? "later" : "earlier") + " than expected on average";
+        String oth = Math.abs(o) < 0.5 ? "came about on the expected day." : "came " + String.format(en, "%.1f", Math.abs(o)) + " days " + (o > 0 ? "later." : "earlier.");
+        check("#383 phase 2: from two cycles, the averages with and without", nw == 2 && no >= 1 && c.line("stress", en).equals("Stress was logged in 2 of " + (nw + no)
+                + " cycles. Those periods came " + avg + ", the other " + (no == 1 ? "one " : no + " ") + oth), c.line("stress", en));
+        check("#383 phase 2: in every cycle, nothing to set it against", c.line("meditation", en).equals(CycleFactors.EVERY), c.line("meditation", en));
+        check("#383 phase 2: a factor in no scored cycle has no line", c.line("nothing", en) == null, null);
+        String tipAll = c.tip(pi, "illness", en);
+        boolean wrapped = true;
+        String[] lines = tipAll.split("\n");
+        for (String l : lines) wrapped &= l.length() <= CycleFactors.WRAP;
+        check("#383 phase 2: the readout wrapped, the marked factor first, then the list order", wrapped
+                && tipAll.equals("Logged that cycle:\nIllness 2 days (days 5 to 6),\nMeditation 31 days (days 1 to 31),\nStress 1 day (day 3)"), tipAll);
+        check("#383 review: lines of at most 40 characters", CycleFactors.WRAP == 40, CycleFactors.WRAP);
+        boolean allNarrow = true;
+        for (int i = 0; i < ut.n; i++) allNarrow &= narrow(c.tip(i, "stress", en)) && narrow(c.tip(i, null, en));
+        check("#383 review: every readout's factor lines fit", allNarrow, null);
+        String tip6 = c.tip(p6, null, en);
+        check("#383 phase 2: scattered days give the count only", tip6.contains("Stress 2 days") && !tip6.contains("Stress 2 days ("), tip6);
+        // the words: only describing, plain
+        List<String> words = new ArrayList<String>(Arrays.asList(CycleFactors.HOW, CycleFactors.CHANCE, CycleFactors.MARK, CycleFactors.EVERY,
+                CycleFactors.NOTHING, CycleFactors.LEGEND_FADED, CycleFactors.legendRing("Illness"), c.line("illness", en), c.line("stress", en)));
+        for (int i = 0; i < ut.n; i++) words.add(c.tip(i, "stress", en));
+        boolean plain = true;
+        for (String s : words) {
+            String l = s.toLowerCase(Locale.ROOT);
+            if (s.contains(" - ") || s.contains("–") || s.contains("—") || l.contains("because") || l.contains("caused") || l.contains("due to")) {
+                plain = false;
+                System.out.println("  not plain: " + s);
+            }
+        }
+        check("#383 phase 2: texts plain, no dashes, never a cause", plain, null);
+
+        // 5. only logged tags: the period tracker's own factors and empty ones are left out
+        List<FactorEffect.Factor> mixed = new ArrayList<FactorEffect.Factor>(tags(m, null, "stress", "Stress"));
+        mixed.add(new FactorEffect.Factor("period", "Period days", FactorEffect.PERIOD, new HashSet<LocalDate>(Arrays.asList(C0.plusDays(starts[5]))), C0, null));
+        mixed.add(new FactorEffect.Factor("empty", "Empty", FactorEffect.TAG, null, C0, null));
+        mixed.add(null);
+        c = cf(ct, mixed);
+        check("#383 phase 2: only logged tags are chips", keys(c.chips).equals(Collections.singletonList("stress")), keys(c.chips));
+        c = cf(ct, new ArrayList<FactorEffect.Factor>());
+        check("#383 phase 2: without any factor, no chip and no readout line", c.chips.isEmpty() && c.tip(0, null, en).isEmpty() && c.first == null, null);
+
+        // 6. a trip across the date line: the same cycles and factors whatever the phone's zone
+        dateLine();
+
+        // 7. 130 cycles and 5 years of 6 tags a day
+        int[] many = random(130, 29, 2.5, 383);
+        Cycles cm = Cycles.of(log(many), null, lastStart(many).plusDays(3));
+        cm.backtest();
+        Map<LocalDate, List<String>> lots = new TreeMap<LocalDate, List<String>>();
+        String[] six = {"meditation", "alcohol", "stress", "hard_workout", "sauna", "friends"};
+        LocalDate end = lastStart(many);
+        for (LocalDate d = end.minusYears(5); d.isBefore(end); d = d.plusDays(1)) for (String k : six) tag(lots, d, k);
+        List<FactorEffect.Factor> fl = tags(lots, null, "meditation", "Meditation", "alcohol", "Alcohol", "stress", "Stress",
+                "hard_workout", "Hard workout", "sauna", "Sauna", "friends", "Friends");
+        long best = Long.MAX_VALUE;
+        for (int r = 0; r < 5; r++) {
+            long t0 = System.nanoTime();
+            CycleFactors big = cf(cm, fl);
+            for (int i = 0; i < big.periods.size(); i++) big.tip(i, "stress", en);
+            big.line("stress", en);
+            best = Math.min(best, System.nanoTime() - t0);
+        }
+        System.out.println("    #383 phase 2: 130 cycles, 5 years of 6 tags a day: " + best / 1000000 + " ms");
+        check("#383 phase 2: 130 cycles and 5 years of 6 tags a day in under 50 ms", best < 50000000L, best / 1e6);
+    }
+
+    /**
+     * The Design review of 17 November: travel from the logged factor, cycle lengths by local dates, a trip across the date line
+     * moves no period start. Auckland to Honolulu (a calendar day happens twice, one date) and back (a calendar day skipped,
+     * nothing logged on it), Travel logged on the days away, the period logged the day after landing; an own tag made at 23:50
+     * in Honolulu (the next day in Auckland) and logged that Honolulu day. Worked out with the phone's zone on each side of
+     * the line: the same. The made day here is worked out by the test itself; the real conversion of an own tag's key in
+     * {@code data/LifeEffects.tagFactors} is tested in {@code EffectPipelineTest.ownTagZone} (review of #488), where a zone bug
+     * changes the result.
+     */
+    static void dateLine() {
+        java.util.TimeZone was = java.util.TimeZone.getDefault();
+        String[] zones = {"Pacific/Auckland", "Pacific/Honolulu", "Pacific/Kiritimati", "Pacific/Pago_Pago", "UTC"};
+        int[] h = {29, 28, 30, 29, 28, 29, 30};
+        // the 7th period is logged the day after landing
+        LocalDate land = lastStart(29, 28, 30, 29, 28, 29).minusDays(1);
+        String first = null;
+        boolean same = true, ownCounts = true, travelIn = true;
+        try {
+            for (String z : zones) {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(z));
+                java.time.ZoneId zone = java.time.ZoneId.of(z);
+                Cycles cy = Cycles.of(log(h), null, lastStart(h).plusDays(6));
+                Map<LocalDate, List<String>> m = new TreeMap<LocalDate, List<String>>();
+                tag(m, C0, "meditation");
+                // the trip out: three days away, the last the landing day
+                for (int i = 2; i >= 0; i--) tag(m, land.minusDays(i), "travel");
+                // the way back, a calendar day skipped
+                tag(m, land.plusDays(20), "travel");
+                tag(m, land.plusDays(22), "travel");
+                // an own tag made at 23:50 in Honolulu the day before landing, logged on that Honolulu day
+                LocalDate hnl = land.minusDays(1);
+                long millis = hnl.atTime(23, 50).atZone(java.time.ZoneId.of("Pacific/Honolulu")).toInstant().toEpochMilli();
+                String own = "own:" + millis;
+                tag(m, hnl, own);
+                Map<String, LocalDate> made = new HashMap<String, LocalDate>();
+                made.put(own, java.time.Instant.ofEpochMilli(millis).atZone(zone).toLocalDate());
+                CycleFactors c = cf(cy, tags(m, made, "travel", "Travel", own, "Market visit"));
+                StringBuilder b = new StringBuilder();
+                for (Cycles.Period p : cy.periods) b.append(p.start).append(',');
+                b.append(Arrays.toString(cy.lengths())).append(cy.next);
+                for (int i = 0; i < c.periods.size(); i++) b.append('|').append(c.periods.get(i).late).append(c.periods.get(i).logged).append(c.tip(i, "travel", Locale.ENGLISH));
+                b.append(c.line("travel", Locale.ENGLISH));
+                if (first == null) first = b.toString();
+                else if (!first.equals(b.toString())) {
+                    same = false;
+                    System.out.println("  " + z + ": " + b);
+                }
+                int at = -1;
+                for (int i = 0; i < c.periods.size(); i++) if (c.periods.get(i).cycle.next.equals(land.plusDays(1))) at = i;
+                travelIn &= at >= 0 && c.state(at, "travel") == CycleFactors.WITH && c.periods.get(at).logged.get("travel").size() == 3
+                        && cy.periods.get(6).start.equals(land.plusDays(1));
+                ownCounts &= at >= 0 && c.state(at, own) == CycleFactors.WITH;
+            }
+        } finally {
+            java.util.TimeZone.setDefault(was);
+        }
+        check("#383 phase 2 date line: the same period starts, cycle lengths, errors and factors in every zone", same, first);
+        check("#383 phase 2 date line: Travel counts in the cycle of the trip, the period after landing starts on its day", travelIn, null);
+        check("#383 phase 2 date line: an own tag made late in Honolulu still counts on its Honolulu day", ownCounts, null);
     }
 }

@@ -508,6 +508,7 @@ public final class Explain {
                 + "calendar on that same day. It is used on top of every method, also when Best for you picks drip style. Only drip style "
                 + "chosen by hand uses start days only, as drip does. Best for you leaves it out only when at least "
                 + app.openring.core.analysis.RiseBacktest.MIN + " cycles say it was further off.");
+        out.add(app.openring.core.analysis.CycleFactors.HOW);
         out.add("From research: one person's cycles vary by about 2.6 days on average (Bull and others, 2019, 612,613 cycles), so even a perfect "
                 + "method misses by about 2 days for most people. In large app data, neural networks were no better than the average of the "
                 + "person's own cycles (Li, Urteaga and others, Clue data), and a temperature rise found ovulation within about 1.3 days, the "
