@@ -328,7 +328,7 @@ public class LayoutTest {
                 && !tiles.contains("SPECS.get(card);\n            t.spec") && tiles.contains("new CardSpecs<View, Spec>()"));
         check("a page that is not arranged leaves no spec behind", tiles.contains("SPECS.take(root.getChildAt(i));"));
         check("Further analysis' listener holds its body (the reason a spec must be taken)",
-                pages.contains("s.listener = new Tiles.Listener()") && pages.contains("fillAnalysis(c, d, body);"));
+                sleep.contains("s.listener = new Tiles.Listener()") && sleep.contains("fillAnalysis(c, d, body);"));
         String screens = new String(Files.readAllBytes(Paths.get(".github/scripts/screens.sh")), "UTF-8");
         check("screens.sh starts its steps in the standard layout", screens.contains("--ez layout_reset true"));
     }
