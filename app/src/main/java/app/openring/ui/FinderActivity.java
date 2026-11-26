@@ -45,6 +45,7 @@ import app.openring.core.InputLimit;
 import app.openring.core.PermissionAsk;
 import app.openring.core.analysis.DemoWalk;
 import app.openring.core.analysis.FinderLayout;
+import app.openring.core.analysis.FinderSignal;
 import app.openring.core.analysis.FingerNow;
 import app.openring.core.analysis.LastWorn;
 import app.openring.core.analysis.Proximity;
@@ -119,9 +120,6 @@ public final class FinderActivity extends Activity implements SensorEventListene
     private MiniMap map;
     private TextView stepText, walkNote;
 
-    static final String UNUSABLE = "This phone receives the ring, so it is within Bluetooth range (about 10 m), "
-            + "but the phone gives no usable signal strength for it right now.";
-
     static final String HOLD = WalkText.HOLD;
 
     static final String WALK = "Tap Start. Walk slowly, cover the room, take your time. To get only a direction, turn once around on the spot instead.";
@@ -134,8 +132,6 @@ public final class FinderActivity extends Activity implements SensorEventListene
     /** Before Start: what to do, in the status line under the map (issue #191). */
     static final String START_HINT = "Hold the phone upright against your chest and tap Start. Walk slowly through the room, "
             + "or turn once on the spot for only a direction.";
-    /** The line next to the gauge: what its number means. */
-    static final String SIGNAL_LINE = "dBm: closer to 0 is stronger. It tells warmer or colder, not metres.";
 
     private TextView lastText, heardText, batteryText, bandText, signalText, issueText, turnText, turnButton, soundHint;
     private LinearLayout issueBox;
@@ -314,6 +310,12 @@ public final class FinderActivity extends Activity implements SensorEventListene
         LinearLayout.LayoutParams il = Ui.matchWrap();
         il.setMargins(0, Ui.dp(this, 8), 0, 0);
         issueBox.addView(issueButton, il);
+        issueButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                issueAction(issueAction);
+            }
+        });
         LinearLayout.LayoutParams ibl = Ui.matchWrap();
         ibl.setMargins(0, Ui.dp(this, 8), 0, 0);
         instCard.addView(issueBox, ibl);
@@ -856,120 +858,58 @@ public final class FinderActivity extends Activity implements SensorEventListene
         int band = prox.band();
         meter.set(Proximity.fill(v), band, v);
         // worked out first and set only where it changed, so the 4 ticks a second ask for no layout pass (issue #224)
-        issueShown = false;
-        signalLine = "";
-        signalState(now, btOn, band);
-        if (!issueShown && issueBox.getVisibility() != View.GONE) issueBox.setVisibility(View.GONE);
-        setText(signalText, signalLine);
+        FinderSignal.State s = FinderSignal.of(signalInput(now, btOn, band), ask);
+        setText(bandText, s.label);
+        if (s.issue) issue(s.text, s.button, s.action);
+        else if (issueBox.getVisibility() != View.GONE) issueBox.setVisibility(View.GONE);
+        setText(signalText, s.issue ? "" : s.text);
     }
-
-    /** What {@link #signalState} chose this tick: the issue box, or else the line under the band text. */
-    private boolean issueShown;
-    private String signalLine;
 
     /** Sets {@code s} only when it differs, so an unchanged text asks for no new layout. */
     static void setText(TextView t, String s) {
         if (!s.contentEquals(t.getText())) t.setText(s);
     }
 
-    void signalState(long now, boolean btOn, int band) {
-        if (!demo && address == null) {
-            setText(bandText, "No ring paired");
-            issue("No ring is paired with this app yet, so there is no signal to listen for.", null, null);
-            return;
-        }
-        if (!demo && !Permissions.granted(this)) {
-            setText(bandText, "Not listening");
-            String what = PermissionAsk.neededText(android.os.Build.VERSION.SDK_INT);
-            if (permissionBlocked) {
-                issue("To hear the ring, this app needs " + what + ". Android no longer asks, so switch it on in the app's settings.", "Open app settings", new Runnable() {
-                    @Override
-                    public void run() {
-                        startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                android.net.Uri.fromParts("package", getPackageName(), null)));
-                    }
-                });
-            } else {
-                issue("To hear the ring, this app needs " + what + ".", "Allow", new Runnable() {
-                    @Override
-                    public void run() {
-                        askedPermission = true;
-                        Permissions.request(FinderActivity.this);
-                    }
-                });
-            }
-            return;
-        }
-        if (!demo && android.os.Build.VERSION.SDK_INT < 31 && !Permissions.locationOn(this)) {
-            setText(bandText, "Not listening");
-            issue("Location is off. Android 11 and older only find Bluetooth devices while Location is on.", "Open Location settings", new Runnable() {
-                @Override
-                public void run() {
-                    startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));
-                }
-            });
-            return;
-        }
-        if (!demo && !btOn) {
-            setText(bandText, "Not listening");
-            issue("Bluetooth is off. Switch it on to listen for the ring.", "Switch on", new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        startActivity(new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE));
-                    } catch (RuntimeException e) {
-                        startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));
-                    }
-                }
-            });
-            return;
-        }
-        // the finder itself holds the ring (issue #192): it sends no signal meanwhile, say why and for how long
-        String blind = finger.blind(demo);
-        if (blind != null) {
-            setText(bandText, "Connected");
-            issue(blind, null, null);
-            return;
-        }
-        if (band != Proximity.NOT_HEARD) {
-            setText(bandText, Proximity.label(band));
-            signalLine = SIGNAL_LINE;
-            return;
-        }
-        if (linked()) {
-            setText(bandText, "Connected");
-            issue("The ring is connected to this phone right now (a sync, Live or another app), so it is within Bluetooth range, "
-                    + "about 10 m. While connected it stops sending the signal this meter listens to; the meter carries on when the connection ends.", null, null);
-            return;
-        }
-        if (retry.waiting(now)) {
-            setText(bandText, "Not listening");
-            int scanError = retry.error();
-            issue(scanError == 6 ? "Android paused the Bluetooth scan for a moment. It starts again by itself within 30 s."
-                    : "The Bluetooth scan stopped (error " + scanError + "). It starts again by itself within 30 s.", null, null);
-            return;
-        }
-        if (!demo && watch == null) {
-            // the start waits for Android's scan budget (shared with a sync): not listening yet, so "not heard" would mislead
-            setText(bandText, "Not listening yet");
-            // RingScanner allows 4 starts in 30 s, so the wait is at most 30.2 s (longer only if a sync starts more meanwhile)
-            signalLine = "It starts listening by itself within about half a minute.";
-            return;
-        }
-        long heardAgo = prox.sinceLast(now);
-        if (heardAgo < 0 && now - listenSince < Proximity.LOST_MS) {
-            setText(bandText, "Listening");
-            signalLine = "Waiting for the ring's signal";
-            return;
-        }
-        // label and line from the same check, so they never disagree (issue #125)
-        boolean unusable = unusableAt != Long.MIN_VALUE && now - unusableAt < Proximity.LOST_MS;
-        setText(bandText, Proximity.label(Proximity.NOT_HEARD, unusable));
-        String why = "The ring is out of range, its battery is empty, or a thick wall or metal is in the way.";
-        if (otherAt != Long.MIN_VALUE && now - otherAt < Proximity.LOST_MS) why = "This phone hears an Oura ring, but not the one paired with this app.";
-        if (unusable) why = UNUSABLE;
-        signalLine = why;
+    /** One object for every tick, filled anew each time (the 4 ticks a second make no garbage for it). */
+    private final FinderSignal.Input signalIn = new FinderSignal.Input();
+
+    /** What this screen knows this tick, for {@link FinderSignal#of}. */
+    FinderSignal.Input signalInput(long now, boolean btOn, int band) {
+        FinderSignal.Input in = signalIn;
+        in.demo = demo;
+        in.paired = address != null;
+        in.permissionBlocked = permissionBlocked;
+        in.sdk = android.os.Build.VERSION.SDK_INT;
+        in.bluetoothOn = btOn;
+        in.blind = finger.blind(demo);
+        in.band = band;
+        in.retryWaiting = retry.waiting(now);
+        in.scanError = retry.error();
+        in.scanning = watch != null;
+        in.heardAgo = prox.sinceLast(now);
+        in.listening = now - listenSince;
+        in.unusable = unusableAt != Long.MIN_VALUE && now - unusableAt < Proximity.LOST_MS;
+        in.otherHeard = otherAt != Long.MIN_VALUE && now - otherAt < Proximity.LOST_MS;
+        return in;
     }
+
+    /** The answers {@link FinderSignal#of} asks Android for, only when its order reaches them. */
+    private final FinderSignal.Ask ask = new FinderSignal.Ask() {
+        @Override
+        public boolean granted() {
+            return Permissions.granted(FinderActivity.this);
+        }
+
+        @Override
+        public boolean locationOn() {
+            return Permissions.locationOn(FinderActivity.this);
+        }
+
+        @Override
+        public boolean linked() {
+            return FinderActivity.this.linked();
+        }
+    };
 
     void showSoundHint() {
         AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
@@ -978,20 +918,43 @@ public final class FinderActivity extends Activity implements SensorEventListene
         soundHint.setVisibility(soundHint.getText().length() == 0 ? View.GONE : View.VISIBLE);
     }
 
-    void issue(String text, String button, final Runnable r) {
-        issueShown = true;
+    /** What the issue box's button does; its one click listener reads it (set in onCreate). */
+    private FinderSignal.Action issueAction = FinderSignal.Action.NONE;
+
+    void issue(String text, String button, FinderSignal.Action action) {
         if (issueBox.getVisibility() != View.VISIBLE) issueBox.setVisibility(View.VISIBLE);
         setText(issueText, text);
         int shown = button == null ? View.GONE : View.VISIBLE;
         if (issueButton.getVisibility() != shown) issueButton.setVisibility(shown);
         if (button != null) {
             setText(issueButton, button);
-            issueButton.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    r.run();
+            issueAction = action;
+        }
+    }
+
+    /** The issue box's button was tapped. */
+    void issueAction(FinderSignal.Action action) {
+        switch (action) {
+            case APP_SETTINGS:
+                startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.fromParts("package", getPackageName(), null)));
+                break;
+            case ALLOW:
+                askedPermission = true;
+                Permissions.request(FinderActivity.this);
+                break;
+            case LOCATION_SETTINGS:
+                startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+                break;
+            case BLUETOOTH_ON:
+                try {
+                    startActivity(new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE));
+                } catch (RuntimeException e) {
+                    startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));
                 }
-            });
+                break;
+            default:
+                break;
         }
     }
 
