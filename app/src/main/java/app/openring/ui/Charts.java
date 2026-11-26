@@ -1871,6 +1871,20 @@ public final class Charts {
             java.util.List<app.openring.core.analysis.Trends.Bucket> bs = view.buckets;
             // one column of the same width per period, its dot in the middle and its days spread over it (Trends.View.dayOffset)
             float slot = (w - left) / bs.size();
+            // phase 2, behind the dots and bands (as designed; code review of f04a5c5): the average before and after each step
+            // over the days it comes from, and the step as a dashed line
+            if (drawn != null) {
+                for (int i = 0; i < drawn.levelValue.length; i++) {
+                    float a = xOf(drawn.levelFrom[i], left, slot), b = xOf(drawn.levelTo[i], left, slot);
+                    if (Float.isNaN(a) || Float.isNaN(b)) continue;
+                    float yy = y(drawn.levelValue[i], lo, hi, top, bottom);
+                    cv.drawLine(a, yy, Math.max(b, a + 1), yy, level);
+                }
+                for (double p : drawn.steps) {
+                    float x = xOf(p, left, slot);
+                    if (!Float.isNaN(x)) cv.drawLine(x, top - Ui.dp(getContext(), 4), x, bottom, stepLine);
+                }
+            }
             float small = Ui.dp(getContext(), 1.6f);
             for (int i = 0; i < view.dayDates.size(); i++) {
                 float dx = left + slot * (view.dayBucket.get(i) + 0.5f) + (float) (view.dayOffset.get(i) * slot);
@@ -1911,19 +1925,8 @@ public final class Charts {
                 txt.setTextAlign(Paint.Align.CENTER);
                 cv.drawText(app.openring.core.analysis.Trends.axisLabel(bs.get(m).start, view.period), xs[m], base, txt);
             }
-            // phase 2: the average before and after each step over the days it comes from, the step as a dashed line, the events
-            // as marks under the chart (a tick for a day, a bar for a span)
+            // phase 2: the events as marks under the chart (a tick for a day, a bar for a span)
             if (drawn != null) {
-                for (int i = 0; i < drawn.levelValue.length; i++) {
-                    float a = xOf(drawn.levelFrom[i], left, slot), b = xOf(drawn.levelTo[i], left, slot);
-                    if (Float.isNaN(a) || Float.isNaN(b)) continue;
-                    float yy = y(drawn.levelValue[i], lo, hi, top, bottom);
-                    cv.drawLine(a, yy, Math.max(b, a + 1), yy, level);
-                }
-                for (double p : drawn.steps) {
-                    float x = xOf(p, left, slot);
-                    if (!Float.isNaN(x)) cv.drawLine(x, top - Ui.dp(getContext(), 4), x, bottom, stepLine);
-                }
                 float tick = Ui.dp(getContext(), 5);
                 for (int i = 0; i < drawn.eventFrom.length; i++) {
                     float a = xOf(drawn.eventFrom[i], left, slot), b = xOf(drawn.eventTo[i], left, slot);
