@@ -283,7 +283,8 @@ public final class TrendChange {
         Test second = null;
         if (left.holds() && (!right.holds() || left.asBig < right.asBig || left.asBig == right.asBig && left.stat >= right.stat)) second = left;
         else if (right.holds()) second = right;
-        if (second != null && MOST > 1) {
+        // at most MOST (two) steps: the second side is tested once, never a third
+        if (second != null) {
             boolean onLeft = second == left;
             int a = onLeft ? second.split : 0, b = onLeft ? n : second.split;
             Test again = test(s, a, b, seed(measure, 3));
@@ -297,32 +298,82 @@ public final class TrendChange {
                 asBig.add(late.asBig);
             }
         }
-        // the levels between the steps (the median for a measure shown as a typical day, as its dots), each step with its range
+        steps(out, s, splits, asBig, measure, l);
+        return out;
+    }
+
+    /**
+     * The answer with steps at {@code dates} (each the first day of its new level) without the shuffles (as big: 0), worded
+     * and drawn as {@link #of} does: a step whose range holds no change is left out and the others are worked out again
+     * from the merged parts. For tests of the levels and sentences on steps placed by hand.
+     */
+    public static Result at(List<Trends.Day> days, int measure, LocalDate today, List<LocalDate> dates, Locale l) {
+        Result out = new Result();
+        Series s = series(days, measure, today);
+        List<Integer> splits = new ArrayList<Integer>(), asBig = new ArrayList<Integer>();
+        for (LocalDate d : dates) {
+            int k = 0;
+            while (k < s.x.length && s.dates[k].isBefore(d)) k++;
+            if (k > 0 && k < s.x.length && !splits.contains(k)) {
+                splits.add(k);
+                asBig.add(0);
+            }
+        }
+        Collections.sort(splits);
+        out.looked = true;
+        steps(out, s, splits, asBig, measure, l);
+        return out;
+    }
+
+    /**
+     * The steps at {@code splits} with their levels (the median for a measure shown as a typical day, as its dots) and
+     * ranges, into {@code out}. A step whose range holds no change is no step to draw (review of #468: the shuffles and the
+     * range disagree); it is dropped, its two parts merge, and the steps left are worked out again from the merged parts
+     * (code review of f04a5c5: the kept step's sentence used only its neighbouring part while the drawn levels used the
+     * merged ones), until every step left has a range without zero.
+     */
+    static void steps(Result out, Series s, List<Integer> splitsIn, List<Integer> asBigIn, int measure, Locale l) {
+        int n = s.x.length;
         boolean median = Trends.KIND[measure] == Trends.MEDIAN;
-        List<int[]> parts = new ArrayList<int[]>();
-        int from = 0;
-        for (int k : splits) {
-            parts.add(new int[] {from, k});
-            from = k;
-        }
-        parts.add(new int[] {from, n});
+        List<Integer> splits = new ArrayList<Integer>(splitsIn), asBig = new ArrayList<Integer>(asBigIn);
         List<Step> steps = new ArrayList<Step>();
-        List<Integer> kept = new ArrayList<Integer>();
-        for (int i = 0; i < splits.size(); i++) {
-            int[] pa = parts.get(i), pb = parts.get(i + 1);
-            double before = level(s.x, pa[0], pa[1], median), after = level(s.x, pb[0], pb[1], median), diff = after - before;
-            double half = half(s, pa, pb, median, seed(measure, 10 + i));
-            // a range that holds no change is no step to draw (review of #468): the shuffles and the range disagree
-            if (diff - half <= 0 && diff + half >= 0) continue;
-            boolean clear = Math.abs(diff) >= spread(s, pa, pb);
-            LocalDate date = s.dates[pb[0]];
-            steps.add(new Step(date, before, after, diff - half, diff + half, asBig.get(i), clear, sentence(measure, date, clear, diff, diff - half, diff + half, l)));
-            kept.add(splits.get(i));
+        while (!splits.isEmpty()) {
+            List<int[]> parts = new ArrayList<int[]>();
+            int from = 0;
+            for (int k : splits) {
+                parts.add(new int[] {from, k});
+                from = k;
+            }
+            parts.add(new int[] {from, n});
+            steps.clear();
+            // the step to drop: of those whose range holds zero, the weakest (its size the smallest part of its range)
+            int drop = -1;
+            double weakest = Double.MAX_VALUE;
+            for (int i = 0; i < splits.size(); i++) {
+                int[] pa = parts.get(i), pb = parts.get(i + 1);
+                double before = level(s.x, pa[0], pa[1], median), after = level(s.x, pb[0], pb[1], median), diff = after - before;
+                double half = half(s, pa, pb, median, seed(measure, 10 + i));
+                if (diff - half <= 0 && diff + half >= 0) {
+                    double weight = half > 0 ? Math.abs(diff) / half : 0;
+                    if (weight < weakest) {
+                        weakest = weight;
+                        drop = i;
+                    }
+                    continue;
+                }
+                boolean clear = Math.abs(diff) >= spread(s, pa, pb);
+                LocalDate date = s.dates[pb[0]];
+                steps.add(new Step(date, before, after, diff - half, diff + half, asBig.get(i), clear, sentence(measure, date, clear, diff, diff - half, diff + half, l)));
+            }
+            if (drop < 0) break;
+            splits.remove(drop);
+            asBig.remove(drop);
+            steps.clear();
         }
-        if (steps.isEmpty()) return out;
-        // the levels between the steps kept
+        if (steps.isEmpty()) return;
+        // the levels between the steps kept: the same parts the steps' numbers come from
         int at = 0;
-        for (int k : kept) {
+        for (int k : splits) {
             out.levels.add(new Level(s.dates[at], s.dates[k - 1], level(s.x, at, k, median)));
             at = k;
         }
@@ -334,7 +385,6 @@ public final class TrendChange {
             text.append(st.text);
         }
         out.text = text.toString();
-        return out;
     }
 
     /** The level of {@code x[a, b)}: its mean, or its median for a measure shown as a typical day. */
@@ -555,14 +605,13 @@ public final class TrendChange {
             if (z == null) continue;
             if (last != null && !z.equals(last)) {
                 java.time.Instant noon = d.date.atTime(12, 0).atZone(z).toInstant();
-                if (!z.getRules().getOffset(noon).equals(last.getRules().getOffset(noon))) out.add(new Event(ZONE, d.date, d.date, "Trip, clock moved (" + place(z) + ")"));
+                if (!z.getRules().getOffset(noon).equals(last.getRules().getOffset(noon))) out.add(new Event(ZONE, d.date, d.date, "Clock moved to " + place(z) + " time"));
             }
             last = z;
         }
         return out;
     }
 
-    /** "Watch" from "watch" (a source's name is never empty). */
     /** The place of a zone for people: "New York" from America/New_York, the id itself for one without a place. */
     static String place(ZoneId z) {
         String id = z.getId();
@@ -570,23 +619,36 @@ public final class TrendChange {
         return slash < 0 ? id : id.substring(slash + 1).replace('_', ' ');
     }
 
+    /** "Watch" from "watch" (a source's name is never empty). */
     static String capital(String s) {
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
-    /** The events touching {@code from} to {@code to}, workouts counted ("3 workouts"): "Period started (3 Mar 2026), 2 workouts". */
+    /**
+     * The events touching {@code from} to {@code to}: "Period started (3 Mar 2026), 2 workouts". Workouts are counted ("3
+     * workouts"), and so are periods once more than one started in the span ("13 periods started" in a year; code review of
+     * f04a5c5: a year's readout listed every one).
+     */
     public static String list(List<Event> events, LocalDate from, LocalDate to) {
         StringBuilder s = new StringBuilder();
-        int workouts = 0;
+        int workouts = 0, periods = 0;
+        Event period = null;
         for (Event e : events) {
             if (e.to.isBefore(from) || e.from.isAfter(to)) continue;
             if (e.kind == WORKOUT) {
                 workouts++;
                 continue;
             }
+            if (e.kind == PERIOD) {
+                periods++;
+                period = e;
+                continue;
+            }
             if (s.length() > 0) s.append(", ");
             s.append(e.withDate());
         }
+        if (periods == 1) s.append(s.length() > 0 ? ", " : "").append(period.withDate());
+        if (periods > 1) s.append(s.length() > 0 ? ", " : "").append(periods).append(" periods started");
         if (workouts > 0) s.append(s.length() > 0 ? ", " : "").append(workouts == 1 ? "1 workout" : workouts + " workouts");
         return s.toString();
     }

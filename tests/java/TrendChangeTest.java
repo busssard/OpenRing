@@ -297,6 +297,44 @@ public class TrendChangeTest {
         // a single step never gets a second from noise on its sides
         TrendChange.Result one = TrendChange.of(history(22, 420, Trends.RHR, up, 4), Trends.RHR, TODAY, L);
         eq("one step stays one", one.steps.size(), 1);
+        check("at most two steps", r.steps.size() <= TrendChange.MOST && sr.steps.size() <= TrendChange.MOST && one.steps.size() <= TrendChange.MOST);
+        mergedParts();
+    }
+
+    /**
+     * Two steps where the first one's range holds zero (code review of f04a5c5): it is dropped, and the step kept is worked
+     * out again from the merged parts, so its numbers and sentence match the levels drawn. Before the fix its "before" was
+     * only the part between the two steps.
+     */
+    static void mergedParts() {
+        LocalDate a = TODAY.minusDays(280), b = TODAY.minusDays(140);
+        List<Trends.Day> h = history(24, 420, -1, null, 0, false);
+        for (Trends.Day d : h) {
+            if (Double.isNaN(d.v[Trends.RHR])) continue;
+            // nothing at the first date, a clear step at the second
+            if (!d.date.isBefore(b)) d.v[Trends.RHR] += 8;
+        }
+        TrendChange.Result r = TrendChange.at(h, Trends.RHR, TODAY, java.util.Arrays.asList(a, b), L);
+        eq("the tiny step is dropped: one step", r.steps.size(), 1);
+        eq("two levels", r.levels.size(), 2);
+        TrendChange.Step s = r.steps.get(0);
+        check("the clear step kept, at its date", s.date.equals(b) || s.date.isAfter(b) && s.date.isBefore(b.plusDays(3)));
+        // the level before is the mean of every value before the kept step, not only those after the dropped one
+        double sum = 0;
+        int n = 0;
+        for (Trends.Day d : h) {
+            if (Double.isNaN(d.v[Trends.RHR]) || !d.date.isBefore(s.date)) continue;
+            sum += d.v[Trends.RHR];
+            n++;
+        }
+        check("the step's level before is the merged part's: " + s.before + " and " + sum / n, Math.abs(s.before - sum / n) < 1e-9);
+        check("the step's levels are the drawn ones", Math.abs(s.before - r.levels.get(0).value) < 1e-9 && Math.abs(s.after - r.levels.get(1).value) < 1e-9);
+        check("the drawn level before starts at the first value", r.levels.get(0).from.equals(h.get(0).date) || r.levels.get(0).from.isBefore(a));
+        eq("its sentence from the same numbers", r.text, TrendChange.sentence(Trends.RHR, s.date, s.clear, s.after - s.before, s.lo, s.hi, L));
+        check("its range holds no zero", s.lo > 0 && s.asBig == 0 && r.looked);
+        // a flat history: both ranges hold zero, one dropped after the other
+        TrendChange.Result both = TrendChange.at(history(25, 420, -1, null, 0, false), Trends.RHR, TODAY, java.util.Arrays.asList(a, b), L);
+        check("no step in a flat history: both ranges hold zero, nothing drawn: " + both.text, both.steps.isEmpty() && both.levels.isEmpty() && both.text.equals(TrendChange.NONE));
     }
 
     /** Under 8 weeks with values: nothing is tested, and Regularity (a spread) never is. */
@@ -399,7 +437,9 @@ public class TrendChangeTest {
         check("a lasting switch to the watch: " + all, all.contains("Watch nights from here (6 Mar 2026)"));
         check("one stray watch night is no switch", !all.contains("25 Jan 2026"));
         check("ten days without nights: " + all, all.contains("No nights (14 to 23 Feb 2026)"));
-        check("a trip there and back", all.contains("Trip, clock moved (New York) (4 Feb 2026)") && all.contains("Trip, clock moved (Zurich) (9 Feb 2026)"));
+        // one bracket, the way home named by its place too (code review of f04a5c5)
+        check("a trip there and back", all.contains("Clock moved to New York time (4 Feb 2026)") && all.contains("Clock moved to Zurich time (9 Feb 2026)")
+                && !all.contains("Trip") && !all.contains(") ("));
         check("stage detail changed", all.contains("Stage detail Calm from here (16 Mar 2026)"));
         check("left out time on every chart", all.contains("Time left out (10 to 11 Jan 2026)"));
         check("phone use on sleep", all.contains("Phone use counted as awake from here (13 Jan 2026)"));
@@ -409,7 +449,15 @@ public class TrendChangeTest {
         // on temperature (here no values): the period, not the detail level nor phone use
         List<TrendChange.Event> temp = TrendChange.events(d, Trends.TEMP, LocalDate.parse("2026-06-01"), known);
         String ts = TrendChange.list(temp, first, first.plusDays(100));
-        check("temperature: period and trip: " + ts, ts.contains("Period started (8 Jan 2026)") && ts.contains("Trip") && !ts.contains("Stage") && !ts.contains("Phone"));
+        check("temperature: period and trip: " + ts, ts.contains("Period started (8 Jan 2026)") && ts.contains("Clock moved") && !ts.contains("Stage") && !ts.contains("Phone"));
+        // periods counted once more than one started in the span (code review of f04a5c5: a year listed about 13)
+        List<TrendChange.Event> cycle = new ArrayList<TrendChange.Event>();
+        for (int k = 0; k < 13; k++) cycle.add(new TrendChange.Event(TrendChange.PERIOD, first.plusDays(28 * k), first.plusDays(28 * k), "Period started"));
+        cycle.add(new TrendChange.Event(TrendChange.LEFT_OUT, first.plusDays(40), first.plusDays(41), "Time left out"));
+        cycle.add(new TrendChange.Event(TrendChange.WORKOUT, first.plusDays(50), first.plusDays(50), "Workout"));
+        eq("a year: periods counted", t(TrendChange.list(cycle, first, first.plusDays(364))), "Time left out (14 to 15 Feb 2026), 13 periods started, 1 workout");
+        eq("two periods: counted", TrendChange.list(cycle, first, first.plusDays(30)), "2 periods started");
+        eq("one period: with its date", TrendChange.list(cycle, first.plusDays(1), first.plusDays(30)), "Period started (2 Feb 2026)");
         // steps: the workouts counted
         String ss = TrendChange.list(TrendChange.events(d, Trends.STEPS, LocalDate.parse("2026-06-01"), known), first, first.plusDays(10));
         eq("steps: workouts counted", t(ss), "Time left out (10 to 11 Jan 2026), 2 workouts");
@@ -435,7 +483,7 @@ public class TrendChangeTest {
             utc.add(x);
         }
         eq("a zone without a place", TrendChange.list(TrendChange.events(utc, Trends.ASLEEP, LocalDate.parse("2026-06-01"), null), first, first.plusDays(5)),
-                "Trip, clock moved (UTC) (6 Jan 2026)");
+                "Clock moved to UTC time (6 Jan 2026)");
         // a clock change in one zone is no trip
         List<Trends.Day> dst = new ArrayList<Trends.Day>();
         for (int i = 0; i < 4; i++) {
@@ -569,6 +617,13 @@ public class TrendChangeTest {
     }
 
     static void plain() {
+        // the text under the card claims only what knownStep shows (code review of f04a5c5): two weeks from one spread, a slow
+        // change as one step
+        String ex = app.openring.ui.Explain.TRENDS_CHANGE;
+        check("explain: within two weeks, not a week", ex.contains("one usual day to day difference or more is usually found within two weeks")
+                && !ex.contains("within about a week") && ex.contains("weeks or even months off"));
+        check("explain: a slow change", ex.contains("A slow change shows as one step where it moved fastest."));
+        TEXTS.add(ex);
         for (String s : TEXTS) {
             check("no dash as punctuation: " + s, !s.contains(" - ") && !s.contains(" -- ") && !s.contains("–") && !s.contains("—"));
         }
