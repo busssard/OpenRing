@@ -505,12 +505,12 @@ public class CoreTest {
         eq("strip frac: end", NightStrip.frac(s + 100, s, s + 100), 1.0);
         eq("strip frac: an empty axis", NightStrip.frac(s + 5, s, s), 0.0);
         // s is 22:00 UTC: the bar of 22:05 to 22:10 around 22:07:30
-        eq("movement tip", NightStrip.movementTip(s + 450, 300, 4, utc, Locale.US), "22:05 to 22:10, 4.0 s of motion per reading");
-        eq("movement tip: 10 s and more whole", NightStrip.movementTip(s + 450, 300, 12.4, utc, Locale.US), "22:05 to 22:10, 12 s of motion per reading");
+        eq("movement tip", NightStrip.movementTip(s + 450, 300, 4, utc, Locale.US), "22:05 to 22:10, on average 4.0 s of motion per ring report");
+        eq("movement tip: 10 s and more whole", NightStrip.movementTip(s + 450, 300, 12.4, utc, Locale.US), "22:05 to 22:10, on average 12 s of motion per ring report");
         eq("movement tip: none", NightStrip.movementTip(s + 450, 300, 0, utc, Locale.US), "22:05 to 22:10, no movement");
         eq("movement tip: unknown", NightStrip.movementTip(s + 450, 300, Double.NaN, utc, Locale.US), "22:05 to 22:10, no movement reading");
         eq("movement tip: in the night's zone", NightStrip.movementTip(s + 450, 300, 4, java.time.ZoneId.of("Asia/Tokyo"), Locale.US),
-                "07:05 to 07:10, 4.0 s of motion per reading");
+                "07:05 to 07:10, on average 4.0 s of motion per ring report");
         eq("movement: no reading", NightStrip.noReading(s + 30, utc), "22:01, no movement reading");
         for (String x : new String[] {NightStrip.MOVEMENT_NOTE, NightStrip.movementTip(s, 300, 3, utc, Locale.US)}) {
             check("movement texts: no dashes as punctuation: " + x, !x.contains(" - ") && !x.contains("–") && !x.contains("—"));
@@ -519,7 +519,10 @@ public class CoreTest {
             String src = new String(java.nio.file.Files.readAllBytes(new java.io.File("app/src/main/java/app/openring/ui/Charts.java").toPath()), "UTF-8");
             check("Strip is a Scrub (readable by touch)", src.contains("class Strip extends Scrub"));
             check("Strip takes its step from the series, no 300 s built in", src.contains("NightStrip.step(") && !src.contains("* 300 /"));
-        } catch (java.io.IOException ex) {
+            // review of #482: the readouts of both strips only above their marks, a longer one makes the strip taller
+            check("Movement readout only where it fits", src.contains("if (roomFor(tip, h - barsH)) drawTip(cv, x, h - barsH, h, tip);"));
+            check("Sounds readout only where it fits", src.contains("if (roomFor(tip, top)) drawTip(cv, sx, top, h, tip);"));
+            check("the readout room grows the view", src.contains("getMeasuredHeight() + (int) Math.ceil(grown)"));        } catch (java.io.IOException ex) {
             check("read Charts.java " + ex, false);
         }
     }

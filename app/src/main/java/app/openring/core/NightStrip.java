@@ -40,20 +40,25 @@ public final class NightStrip {
         return best;
     }
 
-    /** What the movement strip shows, for the line under it. */
-    public static final String MOVEMENT_NOTE = "Movement: the seconds of motion your ring reported per reading, averaged over each bar.";
+    /**
+     * What the movement strip shows, for the line right under it. The ring sends many short reports of how many seconds it
+     * felt you move; how often it sends them is not known (ARCHITECTURE.md), so the text does not name a rate (review of #482).
+     */
+    public static final String MOVEMENT_NOTE = "Movement: taller bars mean more. The ring sends many short reports of how many seconds you moved;"
+            + " each bar shows their average over its 5 minutes.";
 
     /**
      * The Movement strip's touch readout for the bar around {@code at} (from {@code at} minus half a {@code step} to plus
-     * half): "02:10 to 02:15, 4.0 s of motion per reading" (an average, {@link #MOVEMENT_NOTE} says so), "…, no movement"
-     * for 0. Times rounded to whole minutes as the timeline shows them; the seconds with one decimal under 10 in {@code loc}.
+     * half): "02:10 to 02:15, on average 4.0 s of motion per ring report" ({@link #MOVEMENT_NOTE} explains the reports),
+     * "…, no movement" for 0. Times rounded to whole minutes as the timeline shows them; the seconds with one decimal under 10
+     * in {@code loc}.
      */
     public static String movementTip(double at, double step, double seconds, ZoneId zone, Locale loc) {
         String span = WakeUps.clock(at - step / 2, zone) + " to " + WakeUps.clock(at + step / 2, zone);
         if (Double.isNaN(seconds)) return span + ", no movement reading";
         if (seconds <= 0) return span + ", no movement";
         String v = seconds < 9.95 ? String.format(loc, "%.1f", seconds) : String.format(loc, "%.0f", seconds);
-        return span + ", " + v + " s of motion per reading";
+        return span + ", on average " + v + " s of motion per ring report";
     }
 
     /** The readout where the movement strip has no reading: "02:10, no movement reading". */

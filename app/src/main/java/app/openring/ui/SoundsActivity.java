@@ -556,7 +556,14 @@ public final class SoundsActivity extends Activity {
                     }
                     n = Double.isNaN(start) ? null : Sounds.night(db, start);
                     // the zone of the night, as the Sleep tab shows it (phase 1c), not the phone's now
-                    if (n != null) zone = Sounds.zone(db, n.start, ZoneId.systemDefault());
+                    if (n != null) {
+                        // a zone that cannot be read only changes the clock shown: the list still opens, in the phone's zone
+                        try {
+                            zone = Sounds.zone(db, n.start, ZoneId.systemDefault());
+                        } catch (RuntimeException e) {
+                            zone = ZoneId.systemDefault();
+                        }
+                    }
                 } catch (RuntimeException e) {
                     ok = false;
                 }

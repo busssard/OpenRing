@@ -916,6 +916,48 @@ public class SoundTest {
         eq("1c pick: just past it", app.openring.core.SoundMarks.pick(marks, snore + 14 * 60 + reach + 1, reach).size(), 0);
         eq("1c pick: no marks", app.openring.core.SoundMarks.pick(new ArrayList<app.openring.core.SleepSounds.Mark>(), talk, reach).size(), 0);
 
+        // review of #482: the readout names two marks, then how many more the rows under the strip list
+        List<app.openring.core.SleepSounds.Mark> crowd = new ArrayList<app.openring.core.SleepSounds.Mark>(withInside);
+        app.openring.core.SleepSounds.Mark in2 = new app.openring.core.SleepSounds.Mark(snore + 310, snore + 312, SoundDetector.TALK, true, false);
+        app.openring.core.SleepSounds.Mark in3 = new app.openring.core.SleepSounds.Mark(snore + 330, snore + 333, SoundDetector.TALK, true, false);
+        crowd.add(in2);
+        crowd.add(in3);
+        eq("1c tip: four marks read, all four picked for the rows", app.openring.core.SoundMarks.pick(crowd, snore + 320, reach).size(), 4);
+        eq("1c tip: two named, then the rest counted", app.openring.core.SoundMarks.tip(crowd, gaps, start, stop, app.openring.core.SleepSounds.ENDED_TIME, snore + 320, reach, ZURICH),
+                "02:17, cough like sound, 1 s\n02:17, talking or other sound, 2 s\nand 2 more, listed under the strip");
+        crowd.remove(in3);
+        eq("1c tip: three marks, one more", app.openring.core.SoundMarks.tip(crowd, gaps, start, stop, app.openring.core.SleepSounds.ENDED_TIME, snore + 320, reach, ZURICH).split("\n")[2],
+                "and 1 more, listed under the strip");
+        eq("1c tip: never more than three lines of marks", app.openring.core.SoundMarks.tip(crowd, gaps, start, stop, app.openring.core.SleepSounds.ENDED_TIME, snore + 320, reach, ZURICH).split("\n").length,
+                app.openring.core.SoundMarks.TIP_MARKS + 1);
+
+        // review of #482: a touch at the window's edge reads only marks the strip draws
+        double win0 = snore + 30, win1 = snore + 3600;
+        List<app.openring.core.SleepSounds.Mark> before = new ArrayList<app.openring.core.SleepSounds.Mark>();
+        app.openring.core.SleepSounds.Mark justBefore = new app.openring.core.SleepSounds.Mark(snore - 100, snore - 99, SoundDetector.COUGH, true, false);
+        before.add(justBefore);
+        before.add(mSnore);
+        eq("1c drawn: a mark ending before the window is not drawn", app.openring.core.SoundMarks.drawn(before, win0, win1).size(), 1);
+        eq("1c drawn: a stretch reaching into the window is", app.openring.core.SoundMarks.drawn(before, win0, win1).get(0), mSnore);
+        eq("1c pick: without the window the mark outside is within reach", app.openring.core.SoundMarks.pick(before, win0, reach).size(), 1);
+        eq("1c pick: in the window only the stretch", app.openring.core.SoundMarks.pick(before, win0, reach, win0, win1).get(0), mSnore);
+        List<app.openring.core.SleepSounds.Mark> onlyOut = Arrays.asList(justBefore);
+        eq("1c pick: a mark outside the window, nothing read", app.openring.core.SoundMarks.pick(onlyOut, snore - 60, reach, snore, win1).size(), 0);
+        eq("1c tip: the window's edge tells listening, not the mark outside",
+                app.openring.core.SoundMarks.tip(onlyOut, new ArrayList<app.openring.core.SoundMarks.Gap>(), start, stop, app.openring.core.SleepSounds.ENDED_TIME, snore, reach, ZURICH, snore, win1),
+                "02:12, listening, no sound kept");
+        app.openring.core.SleepSounds.Mark justAfter = new app.openring.core.SleepSounds.Mark(win1 + 30, win1 + 31, SoundDetector.COUGH, true, false);
+        eq("1c pick: nor after the window", app.openring.core.SoundMarks.pick(Arrays.asList(justAfter), win1, reach, win0, win1).size(), 0);
+        eq("1c drawn: a mark at the window's very end is drawn", app.openring.core.SoundMarks.drawn(Arrays.asList(
+                new app.openring.core.SleepSounds.Mark(win1, win1 + 1, SoundDetector.COUGH, true, false)), win0, win1).size(), 1);
+
+        // review of #482: the timeline's note only on a night with sounds kept
+        check("1c timeline note: no rows, no note", !app.openring.core.SoundMarks.anySound(null));
+        check("1c timeline note: only started and stopped listening, no note", !app.openring.core.SoundMarks.anySound(app.openring.core.SoundMarks.rows(
+                new ArrayList<app.openring.core.SleepSounds.Mark>(), gaps, start, stop, app.openring.core.SleepSounds.ENDED_TIME, ZURICH)));
+        check("1c timeline note: a sound kept, the note", app.openring.core.SoundMarks.anySound(app.openring.core.SoundMarks.rows(
+                marks, gaps, start, stop, app.openring.core.SleepSounds.ENDED_TIME, ZURICH)));
+
         // the readout where there is no mark
         String ended = app.openring.core.SleepSounds.ENDED_TIME;
         eq("1c tip: in a gap", app.openring.core.SoundMarks.tip(marks, gaps, start, stop, ended, gapAt + 300, reach, ZURICH),
@@ -984,7 +1026,7 @@ public class SoundTest {
         check("1c: the gap values are the stored ones", app.openring.core.SoundMarks.GAP_SILENCE.equals("silence") && app.openring.core.SoundMarks.GAP_SYSTEM.equals("system"));
 
         String[] all = {app.openring.core.SoundMarks.STRIP_NOTE, app.openring.core.SoundMarks.TIMELINE_NOTE, app.openring.core.SoundMarks.STARTED,
-            app.openring.core.SoundMarks.outsideLine(2, 1), app.openring.core.SoundMarks.shortGapsLine(3), got.toString(),
+            app.openring.core.SoundMarks.outsideLine(2, 1), app.openring.core.SoundMarks.shortGapsLine(3), got.toString(), app.openring.core.SoundMarks.moreLine(2),
             app.openring.core.SoundMarks.tip(marks, gaps, start, stop, ended, gapAt + 300, reach, ZURICH),
             app.openring.core.SoundMarks.tip(marks, gaps, start, stop, app.openring.core.SleepSounds.ENDED_SYSTEM, stop + 600, reach, ZURICH)};
         boolean plain = true;
