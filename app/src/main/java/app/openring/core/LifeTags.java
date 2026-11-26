@@ -319,11 +319,21 @@ public final class LifeTags {
         /** The names of {@code keys} in the list order (fixed tags first), for the lines beside a night. */
         public List<String> names(java.util.Collection<String> keys) {
             List<String> out = new ArrayList<String>();
+            for (String k : keys(keys)) out.add(all.containsKey(k) ? all.get(k).name : name(k));
+            return out;
+        }
+
+        /**
+         * {@code keys} as their factors' keys (an alias read as its older key, each once) in the order of {@link #names}, for the
+         * effect lines beside a night (issue #292, phase 3).
+         */
+        public List<String> keys(java.util.Collection<String> keys) {
+            List<String> out = new ArrayList<String>();
             if (keys == null) return out;
             java.util.Set<String> in = new java.util.LinkedHashSet<String>();
             for (String k : keys) in.add(key(k));
-            for (String k : all.keySet()) if (in.contains(k)) out.add(all.get(k).name);
-            for (String k : in) if (!all.containsKey(k)) out.add(name(k));
+            for (String k : all.keySet()) if (in.contains(k)) out.add(k);
+            for (String k : in) if (!all.containsKey(k)) out.add(k);
             return out;
         }
     }

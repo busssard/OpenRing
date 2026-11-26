@@ -503,6 +503,95 @@ public class EffectTest {
         check("usual: the touch readout of " + n + " nights says ms, bpm and °C", n > 300 && hrv && rhr && temp, FactorEffect.pointText(r, r.points.size() - 1, H, TODAY, L));
     }
 
+    /**
+     * Phase 3 (issue #292, option A): the lines beside readiness and beside the night, {@code FactorEffect.beside}: each measure's
+     * sentence, the 0 case, last night with and without a value, "That night" for an earlier day, own tag names, no line for a
+     * not clear factor, a tag without a result or a cycle factor, the order of the logged line, null input.
+     */
+    static void beside() {
+        int H = FactorEffect.HRV, R = FactorEffect.RHR, T = FactorEffect.TEMP, S = FactorEffect.SCORE;
+        String a = FactorEffect.besideLine("Alcohol", H, -12.4, 26, -9.2, true, L);
+        check("beside: HRV", "After Alcohol your HRV is usually 12 % lower that night (clear, 26 nights). Last night: 9 % lower than your usual.".equals(a), a);
+        String b = FactorEffect.besideLine("Hard workout", R, 2.06, 14, 1.04, true, L);
+        check("beside: lowest heart rate", "After Hard workout your lowest heart rate is usually 2.1 bpm higher that night (clear, 14 nights). Last night: 1.0 bpm higher than your usual.".equals(b), b);
+        String c = FactorEffect.besideLine("Sauna", T, -0.12, 11, 0.051, false, L);
+        check("beside: temperature cooler, That night warmer", "After Sauna your temperature is usually 0.12 °C cooler that night (clear, 11 nights). That night: 0.05 °C warmer than your usual.".equals(c), c);
+        String d = FactorEffect.besideLine("late dinner", S, -3.4, 12, Double.NaN, true, L);
+        check("beside: sleep score, own name as typed, no last night value", "After late dinner your sleep score is usually 3 points lower that night (clear, 12 nights).".equals(d), d);
+        String e = FactorEffect.besideLine("Alcohol", H, -12, 26, 0.3, true, L);
+        check("beside: last night about the same", e != null && e.endsWith(" Last night: about the same as your usual."), e);
+        check("beside: a difference that shows as 0 gives no line", FactorEffect.besideLine("Alcohol", H, 0.4, 26, -9, true, L) == null
+                && FactorEffect.besideLine("Alcohol", T, -0.004, 26, -9, true, L) == null && FactorEffect.besideLine("Alcohol", H, Double.NaN, 26, -9, true, L) == null, null);
+
+        // made up histories: two clear factors (disjoint days), one without an effect, the period tracker's
+        LocalDate before = TODAY.minusDays(1);
+        Set<LocalDate> t1 = random(455, 0.2, 101), t2 = random(455, 0.2, 102), none = random(455, 0.2, 103);
+        t1.add(before);
+        t2.removeAll(t1);
+        Set<LocalDate> both = new HashSet<LocalDate>(t1);
+        both.addAll(t2);
+        List<FactorEffect.Night> nights = history(455, both, -0.2, 104);
+        List<FactorEffect.Factor> fs = new ArrayList<FactorEffect.Factor>();
+        fs.add(tag("alcohol", t1, START));
+        fs.add(new FactorEffect.Factor("own:1731850000000", "late dinner", FactorEffect.TAG, t2, START, null));
+        fs.add(tag("meditation", none, START));
+        fs.addAll(FactorEffect.cycle(Cycles.of(Cycles.demoHistory(TODAY), null, TODAY), TODAY));
+        List<FactorEffect.Result> rs = FactorEffect.of(nights, fs, TODAY);
+        FactorEffect.Result alc = find(rs, "alcohol"), own = find(rs, "own:1731850000000"), med = find(rs, "meditation");
+        check("beside: the made up factors are clear and not clear", alc.clear() && own.clear() && !med.clear(), FactorEffect.status(med, L));
+        List<String> one = FactorEffect.beside(rs, Arrays.asList("alcohol"), before, true, L);
+        String head = "After Alcohol your HRV is usually " + FactorEffect.amount(H, alc.m[H].diff, L) + " lower that night (clear, " + alc.m[H].nWith + " nights).";
+        check("beside: the clear factor's line with the headline's nights", one.size() == 1 && one.get(0).startsWith(head + " Last night: ")
+                && one.get(0).endsWith(" your usual."), one);
+        FactorEffect.Point last = alc.points.get(alc.points.size() - 1);
+        check("beside: last night's difference from its point", last.tagDay.equals(before)
+                && one.get(0).equals(FactorEffect.besideLine("Alcohol", H, alc.m[H].diff, alc.m[H].nWith, last.diff[H], true, L)) && !Double.isNaN(last.diff[H]), one);
+        check("beside: a not clear factor gives no line", FactorEffect.beside(rs, Arrays.asList("meditation"), before, true, L).isEmpty(), null);
+        check("beside: a tag without a result gives no line", FactorEffect.beside(rs, Arrays.asList("sauna", "own:9"), before, true, L).isEmpty(), null);
+        check("beside: the cycle factors get no line", FactorEffect.beside(rs, Arrays.asList(FactorEffect.KEY_PERIOD, FactorEffect.KEY_OVULATION), before, true, L).isEmpty(), null);
+        List<String> ab = FactorEffect.beside(rs, Arrays.asList("meditation", "alcohol", "sauna", "own:1731850000000"), before, true, L),
+                ba = FactorEffect.beside(rs, Arrays.asList("own:1731850000000", "alcohol"), before, true, L);
+        check("beside: in the order of the logged line, own names as typed", ab.size() == 2 && ab.get(0).startsWith("After Alcohol ") && ab.get(1).startsWith("After late dinner your HRV ")
+                && ba.size() == 2 && ba.get(0).equals(ab.get(1)) && ba.get(1).equals(ab.get(0)), ab);
+        List<String> earlier = FactorEffect.beside(rs, Arrays.asList("alcohol"), before, false, L);
+        check("beside: That night for an earlier day", earlier.size() == 1 && earlier.get(0).startsWith(head + " That night: ") && !earlier.get(0).contains("Last night"), earlier);
+        List<String> future = FactorEffect.beside(rs, Arrays.asList("alcohol"), TODAY, true, L);
+        check("beside: no night yet, only the pattern", future.size() == 1 && future.get(0).equals(head), future);
+        // last night without an HRV value (the heart rate still there, so the night counts): the pattern alone
+        List<FactorEffect.Night> noHrv = new ArrayList<FactorEffect.Night>(nights);
+        FactorEffect.Night n = noHrv.remove(noHrv.size() - 1);
+        noHrv.add(new FactorEffect.Night(n.day, Double.NaN, n.v[R], n.v[T], n.v[S], false));
+        List<FactorEffect.Result> rs2 = FactorEffect.of(noHrv, fs, TODAY);
+        List<String> nv = FactorEffect.beside(rs2, Arrays.asList("alcohol"), before, true, L);
+        check("beside: last night without a value, the pattern alone", nv.size() == 1 && nv.get(0).startsWith("After Alcohol your HRV is usually ")
+                && nv.get(0).endsWith(" nights).") && find(rs2, "alcohol").points.get(find(rs2, "alcohol").points.size() - 1).tagDay.equals(before), nv);
+        // last night with an HRV value but without a usual (no HRV in the 90 days before it): the pattern alone
+        List<FactorEffect.Night> noUsual = new ArrayList<FactorEffect.Night>();
+        for (FactorEffect.Night x : nights) {
+            boolean gap = !x.day.isBefore(TODAY.minusDays(FactorEffect.USUAL_DAYS)) && x.day.isBefore(TODAY);
+            noUsual.add(gap ? new FactorEffect.Night(x.day, Double.NaN, x.v[R], x.v[T], x.v[S], false) : x);
+        }
+        FactorEffect.Result alc3 = find(FactorEffect.of(noUsual, fs, TODAY), "alcohol");
+        FactorEffect.Point p3 = alc3.points.get(alc3.points.size() - 1);
+        List<String> nu = FactorEffect.beside(FactorEffect.of(noUsual, fs, TODAY), Arrays.asList("alcohol"), before, true, L);
+        check("beside: last night without a usual, the pattern alone", p3.tagDay.equals(before) && !Double.isNaN(p3.value[H]) && Double.isNaN(p3.usual[H])
+                && alc3.clear() && alc3.headline == H && nu.size() == 1 && nu.get(0).endsWith(" nights)."), nu);
+        // last night left out (#254): not a point, the pattern alone
+        List<FactorEffect.Night> left = new ArrayList<FactorEffect.Night>(nights);
+        FactorEffect.Night ln = left.remove(left.size() - 1);
+        left.add(new FactorEffect.Night(ln.day, ln.v[H], ln.v[R], ln.v[T], ln.v[S], true));
+        List<String> lo = FactorEffect.beside(FactorEffect.of(left, fs, TODAY), Arrays.asList("alcohol"), before, true, L);
+        check("beside: last night left out, the pattern alone", lo.size() == 1 && lo.get(0).endsWith(" nights)."), lo);
+        check("beside: null results or keys give no line", FactorEffect.beside(null, Arrays.asList("alcohol"), before, true, L).isEmpty()
+                && FactorEffect.beside(rs, null, before, true, L).isEmpty() && FactorEffect.beside(new ArrayList<FactorEffect.Result>(), Arrays.asList("alcohol"), before, true, L).isEmpty(), null);
+        boolean plain = true;
+        List<String> all = new ArrayList<String>(Arrays.asList(a, b, c, d, e));
+        all.addAll(ab);
+        all.addAll(earlier);
+        for (String x : all) plain &= !x.contains(" - ") && !x.contains("—") && !x.contains("–") && !x.contains("--");
+        check("beside: no dashes as punctuation", plain, null);
+    }
+
     /** Issue #475: when the life factors cannot be read, Body's month card says so and the effect card is left out (not the same error twice). */
     static void unreadableOnce() {
         String card;
@@ -578,6 +667,7 @@ public class EffectTest {
         order();
         texts();
         rangeTexts();
+        beside();
         unreadableOnce();
         demoYear();
         time();

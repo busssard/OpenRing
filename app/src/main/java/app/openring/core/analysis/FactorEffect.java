@@ -705,9 +705,63 @@ public final class FactorEffect {
         return s + amount(k, x, l).replace(" points", "").replace(" point", "");
     }
 
+    // ------------------------------------------------------------------ beside the number (phase 3)
+
+    /** Under the lines beside readiness when at least one effect shows (phase 3, option A: display only). */
+    public static final String BESIDE_NOTE_READY = "A pattern in your own nights, not a rule. Readiness itself does not change: last night's readings already hold it.";
+    /** The same under Sleep's "Before this night" line. */
+    public static final String BESIDE_NOTE_SLEEP = "A pattern in your own nights, not a rule. The sleep score itself does not change: it comes from the night's own readings.";
+    /** The hint of the card with at least one effect line (it opens Body, where the card Life factors and your nights is). */
+    public static final String BESIDE_HINT = "Tap for how your nights went after each factor on Body.";
+    /** The hint of the card without one, as before phase 3. */
+    public static final String LOGGED_HINT = "As you logged them on Today. Tap for the month on Body.";
+
+    /**
+     * Phase 3 (issue #292, option A): one sentence per tag of the day before ({@code keys}, in the order of the logged line) whose
+     * result is clear and whose difference does not show as 0, for the card beside readiness and beside the night. Not clear
+     * tags, tags without a result and the cycle factors get no line. Empty for null or empty input. Changes no number.
+     */
+    public static List<String> beside(List<Result> results, List<String> keys, LocalDate dayBefore, boolean shownIsToday, Locale l) {
+        List<String> out = new ArrayList<String>();
+        if (results == null || keys == null || dayBefore == null) return out;
+        for (String key : keys) {
+            Result r = null;
+            for (Result x : results) if (x != null && x.factor.kind == TAG && x.factor.key.equals(key)) r = x;
+            if (r == null || r.state != NUMBER || r.headline < 0 || !r.clear()) continue;
+            int k = r.headline;
+            Measure m = r.m[k];
+            double last = Double.NaN;
+            for (Point p : r.points) {
+                if (!p.tagDay.equals(dayBefore)) continue;
+                if (!Double.isNaN(p.value[k]) && !Double.isNaN(p.usual[k])) last = p.diff[k];
+            }
+            String s = besideLine(r.factor.name, k, m.diff, m.nWith, last, shownIsToday, l);
+            if (s != null) out.add(s);
+        }
+        return out;
+    }
+
+    /**
+     * One line beside the number: "After Alcohol your HRV is usually 12 % lower that night (clear, 26 nights). Last night: 9 %
+     * lower than your usual." The second sentence only for a {@code last} difference (NaN for none); "That night" for an earlier
+     * day shown. Null when {@code diff} shows as 0 (nothing to say beside the number).
+     */
+    public static String besideLine(String name, int k, double diff, int nights, double last, boolean shownIsToday, Locale l) {
+        if (Double.isNaN(diff) || none(k, diff)) return null;
+        StringBuilder b = new StringBuilder("After ").append(name).append(' ').append(SUBJECT[k]).append(" is usually ")
+                .append(amount(k, diff, l)).append(' ').append(word(k, diff)).append(" that night (clear, ").append(nights)
+                .append(nights == 1 ? " night)." : " nights).");
+        if (!Double.isNaN(last) && !Double.isInfinite(last)) {
+            b.append(shownIsToday ? " Last night: " : " That night: ").append(said(k, last, l)).append(" ").append(none(k, last) ? "as" : "than")
+                    .append(" your usual.");
+        }
+        return b.toString();
+    }
+
     /** Every fixed text, for the tests (plain, no dashes). */
     public static String[] texts() {
-        return new String[] {TITLE, INTRO, NOT_ADVICE, NOTHING, NO_RING, CYCLE_TEMP, UNREADABLE, CHART_NOTE, BAR_NOTE};
+        return new String[] {TITLE, INTRO, NOT_ADVICE, NOTHING, NO_RING, CYCLE_TEMP, UNREADABLE, CHART_NOTE, BAR_NOTE, BESIDE_NOTE_READY, BESIDE_NOTE_SLEEP,
+            BESIDE_HINT, LOGGED_HINT};
     }
 
     /** Days between two dates (for the chart's axis). */

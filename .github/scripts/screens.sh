@@ -215,6 +215,17 @@ launch --ei tab 0 --es card WHAT_WAS;                                 shot today
 launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
 launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
 launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
+# Phase 3 of #292 (option A): beside readiness, one line per factor of the day before with a clear effect (the demo's Alcohol,
+# made up as clear; yesterday's shows on readiness-life above with "Last night"). Here an earlier day after one of the demo's
+# weekend Alcohol evenings (LifeTags.demo: a Friday or Saturday an even number of days back, a week or more ago), so the line
+# says "That night"; the demo's dates move with today, so the day is worked out here the same way
+LIFE_BACK=""
+for b in $(seq 8 2 28); do
+  case "$(date -d "$b days ago" +%u)" in 5|6) LIFE_BACK=$b; break;; esac
+done
+if [ -n "$LIFE_BACK" ]; then
+  launch --ei tab 2 --es day "$(date -d "$((LIFE_BACK - 1)) days ago" +%F)" --es card LIFE_FACTORS; shot readiness-life-effect 2
+else echo "::warning::issue #292 phase 3 step: no demo day after an Alcohol evening was found"; fi
 # When and how long (issue #435): the sheet opened on Today's row for Sauna (extra life_time, demo mode only; nothing is saved
 # without a tap): From as two wheels, How long as the tag's usual lengths, Save, Without a time
 launch --ei tab 0 --es card WHAT_WAS --ez life_time true;           shot today-life-time 3

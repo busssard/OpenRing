@@ -416,6 +416,13 @@ before the 365 days on. The demo (`Demo.enter` only) gets made up tags over its 
 HRV more than 4 % under their usual (a made up clear effect), Meditation on every third day (not clear), Stress, a hard workout twice a
 week, Illness on the year's ill week. `Demo.history` and the year's nights are unchanged.
 
+**Phase 3, beside the number (issue #292, option A).** The cards beside readiness (`LifeCard.morning`) and beside the night on Sleep
+(`LifeCard.night`) add one line under the logged line for each tag of the day before (`LifeTags.Known.keys`, in the order of that line)
+whose phase 2 result in `DayData.lifeEffects` is clear and does not show as 0 (`FactorEffect.beside`): "After Alcohol your HRV is usually
+12 % lower that night (clear, 26 nights). Last night: 9 % lower than your usual." ("That night" for an earlier day; the second sentence
+only when that night's point has a value and a usual). Not clear tags, cycle factors and days without a ring get no line. Display only:
+nothing stored, readiness and every score unchanged (option B, a factor moving the number, is still open).
+
 **Sleep sounds (issue #380), phase 1a.** Only the storage and the detector; there is no microphone permission, service or screen
 yet (1b brings the listening and the Sleep card, 1c the marks on the night's timeline). `core/analysis/SoundDetector` (pure Java,
 fed 16 kHz mono samples in any piece size, worked through in frames of 512 samples, 32 ms; times are unix seconds from the night's

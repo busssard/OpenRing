@@ -94,6 +94,35 @@ public class EffectPipelineTest {
                 alc == null ? null : FactorEffect.status(alc, Locale.US));
         check("#292 demo: Meditation has a number that is not clear yet", med != null && med.state == FactorEffect.NUMBER && !med.clear(),
                 med == null ? null : FactorEffect.status(med, Locale.US));
+        // phase 3 (option A): the lines beside readiness and the night, from the same results; nothing stored, no score changed
+        LifeTags.Known known = LifeLog.known(db);
+        java.util.Map<LocalDate, List<String>> days = LifeLog.all(db);
+        LocalDate y = today.minusDays(1);
+        List<String> keys = known.keys(days.get(y));
+        List<String> lines = FactorEffect.beside(l, keys, y, true, Locale.US);
+        for (String s : lines) System.out.println("    beside: " + s);
+        check("#292 phase 3 demo: yesterday's tags in the order of the logged line", keys.contains(LifeTags.ALCOHOL)
+                && known.names(days.get(y)).size() == keys.size() && known.names(days.get(y)).indexOf("Alcohol") == keys.indexOf(LifeTags.ALCOHOL), keys);
+        check("#292 phase 3 demo: Alcohol's line beside today's readiness, with last night", lines.size() >= 1 && lines.get(0).startsWith("After Alcohol your HRV is usually ")
+                && lines.get(0).contains(" lower that night (clear, " + alc.m[FactorEffect.HRV].nWith + " nights). Last night: "), lines);
+        check("#292 phase 3 demo: no line for Meditation (not clear yet)", keys.contains(LifeTags.MEDITATION) && lines.size() == FactorEffect.beside(l,
+                java.util.Arrays.asList(LifeTags.ALCOHOL), y, true, Locale.US).size() + FactorEffect.beside(l, java.util.Arrays.asList(LifeTags.SAUNA), y, true, Locale.US).size(), lines);
+        LocalDate bare = null;
+        for (int back = 2; back < 30 && bare == null; back++) {
+            List<String> t = days.get(today.minusDays(back + 1));
+            if (t == null || t.isEmpty()) bare = today.minusDays(back);
+        }
+        check("#292 phase 3 demo: a day after a day without tags gets no line", bare != null
+                && FactorEffect.beside(l, known.keys(days.get(bare.minusDays(1))), bare.minusDays(1), false, Locale.US).isEmpty(), bare);
+        LocalDate earlier = null;
+        for (int back = 2; back < 60 && earlier == null; back++) {
+            List<String> t = days.get(today.minusDays(back + 1));
+            if (t != null && t.contains(LifeTags.ALCOHOL)) earlier = today.minusDays(back);
+        }
+        List<String> that = earlier == null ? null : FactorEffect.beside(l, known.keys(days.get(earlier.minusDays(1))), earlier.minusDays(1), false, Locale.US);
+        check("#292 phase 3 demo: an earlier day after Alcohol says That night", that != null && that.size() >= 1 && that.get(0).startsWith("After Alcohol ")
+                && that.get(0).contains(" That night: "), earlier + " " + that);
+        check("#292 phase 3 demo: the lines change nothing stored (readiness and every score as before)", stored(db).equals(before), null);
         int few = 0;
         for (FactorEffect.Result r : l) if (r.state == FactorEffect.FEW_WITH) few++;
         check("#292 demo: some factors have too few days yet (the count shows)", few >= 1, few);
