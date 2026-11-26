@@ -511,13 +511,13 @@ public class EffectTest {
     static void beside() {
         int H = FactorEffect.HRV, R = FactorEffect.RHR, T = FactorEffect.TEMP, S = FactorEffect.SCORE;
         String a = FactorEffect.besideLine("Alcohol", H, -12.4, 26, -9.2, true, L);
-        check("beside: HRV", "After Alcohol your HRV is usually 12 % lower that night (clear, 26 nights). Last night: 9 % lower than your usual.".equals(a), a);
+        check("beside: HRV", "After a day with Alcohol, your HRV is usually 12 % lower that night (clear, from 26 nights after it). Last night: 9 % lower than your usual.".equals(a), a);
         String b = FactorEffect.besideLine("Hard workout", R, 2.06, 14, 1.04, true, L);
-        check("beside: lowest heart rate", "After Hard workout your lowest heart rate is usually 2.1 bpm higher that night (clear, 14 nights). Last night: 1.0 bpm higher than your usual.".equals(b), b);
+        check("beside: lowest heart rate", "After a day with Hard workout, your lowest heart rate is usually 2.1 bpm higher that night (clear, from 14 nights after it). Last night: 1.0 bpm higher than your usual.".equals(b), b);
         String c = FactorEffect.besideLine("Sauna", T, -0.12, 11, 0.051, false, L);
-        check("beside: temperature cooler, That night warmer", "After Sauna your temperature is usually 0.12 °C cooler that night (clear, 11 nights). That night: 0.05 °C warmer than your usual.".equals(c), c);
+        check("beside: temperature cooler, That night warmer", "After a day with Sauna, your temperature is usually 0.12 °C cooler that night (clear, from 11 nights after it). That night: 0.05 °C warmer than your usual.".equals(c), c);
         String d = FactorEffect.besideLine("late dinner", S, -3.4, 12, Double.NaN, true, L);
-        check("beside: sleep score, own name as typed, no last night value", "After late dinner your sleep score is usually 3 points lower that night (clear, 12 nights).".equals(d), d);
+        check("beside: sleep score, own name as typed, no last night value", "After a day with late dinner, your sleep score is usually 3 points lower that night (clear, from 12 nights after it).".equals(d), d);
         String e = FactorEffect.besideLine("Alcohol", H, -12, 26, 0.3, true, L);
         check("beside: last night about the same", e != null && e.endsWith(" Last night: about the same as your usual."), e);
         check("beside: a difference that shows as 0 gives no line", FactorEffect.besideLine("Alcohol", H, 0.4, 26, -9, true, L) == null
@@ -540,7 +540,7 @@ public class EffectTest {
         FactorEffect.Result alc = find(rs, "alcohol"), own = find(rs, "own:1731850000000"), med = find(rs, "meditation");
         check("beside: the made up factors are clear and not clear", alc.clear() && own.clear() && !med.clear(), FactorEffect.status(med, L));
         List<String> one = FactorEffect.beside(rs, Arrays.asList("alcohol"), before, true, L);
-        String head = "After Alcohol your HRV is usually " + FactorEffect.amount(H, alc.m[H].diff, L) + " lower that night (clear, " + alc.m[H].nWith + " nights).";
+        String head = "After a day with Alcohol, your HRV is usually " + FactorEffect.amount(H, alc.m[H].diff, L) + " lower that night (clear, from " + alc.m[H].nWith + " nights after it).";
         check("beside: the clear factor's line with the headline's nights", one.size() == 1 && one.get(0).startsWith(head + " Last night: ")
                 && one.get(0).endsWith(" your usual."), one);
         FactorEffect.Point last = alc.points.get(alc.points.size() - 1);
@@ -551,7 +551,7 @@ public class EffectTest {
         check("beside: the cycle factors get no line", FactorEffect.beside(rs, Arrays.asList(FactorEffect.KEY_PERIOD, FactorEffect.KEY_OVULATION), before, true, L).isEmpty(), null);
         List<String> ab = FactorEffect.beside(rs, Arrays.asList("meditation", "alcohol", "sauna", "own:1731850000000"), before, true, L),
                 ba = FactorEffect.beside(rs, Arrays.asList("own:1731850000000", "alcohol"), before, true, L);
-        check("beside: in the order of the logged line, own names as typed", ab.size() == 2 && ab.get(0).startsWith("After Alcohol ") && ab.get(1).startsWith("After late dinner your HRV ")
+        check("beside: in the order of the logged line, own names as typed", ab.size() == 2 && ab.get(0).startsWith("After a day with Alcohol, ") && ab.get(1).startsWith("After a day with late dinner, your HRV ")
                 && ba.size() == 2 && ba.get(0).equals(ab.get(1)) && ba.get(1).equals(ab.get(0)), ab);
         List<String> earlier = FactorEffect.beside(rs, Arrays.asList("alcohol"), before, false, L);
         check("beside: That night for an earlier day", earlier.size() == 1 && earlier.get(0).startsWith(head + " That night: ") && !earlier.get(0).contains("Last night"), earlier);
@@ -563,8 +563,8 @@ public class EffectTest {
         noHrv.add(new FactorEffect.Night(n.day, Double.NaN, n.v[R], n.v[T], n.v[S], false));
         List<FactorEffect.Result> rs2 = FactorEffect.of(noHrv, fs, TODAY);
         List<String> nv = FactorEffect.beside(rs2, Arrays.asList("alcohol"), before, true, L);
-        check("beside: last night without a value, the pattern alone", nv.size() == 1 && nv.get(0).startsWith("After Alcohol your HRV is usually ")
-                && nv.get(0).endsWith(" nights).") && find(rs2, "alcohol").points.get(find(rs2, "alcohol").points.size() - 1).tagDay.equals(before), nv);
+        check("beside: last night without a value, the pattern alone", nv.size() == 1 && nv.get(0).startsWith("After a day with Alcohol, your HRV is usually ")
+                && nv.get(0).endsWith(" nights after it).") && find(rs2, "alcohol").points.get(find(rs2, "alcohol").points.size() - 1).tagDay.equals(before), nv);
         // last night with an HRV value but without a usual (no HRV in the 90 days before it): the pattern alone
         List<FactorEffect.Night> noUsual = new ArrayList<FactorEffect.Night>();
         for (FactorEffect.Night x : nights) {
@@ -575,13 +575,13 @@ public class EffectTest {
         FactorEffect.Point p3 = alc3.points.get(alc3.points.size() - 1);
         List<String> nu = FactorEffect.beside(FactorEffect.of(noUsual, fs, TODAY), Arrays.asList("alcohol"), before, true, L);
         check("beside: last night without a usual, the pattern alone", p3.tagDay.equals(before) && !Double.isNaN(p3.value[H]) && Double.isNaN(p3.usual[H])
-                && alc3.clear() && alc3.headline == H && nu.size() == 1 && nu.get(0).endsWith(" nights)."), nu);
+                && alc3.clear() && alc3.headline == H && nu.size() == 1 && nu.get(0).endsWith(" nights after it)."), nu);
         // last night left out (#254): not a point, the pattern alone
         List<FactorEffect.Night> left = new ArrayList<FactorEffect.Night>(nights);
         FactorEffect.Night ln = left.remove(left.size() - 1);
         left.add(new FactorEffect.Night(ln.day, ln.v[H], ln.v[R], ln.v[T], ln.v[S], true));
         List<String> lo = FactorEffect.beside(FactorEffect.of(left, fs, TODAY), Arrays.asList("alcohol"), before, true, L);
-        check("beside: last night left out, the pattern alone", lo.size() == 1 && lo.get(0).endsWith(" nights)."), lo);
+        check("beside: last night left out, the pattern alone", lo.size() == 1 && lo.get(0).endsWith(" nights after it)."), lo);
         check("beside: null results or keys give no line", FactorEffect.beside(null, Arrays.asList("alcohol"), before, true, L).isEmpty()
                 && FactorEffect.beside(rs, null, before, true, L).isEmpty() && FactorEffect.beside(new ArrayList<FactorEffect.Result>(), Arrays.asList("alcohol"), before, true, L).isEmpty(), null);
         boolean plain = true;

@@ -708,7 +708,7 @@ public final class FactorEffect {
     // ------------------------------------------------------------------ beside the number (phase 3)
 
     /** Under the lines beside readiness when at least one effect shows (phase 3, option A: display only). */
-    public static final String BESIDE_NOTE_READY = "A pattern in your own nights, not a rule. Readiness itself does not change: last night's readings already hold it.";
+    public static final String BESIDE_NOTE_READY = "A pattern in your own nights, not a rule. Readiness does not change because of it: last night's readings already show the effect.";
     /** The same under Sleep's "Before this night" line. */
     public static final String BESIDE_NOTE_SLEEP = "A pattern in your own nights, not a rule. The sleep score itself does not change: it comes from the night's own readings.";
     /** The hint of the card with at least one effect line (it opens Body, where the card Life factors and your nights is). */
@@ -742,15 +742,15 @@ public final class FactorEffect {
     }
 
     /**
-     * One line beside the number: "After Alcohol your HRV is usually 12 % lower that night (clear, 26 nights). Last night: 9 %
+     * One line beside the number: "After a day with Alcohol, your HRV is usually 12 % lower that night (clear, from 26 nights after it). Last night: 9 %
      * lower than your usual." The second sentence only for a {@code last} difference (NaN for none); "That night" for an earlier
      * day shown. Null when {@code diff} shows as 0 (nothing to say beside the number).
      */
     public static String besideLine(String name, int k, double diff, int nights, double last, boolean shownIsToday, Locale l) {
         if (Double.isNaN(diff) || none(k, diff)) return null;
-        StringBuilder b = new StringBuilder("After ").append(name).append(' ').append(SUBJECT[k]).append(" is usually ")
-                .append(amount(k, diff, l)).append(' ').append(word(k, diff)).append(" that night (clear, ").append(nights)
-                .append(nights == 1 ? " night)." : " nights).");
+        StringBuilder b = new StringBuilder("After a day with ").append(name).append(", ").append(SUBJECT[k]).append(" is usually ")
+                .append(amount(k, diff, l)).append(' ').append(word(k, diff)).append(" that night (clear, from ").append(nights)
+                .append(nights == 1 ? " night after it)." : " nights after it).");
         if (!Double.isNaN(last) && !Double.isInfinite(last)) {
             b.append(shownIsToday ? " Last night: " : " That night: ").append(said(k, last, l)).append(" ").append(none(k, last) ? "as" : "than")
                     .append(" your usual.");

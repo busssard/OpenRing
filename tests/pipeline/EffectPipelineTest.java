@@ -103,8 +103,8 @@ public class EffectPipelineTest {
         for (String s : lines) System.out.println("    beside: " + s);
         check("#292 phase 3 demo: yesterday's tags in the order of the logged line", keys.contains(LifeTags.ALCOHOL)
                 && known.names(days.get(y)).size() == keys.size() && known.names(days.get(y)).indexOf("Alcohol") == keys.indexOf(LifeTags.ALCOHOL), keys);
-        check("#292 phase 3 demo: Alcohol's line beside today's readiness, with last night", lines.size() >= 1 && lines.get(0).startsWith("After Alcohol your HRV is usually ")
-                && lines.get(0).contains(" lower that night (clear, " + alc.m[FactorEffect.HRV].nWith + " nights). Last night: "), lines);
+        check("#292 phase 3 demo: Alcohol's line beside today's readiness, with last night", lines.size() >= 1 && lines.get(0).startsWith("After a day with Alcohol, your HRV is usually ")
+                && lines.get(0).contains(" lower that night (clear, from " + alc.m[FactorEffect.HRV].nWith + " nights after it). Last night: "), lines);
         check("#292 phase 3 demo: no line for Meditation (not clear yet)", keys.contains(LifeTags.MEDITATION) && lines.size() == FactorEffect.beside(l,
                 java.util.Arrays.asList(LifeTags.ALCOHOL), y, true, Locale.US).size() + FactorEffect.beside(l, java.util.Arrays.asList(LifeTags.SAUNA), y, true, Locale.US).size(), lines);
         LocalDate bare = null;
@@ -120,7 +120,7 @@ public class EffectPipelineTest {
             if (t != null && t.contains(LifeTags.ALCOHOL)) earlier = today.minusDays(back);
         }
         List<String> that = earlier == null ? null : FactorEffect.beside(l, known.keys(days.get(earlier.minusDays(1))), earlier.minusDays(1), false, Locale.US);
-        check("#292 phase 3 demo: an earlier day after Alcohol says That night", that != null && that.size() >= 1 && that.get(0).startsWith("After Alcohol ")
+        check("#292 phase 3 demo: an earlier day after Alcohol says That night", that != null && that.size() >= 1 && that.get(0).startsWith("After a day with Alcohol, ")
                 && that.get(0).contains(" That night: "), earlier + " " + that);
         check("#292 phase 3 demo: the lines change nothing stored (readiness and every score as before)", stored(db).equals(before), null);
         int few = 0;
