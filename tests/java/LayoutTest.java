@@ -1,6 +1,8 @@
+import app.openring.core.CardSpecs;
 import app.openring.core.Layout;
 import app.openring.core.SettingsBlocks;
 
+import java.lang.ref.WeakReference;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -44,6 +46,7 @@ public class LayoutTest {
         texts();
         draft();
         sources();
+        specs();
         System.out.println("layout: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -321,7 +324,53 @@ public class LayoutTest {
         check("a tile in its standard state saves nothing", tiles.contains("Layout.fold(foldsOf(c, tabName), t.key, open, t.standardOpen)")
                 && tiles.contains("Layout.orderToSave(Layout.parse(orderOf(c, tabName)), keys, standard)"));
         check("a note's key leaves out numbers", tiles.contains("k = Layout.noteKey(firstText)"));
+        check("a tile takes its card's spec, so the spec no longer keeps the page", tiles.contains("Spec s = SPECS.take(card);")
+                && !tiles.contains("SPECS.get(card);\n            t.spec") && tiles.contains("new CardSpecs<View, Spec>()"));
+        check("a page that is not arranged leaves no spec behind", tiles.contains("SPECS.take(root.getChildAt(i));"));
+        check("Further analysis' listener holds its body (the reason a spec must be taken)",
+                pages.contains("s.listener = new Tiles.Listener()") && pages.contains("fillAnalysis(c, d, body);"));
         String screens = new String(Files.readAllBytes(Paths.get(".github/scripts/screens.sh")), "UTF-8");
         check("screens.sh starts its steps in the standard layout", screens.contains("--ez layout_reset true"));
+    }
+
+    /** Collects garbage until {@code gone} is cleared or 50 tries passed; true when it was cleared. */
+    static boolean collected(WeakReference<?> gone) throws InterruptedException {
+        for (int i = 0; i < 50 && gone.get() != null; i++) {
+            System.gc();
+            Thread.sleep(10);
+        }
+        return gone.get() == null;
+    }
+
+    /**
+     * What a page says about its cards until the tiles take it (core/CardSpecs, ui/Tiles): the value is read once, then gone;
+     * a value that reaches its own card (Further analysis' listener and body) kept the card and the page for good while it was
+     * only read, and lets it go once taken; a card that is never arranged still goes by itself.
+     */
+    static void specs() throws Exception {
+        CardSpecs<Object, Object[]> m = new CardSpecs<Object, Object[]>();
+        Object a = new Object();
+        Object[] spec = {"further analysis"};
+        check("specs: nothing said about a card", m.get(a) == null && m.take(a) == null);
+        m.put(a, spec);
+        check("specs: read while the page is built", m.get(a) == spec && m.get(a) == spec && m.size() == 1);
+        check("specs: the tile takes it", m.take(a) == spec);
+        check("specs: taken once, then gone", m.take(a) == null && m.get(a) == null && m.size() == 0);
+
+        // a value that reaches its own card, as Further analysis' listener does through its body
+        Object card = new Object();
+        WeakReference<Object> ref = new WeakReference<Object>(card);
+        m.put(card, new Object[] {card});
+        card = null;
+        check("specs: only read, a value that reaches its card keeps it (the leak before)", !collected(ref) && m.size() == 1);
+        m.take(ref.get());
+        check("specs: taken, the card and its page can go", collected(ref) && m.size() == 0);
+
+        // a card that is never arranged keeps nothing either
+        Object lone = new Object();
+        WeakReference<Object> loneRef = new WeakReference<Object>(lone);
+        m.put(lone, new Object[] {"note"});
+        lone = null;
+        check("specs: a card never arranged goes by itself", collected(loneRef) && m.size() == 0);
     }
 }
