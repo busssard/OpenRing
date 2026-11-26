@@ -197,7 +197,8 @@ final class SoundViews {
                     }
                 });
         parent.addView(Ui.gap(c, 6));
-        parent.addView(strip, Ui.sized(c, -1, 56));
+        // 24 dp of marks and room for a readout of two lines above them; a longer one makes it taller (review of #482)
+        parent.addView(strip, Ui.sized(c, -1, 62));
         parent.addView(picked);
         parent.addView(Ui.text(c, SoundMarks.STRIP_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));
         String outside = SoundMarks.outsideLine(SoundMarks.before(marks, from), SoundMarks.after(marks, to));

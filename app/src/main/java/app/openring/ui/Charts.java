@@ -234,7 +234,7 @@ public final class Charts {
             float tw = 0;
             for (String l : lines) tw = Math.max(tw, tipTxt.measureText(l));
             float lh = tipTxt.getTextSize() * 1.25f;
-            float bw = tw + pad * 2, bh = tipTxt.getTextSize() + pad * 1.4f + (lines.length - 1) * lh;
+            float bw = tw + pad * 2, bh = tipHeight(lines.length);
             float left = Math.max(0, Math.min(getWidth() - bw, x - bw / 2));
             tipR.set(left, 0, left + bw, bh);
             float r = Math.min(bh / 2, (tipTxt.getTextSize() + pad * 1.4f) / 2);
@@ -244,6 +244,50 @@ public final class Charts {
                 cv.drawText(l, left + pad, y, tipTxt);
                 y += lh;
             }
+        }
+
+        /** The height of {@link #drawTip}'s bubble with {@code lines} lines. */
+        private float tipHeight(int lines) {
+            float pad = Ui.dp(getContext(), 6);
+            return tipTxt.getTextSize() + pad * 1.4f + (lines - 1) * tipTxt.getTextSize() * 1.25f;
+        }
+
+        /** Px the readout room of a strip took on beyond its laid out height ({@link #roomFor}), 0 at rest. */
+        private float grown;
+
+        /**
+         * For the strips whose readout sits in the {@code room} px above their marks (review of #482: a long readout covered
+         * them): true when the bubble of {@code text}, wrapped as {@link #drawTip} wraps it, fits there with a small gap. Else
+         * the view asks for that much more height (the marks keep theirs at the bottom, the room above them grows) and returns
+         * false: the caller skips the bubble in this frame and the next, taller one draws it. {@code text} null: the readout
+         * is gone and the view goes back to its own height. A display matter only, the values read stay the same.
+         */
+        protected boolean roomFor(String text, float room) {
+            float want = 0, need = 0;
+            if (text != null) {
+                float pad = Ui.dp(getContext(), 6);
+                need = tipHeight(wrap(text.split("\n"), getWidth() - pad * 2).length) + Ui.dp(getContext(), 2);
+                want = need > room ? grown + need - room : grown;
+            }
+            if (want != grown) {
+                grown = want;
+                // never while drawing: the new height comes with the next layout
+                post(new Runnable() {
+                    @Override
+                    public void run() {
+                        requestLayout();
+                        invalidate();
+                    }
+                });
+            }
+            return text == null || need <= room;
+        }
+
+        /** The laid out height plus what the readout took on ({@link #roomFor}); 0 extra for every other chart. */
+        @Override
+        protected void onMeasure(int widthSpec, int heightSpec) {
+            super.onMeasure(widthSpec, heightSpec);
+            if (grown > 0) setMeasuredDimension(getMeasuredWidth(), getMeasuredHeight() + (int) Math.ceil(grown));
         }
 
         /** {@code lines} with each line wider than {@code max} broken at its last space that fits (a word wider stays whole). */
@@ -586,7 +630,10 @@ public final class Charts {
                 String tip = k < 0 ? app.openring.core.NightStrip.noReading(t, zone)
                         : app.openring.core.NightStrip.movementTip(times[k], step, series.v(k), zone, Locale.getDefault());
                 float x = k < 0 ? sx : (float) (left + (times[k] - from) / (to - from) * (w - left));
-                drawTip(cv, x, h - barsH, h, tip);
+                // the readout only above the bars: a wrapped one makes the strip taller instead of covering them (review of #482)
+                if (roomFor(tip, h - barsH)) drawTip(cv, x, h - barsH, h, tip);
+            } else {
+                roomFor(null, 0);
             }
         }
     }
@@ -718,8 +765,13 @@ public final class Charts {
                 float sx = Math.max(left, Math.min(w, scrubX));
                 double t = from + (sx - left) / (w - left) * (to - from);
                 double reach = Ui.dp(c, app.openring.core.SoundMarks.REACH_DP) / (w - left) * (to - from);
-                now = app.openring.core.SoundMarks.pick(marks, t, reach);
-                drawTip(cv, sx, top, h, app.openring.core.SoundMarks.tip(marks, gaps, listenStart, listenStop, ended, t, reach, zone));
+                // only the marks drawn in the window are read; the readout names two, the rows under the strip list all
+                now = app.openring.core.SoundMarks.pick(marks, t, reach, from, to);
+                String tip = app.openring.core.SoundMarks.tip(marks, gaps, listenStart, listenStop, ended, t, reach, zone, from, to);
+                // only above the marks: a longer readout makes the strip taller instead of covering them (review of #482)
+                if (roomFor(tip, top)) drawTip(cv, sx, top, h, tip);
+            } else {
+                roomFor(null, 0);
             }
             if (!now.equals(picked)) {
                 picked = now;

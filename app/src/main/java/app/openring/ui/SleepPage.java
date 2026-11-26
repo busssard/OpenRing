@@ -35,7 +35,7 @@ final class SleepPage {
         card.addView(Ui.caption(c, "Night timeline"));
         String note = n.has("stage_detail") ? WakeUps.levelNote(n.optInt("stage_detail")) : null;
         // sleep sounds (issue #380, phase 1c): their rows in yellow
-        boolean sounds = extra != null && !extra.isEmpty();
+        boolean sounds = app.openring.core.SoundMarks.anySound(extra);
         card.addView(Ui.text(c, "Every wake up of a minute or more, as counted in Wake ups." + (note == null ? "" : " " + note)
                 + (sounds ? " " + app.openring.core.SoundMarks.TIMELINE_NOTE : ""), 11, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(c, 6));
@@ -146,14 +146,14 @@ final class SleepPage {
             hyp.addView(Ui.gap(c, 6));
             hyp.addView(Ui.text(c, "Movement", 11, Ui.TEXT_3, Ui.MEDIUM));
             // readable by touch, the readout above its bars (code health of #380)
-            hyp.addView(new Charts.Strip(c, Json.series(mv), Json.d(n, "start"), Json.d(n, "end"), Ui.ACTIVE).zone(nz), Ui.sized(c, -1, 44));
+            hyp.addView(new Charts.Strip(c, Json.series(mv), Json.d(n, "start"), Json.d(n, "end"), Ui.ACTIVE).zone(nz), Ui.sized(c, -1, 48));
+            hyp.addView(Ui.text(c, app.openring.core.NightStrip.MOVEMENT_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));
         }
         // sleep sounds of the night on the same axis (issue #380, phase 1c), read by touch, each mark playable
         SoundViews.strip(c, d, hyp, Json.d(n, "start"), Json.d(n, "end"), nz);
         hyp.addView(Ui.gap(c, 4));
         hyp.addView(Ui.text(c, moves ? "Touch or slide along the charts to see the time, the stage and the movement."
                 : "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
-        if (moves) hyp.addView(Ui.text(c, app.openring.core.NightStrip.MOVEMENT_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 8));
         hyp.addView(Ui.text(c, Explain.STAGES, 12, Ui.TEXT_2, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 10));

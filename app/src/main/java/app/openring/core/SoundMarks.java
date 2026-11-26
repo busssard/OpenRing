@@ -25,6 +25,11 @@ public final class SoundMarks {
     public static final double GAP_ROW_S = 60;
     /** A touch reads every mark this close to the finger (dp, the screens turn it into seconds). */
     public static final float REACH_DP = 8;
+    /**
+     * The readout names at most this many marks, then "and 3 more, listed under the strip" (the rows with Play under the strip
+     * list every mark read), so it stays short above the marks (review of #482).
+     */
+    public static final int TIP_MARKS = 2;
 
     public static final String LABEL = "Sounds";
     public static final String STRIP_NOTE = "Sounds the phone kept: touch a mark to read it and play it. Shaded: the phone was not listening.";
@@ -101,7 +106,44 @@ public final class SoundMarks {
     }
 
     /**
-     * The Sounds strip's readout at {@code t}: the marks within reach (one line each), else the gap that holds it, else
+     * The marks the strip draws in its window {@code from} to {@code to}: each that reaches into it (the rest are counted by
+     * {@link #before} and {@link #after}), in their order.
+     */
+    public static List<SleepSounds.Mark> drawn(List<SleepSounds.Mark> marks, double from, double to) {
+        List<SleepSounds.Mark> out = new ArrayList<SleepSounds.Mark>();
+        for (SleepSounds.Mark m : marks) if (Math.max(m.start, m.stop) >= from && m.start <= to) out.add(m);
+        return out;
+    }
+
+    /**
+     * {@link #pick} among the marks the strip draws in its window {@code from} to {@code to} only: a touch at the window's
+     * edge never reads a mark that is not drawn (review of #482).
+     */
+    public static List<SleepSounds.Mark> pick(List<SleepSounds.Mark> marks, double t, double reachS, double from, double to) {
+        return pick(drawn(marks, from, to), t, reachS);
+    }
+
+    /** "and 3 more, listed under the strip": the marks read beyond {@link #TIP_MARKS}. */
+    public static String moreLine(int more) {
+        return "and " + more + " more, listed under the strip";
+    }
+
+    /** {@link #tip} on the strip with the window {@code from} to {@code to}: only the marks drawn there are read. */
+    public static String tip(List<SleepSounds.Mark> marks, List<Gap> gaps, double start, double stop, String ended, double t, double reachS,
+            ZoneId zone, double from, double to) {
+        return tip(drawn(marks, from, to), gaps, start, stop, ended, t, reachS, zone);
+    }
+
+    /** Whether the night timeline's {@code rows} hold a sound the phone kept (only then its note explains the yellow rows). */
+    public static boolean anySound(List<TimelineRow> rows) {
+        if (rows == null) return false;
+        for (TimelineRow r : rows) if (TimelineRow.SOUND.equals(r.kind)) return true;
+        return false;
+    }
+
+    /**
+     * The Sounds strip's readout at {@code t}: the marks within reach (one line each, at most {@link #TIP_MARKS}, then
+     * {@link #moreLine}: review of #482, a long readout covered the marks), else the gap that holds it, else
      * "Not listening yet, started at 23:05" before listening, "Listening stopped at 06:55" (": Android ended it" when
      * {@code ended} is system) after it, and "03:00, listening, no sound kept" in between. {@code stop} NaN: not known yet.
      */
@@ -110,7 +152,8 @@ public final class SoundMarks {
         List<SleepSounds.Mark> near = pick(marks, t, reachS);
         if (!near.isEmpty()) {
             StringBuilder b = new StringBuilder();
-            for (SleepSounds.Mark m : near) b.append(b.length() == 0 ? "" : "\n").append(markTip(m, zone));
+            for (int i = 0; i < near.size() && i < TIP_MARKS; i++) b.append(i == 0 ? "" : "\n").append(markTip(near.get(i), zone));
+            if (near.size() > TIP_MARKS) b.append("\n").append(moreLine(near.size() - TIP_MARKS));
             return b.toString();
         }
         for (Gap g : gaps) if (g.holds(t)) return gapTip(g, zone);

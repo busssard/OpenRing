@@ -494,17 +494,21 @@ the clip list uses instead of the phone's zone now. `core/SoundMarks` (pure Java
 of a mark ("02:14, talking or other sound, 6 s", "02:12 to 02:26, snoring, 14 min", " (sound deleted)" when its sound is gone; the hour
 that happens twice gets "(first time)"), of a gap ("04:10 to 04:22, not listening: another app used the microphone" for silence, "the
 phone lost the audio" for system), before and after listening and in between ("03:00, listening, no sound kept"); the marks a touch
-reads (within 8 dp, the shortest first, so a cough inside a snoring stretch is found); the listening spans without the gaps; the marks
+reads (within 8 dp, the shortest first, so a cough inside a snoring stretch is found; only marks drawn in the window, `drawn`; the
+readout names two, then "and 2 more, listed under the strip", the rows list all); the listening spans without the gaps; the marks
 before and after the sleep window (not drawn on the strip, a line names them); and the timeline rows (started, each mark, each gap of a
 minute or more, stopped with "Android ended it" for system; shorter gaps counted under the card). `SleepSounds.clock` is the
 timeline's clock (`WakeUps.clock`, the nearest minute), so the card, the clip list, the strip and the timeline show the same minute.
-Screens: `Charts.SoundStrip` (a `Scrub`, 56 dp: the marks in the lower 24 dp in `Ui.TEMP`, snoring a bar, a cough a half tick, talking
+Screens: `Charts.SoundStrip` (a `Scrub`, 62 dp: a readout of two lines above the marks; `Scrub.roomFor` makes a strip taller while
+a longer readout shows, so the readout never covers the marks or bars, review of #482; the marks in the lower 24 dp in `Ui.TEMP`, snoring a bar, a cough a half tick, talking
 a tick with a dot, a gone sound faded, the listening line along the bottom, gaps shaded in `Ui.WARN`) under the stages and Movement on
 the ring's and the watch's night pages (`SoundViews.strip`, in the stages' zone), with the rows (and Play) of the marks a touch reads
-under it; the night timeline gets the rows through `TimelineRow.merge` (sound rows with a yellow clock). Code health first: the
+under it; the night timeline gets the rows through `TimelineRow.merge` (sound rows with a yellow clock; its note about the yellow
+rows only on a night with sounds kept, `SoundMarks.anySound`). Code health first: the
 timeline's rows carry their moment and kind (`core/analysis/TimelineRow`, `WakeUps.rows`; `WakeUps.timeline` gives the same pairs as
-before), and `Charts.Strip` (Movement) is a `Scrub` read by touch ("02:05 to 02:10, 4.0 s of motion per reading": the ring's motion
-event reports seconds of motion per reading, the bars are 5 minute averages), its bar width from the series' own step
+before), and `Charts.Strip` (Movement, 48 dp, its note right under it) is a `Scrub` read by touch ("02:05 to 02:10, on average 4.0 s
+of motion per ring report": each motion event reports seconds of motion, how often the ring sends them is not known, so no rate is
+named; the bars are 5 minute averages), its bar width from the series' own step
 (`core/NightStrip`). Nights by hand have no stage chart, so no strip; the marks are not drawn on the heart rate charts.
 
 **Nights by hand (issue #427).** A night slept without the ring and the watch, entered on one screen (`ui/HandNightActivity`): a bar
