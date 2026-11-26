@@ -5,8 +5,8 @@ import java.util.*;
 /**
  * The short tour (issue #453, {@code core/Tour}): the steps in their order with their parts and tabs, which taps move on,
  * Next and Back past steps whose part is not on screen, the demo's ending, when the tour starts by itself (the demo's first
- * look, the first sync with a real device, never again once done or skipped, never while tiles are rearranged), and every
- * text plain. Run with tests/run_tests.sh.
+ * look, the first sync with a real device, also after setup's saved mark (issue #476), never again once done or skipped,
+ * never while tiles are rearranged), and every text plain. Run with tests/run_tests.sh.
  */
 public class TourTest {
     static int passed, failed;
@@ -133,14 +133,26 @@ public class TourTest {
     }
 
     static void start() {
-        eq("the demo's first look starts it", Tour.autoStart(true, false, false, 0, 0), Tour.DEMO);
-        eq("the demo again after it was done or skipped: no", Tour.autoStart(true, true, false, 0, 0), Tour.NONE);
-        eq("the first sync with a real device starts it", Tour.autoStart(false, false, false, 0, 1763900000L), Tour.FIRST_SYNC);
-        eq("a later sync does not", Tour.autoStart(false, false, false, 1763800000L, 1763900000L), Tour.NONE);
-        eq("no sync yet (or a failed first sync) does not", Tour.autoStart(false, false, false, 0, 0), Tour.NONE);
-        eq("the first sync after the demo's tour: not again", Tour.autoStart(false, true, false, 0, 1763900000L), Tour.NONE);
-        eq("never while the tiles are rearranged (demo)", Tour.autoStart(true, false, true, 0, 0), Tour.NONE);
-        eq("never while the tiles are rearranged (first sync)", Tour.autoStart(false, false, true, 0, 1763900000L), Tour.NONE);
+        long t = 1763900000L;
+        eq("the demo's first look starts it", Tour.autoStart(true, false, false, false, 0, 0), Tour.DEMO);
+        eq("the demo again after it was done or skipped: no", Tour.autoStart(true, true, false, false, 0, 0), Tour.NONE);
+        eq("the first sync with a real device starts it", Tour.autoStart(false, false, false, false, 0, t), Tour.FIRST_SYNC);
+        eq("a later sync does not", Tour.autoStart(false, false, false, false, 1763800000L, t), Tour.NONE);
+        eq("no sync yet (or a failed first sync) does not", Tour.autoStart(false, false, false, false, 0, 0), Tour.NONE);
+        eq("the first sync after the demo's tour: not again", Tour.autoStart(false, true, false, false, 0, t), Tour.NONE);
+        eq("never while the tiles are rearranged (demo)", Tour.autoStart(true, false, true, false, 0, 0), Tour.NONE);
+        eq("never while the tiles are rearranged (first sync)", Tour.autoStart(false, false, true, false, 0, t), Tour.NONE);
+        // issue #476: setup's saved mark, for a main screen created again after the first sync (Android ended the app during
+        // the first download; the watch setup syncs before the main screen exists), where the screen already knows that sync
+        eq("#476 setup's mark and a sync this screen already knew: starts", Tour.autoStart(false, false, false, true, t, t), Tour.FIRST_SYNC);
+        eq("#476 setup's mark and a sync after it: starts", Tour.autoStart(false, false, false, true, 0, t), Tour.FIRST_SYNC);
+        eq("#476 setup's mark, no sync yet (or a failed one): waits", Tour.autoStart(false, false, false, true, 0, 0), Tour.NONE);
+        eq("#476 the mark cleared (the tour started once): a known sync starts nothing", Tour.autoStart(false, false, false, false, t, t), Tour.NONE);
+        eq("#476 the mark, but the tour was done or skipped: no", Tour.autoStart(false, true, false, true, t, t), Tour.NONE);
+        eq("#476 the mark, but the tiles are rearranged: not now", Tour.autoStart(false, false, true, true, t, t), Tour.NONE);
+        eq("#476 the mark in demo mode: the demo's own start", Tour.autoStart(true, false, false, true, 0, 0), Tour.DEMO);
+        check("#476 setup before any sync marks the tour", Tour.waitsForFirstSync(0));
+        check("#476 setup after a sync (a new key, a ring added to a watch) marks nothing", !Tour.waitsForFirstSync(t));
     }
 
     static void labels() {
@@ -152,7 +164,8 @@ public class TourTest {
         eq("the first sync's step 1", Tour.text(0, true), Tour.SYNC_FIRST);
         eq("step 1 otherwise", Tour.text(0, false), Tour.SYNC_TEXT);
         eq("the first sync changes only step 1", Tour.text(1, true), Tour.STEPS.get(1).text);
-        eq("the ending's text", Tour.text(Tour.END, false), Tour.END_TEXT);
+        // issue #477: the ending's text depends on a device, so it comes only from endText (as the overlay reads it)
+        eq("#477 no step text for the ending (endText holds it)", Tour.text(Tour.END, false) + Tour.text(Tour.END, true), "");
         eq("the ending's text without a device: add one", Tour.endText(false), "That was the demo. Add your own ring or watch to see your own data, or keep looking around.");
         eq("the ending's text with a device: back to it", Tour.endText(true), "That was the demo. Go back to your own data, or keep looking around.");
         check("both ending texts are in the list the text checks read", Tour.texts().contains(Tour.END_TEXT) && Tour.texts().contains(Tour.END_BACK));
@@ -170,6 +183,8 @@ public class TourTest {
         }
         check("the issue's step texts", Tour.STEPS.get(1).text.equals("Your scores for the day. Tap one to see why.")
                 && Tour.STEPS.get(6).text.equals("Your devices, backups and what the app is allowed to use are here.")
-                && Tour.STEPS.get(4).text.equals("Tap a title to fold a tile. In Settings, Rearrange tiles puts them in your order."));
+                && Tour.STEPS.get(4).text.equals("Tap a title to fold a tile, tap it again to open it. In Settings, Rearrange tiles puts them in your order."));
+        // issue #477: the fold is saved per tab, so the step says how to open a folded tile again
+        check("#477 step 5 says how to open a tile again", Tour.STEPS.get(4).text.contains("tap it again to open it"));
     }
 }
