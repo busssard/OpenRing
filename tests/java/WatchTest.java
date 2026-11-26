@@ -1739,6 +1739,7 @@ public class WatchTest {
         try {
             phonePhase2Checks329();
             review467();
+            review467second();
         } finally {
             Locale.setDefault(was);
         }
@@ -1762,8 +1763,8 @@ public class WatchTest {
         for (int i = 0; i < 7; i++) seven[i] = byDay[(int) (end.minusDays(6 - i).toEpochDay() - first.toEpochDay())];
         check("#467 review: a part day leaves the 7 day average alone (9,000 steps a day, 247 kcal at 72 kg)", Math.abs(full
                 - app.openring.core.StepCalories.kcal(9000, 72)) < 1e-9 && app.openring.core.StepCalories.dailyMean(seven, 72) == full
-                && "Last 7 full days: about 250 kcal a day from walking.".equals(app.openring.core.StepCalories.week(full)),
-                full + " " + app.openring.core.StepCalories.week(full));
+                && "Last 7 full days (days with steps): about 250 kcal a day from walking.".equals(app.openring.core.StepCalories.week(full, today, today)),
+                full + " " + app.openring.core.StepCalories.week(full, today, today));
         String usual = app.openring.core.StepCalories.about(72, false);
         check("#467 review: without an entered weight the line says it is the usual one and where to set yours",
                 usual.contains("the usual weight of 72 kg (set yours in Settings, Profile and goals)") && !usual.contains("your weight of")
@@ -1798,19 +1799,55 @@ public class WatchTest {
         check("#467 review: 7 ring days without the ring's goal do not make the first step goal day an \"after 7 days without\"",
                 goals(after, d0.plusDays(30)).isEmpty(), goals(after, d0.plusDays(30)));
         // the phone's grouping in the badge's text
-        Locale.setDefault(Locale.GERMANY);
         List<app.openring.core.analysis.Badges.Day> four = new ArrayList<app.openring.core.analysis.Badges.Day>();
         for (int i = 0; i < 4; i++) four.add(phoneDay(d0.plusDays(i), 9000, 8000));
-        String de = goals(four, d0.plusDays(30)).get(0).text;
-        Locale.setDefault(Locale.US);
+        Locale was = Locale.getDefault();
+        String de;
+        try {
+            Locale.setDefault(Locale.GERMANY);
+            de = goals(four, d0.plusDays(30)).get(0).text;
+        } finally {
+            Locale.setDefault(was);
+        }
         check("#467 review: the badge's steps with the phone's grouping", de.contains("9.000 of 8.000 steps with this phone"), de);
         String goalPhone = app.openring.ui.Explain.badge(app.openring.core.analysis.Badges.GOAL, MainDevice.PHONE);
         check("#467 review: Goal reached says plainly when a day counts, and that a new goal counts for earlier days",
-                goalPhone.contains("Days count when your steps reach your daily step goal.") && goalPhone.endsWith("A new step goal also counts for earlier days.")
+                goalPhone.contains("Your step goal is set in Settings, Phone.") && goalPhone.endsWith("A new step goal also counts for earlier days.")
                 && !goalPhone.contains("stands in"), goalPhone);
         String w = app.openring.ui.Explain.badgesWait(0, MainDevice.PHONE, 3);
         check("#467 review: the waiting line names Above your usual", w.startsWith("Above your usual compares your steps with your own last 4 weeks")
                 && w.contains("You have 3 days so far"), w);
+    }
+
+    /** The nightly code review of #467 (a09bbd7): the goal line's place, the left out volume, Goal reached once, a past day's week. */
+    static void review467second() {
+        String phone = app.openring.core.DeviceHistory.goalLine(8000, MainDevice.PHONE, Locale.US);
+        String watch = app.openring.core.DeviceHistory.goalLine(10000, MainDevice.WATCH, Locale.US);
+        check("#467 code review: the 7 day steps chart names where the goal is set, Settings, Phone with only the phone",
+                "The line is your goal of 8,000 steps (Settings, Phone). ".equals(phone)
+                && "The line is your goal of 10,000 steps (Settings, Watch). ".equals(watch) && plain(phone) && plain(watch), phone + " | " + watch);
+        check("#467 code review: the goal line groups as the phone does",
+                app.openring.core.DeviceHistory.goalLine(8000, MainDevice.PHONE, Locale.GERMANY).contains("8.000 steps"),
+                app.openring.core.DeviceHistory.goalLine(8000, MainDevice.PHONE, Locale.GERMANY));
+        String left = app.openring.core.DeviceScores.STEP_KCAL_LEFT_OUT;
+        check("#467 code review: Training volume's reason no longer says the phone counts no calories",
+                left.equals("Calories from walking are only a rough estimate, so the score leaves them out.") && !left.contains("no calories")
+                && plain(left), left);
+        for (int dev : new int[] {MainDevice.PHONE, MainDevice.WATCH}) {
+            String g = app.openring.ui.Explain.badge(app.openring.core.analysis.Badges.GOAL, dev);
+            check("#467 code review: Goal reached says the step goal rule once (device " + dev + ")", !g.contains("Days count when")
+                    && g.indexOf("daily step goal") == g.lastIndexOf("daily step goal") && plain(g), g);
+        }
+        check("#467 code review: the watch's Goal reached says where its goal is set",
+                app.openring.ui.Explain.badge(app.openring.core.analysis.Badges.GOAL, MainDevice.WATCH).contains("Your step goal is set in the watch setup."));
+        LocalDate today = LocalDate.of(2026, 11, 24);
+        String now = app.openring.core.StepCalories.week(187, today, today);
+        String past = app.openring.core.StepCalories.week(187, today.minusDays(4), today);
+        String ahead = app.openring.core.StepCalories.week(187, today.plusDays(1), today);
+        check("#467 code review: a past day's line says its 7 days end at that day and count only days with steps",
+                "7 days up to this day (days with steps): about 190 kcal a day from walking.".equals(past)
+                && "Last 7 full days (days with steps): about 190 kcal a day from walking.".equals(now) && now.equals(ahead)
+                && app.openring.core.StepCalories.week(Double.NaN, today.minusDays(4), today) == null && plain(past), past + " | " + now);
     }
 
     static void phonePhase2Checks329() {
@@ -1831,8 +1868,9 @@ public class WatchTest {
         check("#329 phase 2 calories: the 7 day average leaves days without steps out", Math.abs(mean - (k + k / 2) / 2) < 1e-9
                 && Double.isNaN(app.openring.core.StepCalories.dailyMean(new double[] {Double.NaN, Double.NaN}, 72))
                 && Double.isNaN(app.openring.core.StepCalories.dailyMean(new double[0], 72)), mean);
-        check("#329 phase 2 calories: the week's line", "Last 7 full days: about 190 kcal a day from walking.".equals(app.openring.core.StepCalories.week(187))
-                && app.openring.core.StepCalories.week(Double.NaN) == null, app.openring.core.StepCalories.week(187));
+        LocalDate wk = LocalDate.of(2026, 11, 24);
+        check("#329 phase 2 calories: the week's line", "Last 7 full days (days with steps): about 190 kcal a day from walking.".equals(app.openring.core.StepCalories.week(187, wk, wk))
+                && app.openring.core.StepCalories.week(Double.NaN, wk, wk) == null, app.openring.core.StepCalories.week(187, wk, wk));
         String about = app.openring.core.StepCalories.about(64);
         check("#329 phase 2 calories: the line names the rule, its source, the weight and the error", about.contains("0.5 kcal for each kg")
                 && about.contains("American College of Sports Medicine") && about.contains("your weight of 64 kg") && about.contains("within about a quarter")
@@ -2824,7 +2862,7 @@ public class WatchTest {
         for (PhoneSteps.Interval i : PhoneSteps.intervals(PhoneSteps.demo(DS_DAY, 35, now, DS_ZONE, new Random(329)))) ph.intervals.add(new double[] {i.start, i.stop, i.steps});
         app.openring.core.DeviceScores.Result p = app.openring.core.DeviceScores.of(MainDevice.PHONE, y, DS_ZONE, null, ph, 10000, 40);
         check("#379 phone only: activity without training volume, which is named", p.activity != null && keys(p.activity).equals("stay_active,move_hourly,targets,frequency")
-                && leftKeys(p.activityLeft).equals("volume") && p.activityLeft.get(0).why.contains("no calories"), p.activity == null ? p.activityNone : keys(p.activity));
+                && leftKeys(p.activityLeft).equals("volume") && p.activityLeft.get(0).why.equals(app.openring.core.DeviceScores.STEP_KCAL_LEFT_OUT), p.activity == null ? p.activityNone : keys(p.activity));
         check("#379 phone only: no sleep, no readiness, said plainly", p.sleep == null && p.readiness == null
                 && app.openring.core.DeviceScores.PHONE_NO_NIGHT.equals(p.sleepNone) && app.openring.core.DeviceScores.PHONE_NO_NIGHT.equals(p.readinessNone));
         check("#379 phone only: the line under the dial", app.openring.core.DeviceScores.from(MainDevice.PHONE, "activity_score").equals("From this phone's steps")
@@ -3212,7 +3250,10 @@ public class WatchTest {
                 all.append(d).append(dev).append(':').append(dsText(r)).append('\n');
             }
         }
-        check("history: the dials' scores without a ring are as before, 40 days of watch and phone (fingerprint from dev)", sha(all.toString()).equals(DS_FINGERPRINT), sha(all.toString()));
+        // the code review of #467 changed only the phone's reason for leaving out Training volume: the old text back, the same fingerprint
+        String asOnDev = all.toString().replace(app.openring.core.DeviceScores.STEP_KCAL_LEFT_OUT, "This phone counts no calories.");
+        check("history: the new reason for the left out Training volume is in the phone's days", all.indexOf(app.openring.core.DeviceScores.STEP_KCAL_LEFT_OUT) >= 0);
+        check("history: the dials' scores without a ring are as before, 40 days of watch and phone (fingerprint from dev)", sha(asOnDev).equals(DS_FINGERPRINT), sha(asOnDev));
         check("history: the ring's own scores are as before (9,000 seeded inputs)", ringFingerprint().equals("c637f65e2f4c7b3d94253c54f8610d1199a7c1dada3dfd04e51251776bd6795e"));
 
         LocalDate first = DS_DAY.minusDays(29);

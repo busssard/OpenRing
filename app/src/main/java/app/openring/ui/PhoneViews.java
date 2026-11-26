@@ -290,9 +290,10 @@ final class PhoneViews {
         app.openring.core.DeviceHistory h = d.deviceHistory;
         if (h == null || h.device != MainDevice.PHONE) return;
         // the 7 full days: a day still running would pull the average down (review of #467)
-        java.time.LocalDate end = app.openring.core.StepCalories.weekEnd(d.date, java.time.LocalDate.now());
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.LocalDate end = app.openring.core.StepCalories.weekEnd(d.date, today);
         String week = app.openring.core.StepCalories.week(app.openring.core.StepCalories.dailyMean(h.last(h.steps, end,
-                app.openring.core.DeviceHistory.WEEK), kg));
+                app.openring.core.DeviceHistory.WEEK), kg), d.date, today);
         if (week != null) card.addView(Ui.text(c, week, 12, Ui.TEXT_2, Ui.REGULAR));
     }
 

@@ -84,10 +84,15 @@ public final class StepCalories {
                 + "It leaves out what your body burns at rest.";
     }
 
-    /** "Last 7 full days: about 190 kcal a day from walking." or null without any day. */
-    public static String week(double meanKcal) {
+    /**
+     * The line under the estimate, for the 7 days {@link #weekEnd} gives: "Last 7 full days (days with steps): about 190 kcal a day
+     * from walking." while {@code shown} is today, "7 days up to this day (days with steps): ..." for a day before {@code today}
+     * (review of #467: there the 7 days end at the shown day); null without any day with steps.
+     */
+    public static String week(double meanKcal, LocalDate shown, LocalDate today) {
         if (Double.isNaN(meanKcal)) return null;
-        return "Last 7 full days: about " + Math.round(shown(meanKcal)) + " kcal a day from walking.";
+        return (shown.isBefore(today) ? "7 days up to this day" : "Last 7 full days") + " (days with steps): about "
+                + Math.round(shown(meanKcal)) + " kcal a day from walking.";
     }
 
     /**
@@ -144,6 +149,7 @@ public final class StepCalories {
 
     /** Every fixed text, for the tests (plain, no dashes as punctuation). */
     public static String[] texts() {
-        return new String[] {LABEL, NOTE, about(72), about(72, false), week(190), COMPARE_TITLE, COMPARE_INTRO, COMPARE_NOTE, GOAL_LABEL, GOAL_NOTE, goalChip(8000, true)};
+        return new String[] {LABEL, NOTE, about(72), about(72, false), week(190, LocalDate.of(2026, 11, 24), LocalDate.of(2026, 11, 24)),
+            week(190, LocalDate.of(2026, 11, 20), LocalDate.of(2026, 11, 24)), COMPARE_TITLE, COMPARE_INTRO, COMPARE_NOTE, GOAL_LABEL, GOAL_NOTE, goalChip(8000, true)};
     }
 }

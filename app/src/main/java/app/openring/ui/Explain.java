@@ -847,8 +847,8 @@ public final class Explain {
             case Badges.GOAL:
                 return "Goal reached: your daily step goal reached on " + Badges.GOAL_OF + " of the last " + week + " (at most once in "
                         + week + "), or the first goal day after " + week + " without one. There is no badge for every single day, "
-                        + "rest days matter too. Days count when your steps reach your daily step goal. "
-                        + (watch ? "It is set in the watch setup." : "It is set in Settings, Phone.")
+                        + "rest days matter too. "
+                        + (watch ? "Your step goal is set in the watch setup." : "Your step goal is set in Settings, Phone.")
                         + " A new step goal also counts for earlier days.";
             case Badges.BEST_NIGHT:
             case Badges.RESTFUL_WEEK:
