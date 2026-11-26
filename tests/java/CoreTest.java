@@ -380,8 +380,9 @@ public class CoreTest {
         eq("step: equals the old rule on random nights", stepDiffers, 0);
         try {
             String root = "app/src/main/java/app/openring/ui/";
-            for (String f : new String[] {"SleepPage.java", "SettingsActivity.java"}) {
-                String src = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + f).toPath()), "UTF-8");
+            for (String f : new String[] {"the tabs", "SettingsActivity.java"}) {
+                String src = f.equals("the tabs") ? tabSources()
+                        : new String(java.nio.file.Files.readAllBytes(new java.io.File(root + f).toPath()), "UTF-8");
                 check("step: " + f + " uses WakeUps.step, no copy of the rule", src.contains("WakeUps.step(")
                         && !src.contains("st.length == 0 ? 30 :"));
             }
@@ -10437,13 +10438,33 @@ public class CoreTest {
         eq("#373 Today's cards follow the same order for the demo's watch preview", app.openring.core.Start.cards(T, demoWatch), app.openring.core.Start.cards(T, watch));
     }
 
+    /**
+     * The sources of the six tabs joined: ui/Pages.java, every ui/*Page.java and ui/PageParts.java (issue #293, phase 0), so
+     * a "no copy left" check finds a copy in any of them.
+     */
+    static String tabSources() throws java.io.IOException {
+        java.io.File ui = new java.io.File("app/src/main/java/app/openring/ui/");
+        String[] names = ui.list();
+        java.util.Arrays.sort(names);
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (String f : names) {
+            if (!f.equals("Pages.java") && !f.endsWith("Page.java") && !f.equals("PageParts.java")) continue;
+            sb.append(new String(java.nio.file.Files.readAllBytes(new java.io.File(ui, f).toPath()), "UTF-8")).append('\n');
+            n++;
+        }
+        // Pages, the six tabs and PageParts: fewer means a file was renamed and the checks would look in too little
+        if (n < 8) throw new java.io.IOException("only " + n + " tab sources found");
+        return sb.toString();
+    }
+
     /** The screens ask core/Start (read from the sources, which the JVM cannot run). */
     static void startScreens373() {
         try {
             String root = "app/src/main/java/app/openring/";
             String main = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/MainActivity.java").toPath()), "UTF-8");
             String setup = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/SetupActivity.java").toPath()), "UTF-8");
-            String pages = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/TodayPage.java").toPath()), "UTF-8");
+            String pages = tabSources();
             String prefs = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "data/Prefs.java").toPath()), "UTF-8");
             check("#373 the main screen decides with Start.opensSetup and the watch", main.contains("app.openring.core.Start.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null, prefs.watchAddress() != null)")
                     && !main.contains("app.openring.core.KeyState.opensSetup("));
