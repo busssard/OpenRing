@@ -1146,16 +1146,22 @@ public final class SettingsActivity extends Activity implements RingManager.List
         new Thread(new Runnable() {
             @Override
             public void run() {
+                // each value in its own try (review of 1e2e83a): a failed read shows "--" for that value only
                 long[] b = null;
-                app.openring.core.withings.Proto.Hello h = null;
                 try {
                     b = app.openring.data.WatchStore.newestBattery(app.openring.data.Db.get(appCtx));
-                    h = app.openring.data.WatchStore.newestHello(app.openring.data.Db.get(appCtx), address);
                 } catch (RuntimeException e) {
-                    RingManager.get(appCtx).log("watch battery or model not read (" + e.getClass().getSimpleName() + ")");
+                    RingManager.get(appCtx).log("watch battery not read (" + e.getClass().getSimpleName() + ")");
+                }
+                String m;
+                try {
+                    m = app.openring.core.withings.Proto.modelLine(app.openring.data.WatchStore.newestHello(app.openring.data.Db.get(appCtx), address));
+                } catch (RuntimeException e) {
+                    m = "--";
+                    RingManager.get(appCtx).log("watch model not read (" + e.getClass().getSimpleName() + ")");
                 }
                 final long[] got = b;
-                final String modelText = app.openring.core.withings.Proto.modelLine(h);
+                final String modelText = m;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {

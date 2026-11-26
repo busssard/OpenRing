@@ -175,8 +175,11 @@ public final class Records {
         }
     }
 
-    /** The part types of a data answer this decoder reads ({@link Rec#part}, the time and the end part). */
-    public static final int[] READ_PARTS ={Proto.END, Proto.REC_TIME, Proto.REC_DURATION, Proto.REC_STEPS, Proto.REC_CALORIES, Proto.REC_CALORIES_2,
+    /**
+     * The part types of a data answer this decoder reads ({@link Rec#part}, the time and the end part). WatchTest reads the
+     * source and fails when a {@code case} of {@code Rec.part} is missing here (review of 1e2e83a).
+     */
+    public static final int[] READ_PARTS = {Proto.END, Proto.REC_TIME, Proto.REC_DURATION, Proto.REC_STEPS, Proto.REC_CALORIES, Proto.REC_CALORIES_2,
         Proto.REC_SLEEP, Proto.REC_WORKOUT, Proto.REC_RUN, Proto.REC_SWIM, Proto.REC_HEART_RATE};
 
     /** True when the decoder reads parts of this type in a data answer. */

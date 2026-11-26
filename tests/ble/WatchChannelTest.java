@@ -10,7 +10,11 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
+
+import app.openring.core.WatchCheck;
+import app.openring.core.withings.WatchUuid;
 
 /**
  * ble/WatchChannel on the JVM (issue #469, phase 1), with the stand ins of tests/ble/shim: which calls it makes on a
@@ -40,6 +44,7 @@ public final class WatchChannelTest {
 
     public static void main(String[] args) throws Exception {
         layouts();
+        bothRules();
         sources();
         System.out.println("ble WatchChannel: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -134,6 +139,51 @@ public final class WatchChannelTest {
         ch = WatchChannel.find(g, SERVICE, CHANNEL);
         eq("hex letters in the part", WatchChannel.otherPart(ch), "00ab");
         eq("no channel, no part", WatchChannel.otherPart(null), null);
+    }
+
+    /**
+     * Review of 1e2e83a (Could improve): the sync's rule (this class) and the Device check's copy of it
+     * ({@code core/WatchCheck.syncPart}) get the same layouts and must pick the same part. Each layout is a list of services,
+     * each a service UUID followed by its characteristic UUIDs, in the order Android lists them.
+     */
+    static void bothRules() {
+        String s37 = SERVICE.toString(), c37 = CHANNEL.toString();
+        String s5f = w("00000020", "005f").toString(), c5f = w("00000024", "005f").toString();
+        String s62 = w("00000020", "0062").toString(), c62 = w("00000024", "0062").toString();
+        String[][][] cases = {
+            {{std("1800").toString(), std("2a00").toString()}, {s37, w("00000021", "0037").toString(), c37}},
+            {{s5f, c5f}, {s37, c37}},
+            {{std("1800").toString()}, {s5f, w("00000021", "005f").toString(), c5f}},
+            {{s37, w("00000021", "0037").toString()}, {s62, c62}, {s5f, c5f}},
+            {{s5f, c62}},
+            {{std("180f").toString(), std("2a19").toString()}},
+            {},
+            {{s62, w("00000021", "0062").toString()}, {s5f, c5f}, {s37, c37}},
+            // upper case: Android gives lower case, the Device check takes either
+            {{s5f.toUpperCase(Locale.ROOT), c5f.toUpperCase(Locale.ROOT)}},
+            {{s37.toUpperCase(Locale.ROOT), c37.toUpperCase(Locale.ROOT)}, {s5f, c5f}},
+        };
+        String[] want = {"0037", "0037", "005f", "0062", null, null, null, "0037", "005f", "0037"};
+        for (int i = 0; i < cases.length; i++) {
+            BluetoothGatt g = new BluetoothGatt(new ArrayList<String>());
+            WatchCheck.Report r = new WatchCheck.Report();
+            r.connected = true;
+            for (String[] sv : cases[i]) {
+                BluetoothGattService gs = add(g, UUID.fromString(sv[0]));
+                WatchCheck.Service rs = r.add(sv[0]);
+                for (int k = 1; k < sv.length; k++) {
+                    gs.characteristics.add(new BluetoothGattCharacteristic(g.calls, UUID.fromString(sv[k])));
+                    rs.add(sv[k], 0x10);
+                }
+            }
+            BluetoothGattCharacteristic ch = WatchChannel.find(g, SERVICE, CHANNEL);
+            String sync = ch == null ? null : WatchUuid.channelPart(ch.getUuid().toString());
+            eq("both rules, layout " + (i + 1) + ": the sync picks part " + want[i], sync, want[i]);
+            eq("both rules, layout " + (i + 1) + ": the Device check names the same part", WatchCheck.syncPart(r), sync);
+        }
+        WatchCheck.Report up = new WatchCheck.Report();
+        up.add("00000020-5749-5448-00AB-000000000000").add("00000024-5749-5448-00AB-000000000000", 0x1c);
+        eq("Device check: hex letters in upper case give the lower case part", WatchCheck.syncPart(up), "00ab");
     }
 
     static String read(String p) throws Exception {

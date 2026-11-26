@@ -510,11 +510,12 @@ public final class WatchCheck {
     /**
      * The part of the Withings service whose channel a sync would use, by the sync's own rule ({@code ble/WatchChannel},
      * issue #469): the Steel HR's part {@link WatchUuid#STEEL_HR} when its service holds its channel, else the first service
-     * in the listed order whose part matches a channel in it; null when there is none.
+     * in the listed order whose part matches a channel in it; null when there is none. UUIDs compare in any case, as the
+     * sync's {@code UUID} comparison does (WatchChannelTest runs layouts through both and compares).
      */
     public static String syncPart(Report r) {
         String steel = WatchUuid.service(WatchUuid.STEEL_HR).toString();
-        for (Service s : r.services) if (s.uuid.equals(steel) && holds(s, WatchUuid.STEEL_HR)) return WatchUuid.STEEL_HR;
+        for (Service s : r.services) if (s.uuid.equalsIgnoreCase(steel) && holds(s, WatchUuid.STEEL_HR)) return WatchUuid.STEEL_HR;
         for (Service s : r.services) {
             String part = WatchUuid.servicePart(s.uuid);
             if (part != null && holds(s, part)) return part;
@@ -524,7 +525,7 @@ public final class WatchCheck {
 
     private static boolean holds(Service s, String part) {
         String ch = WatchUuid.channel(part).toString();
-        for (Characteristic c : s.characteristics) if (c.uuid.equals(ch)) return true;
+        for (Characteristic c : s.characteristics) if (c.uuid.equalsIgnoreCase(ch)) return true;
         return false;
     }
 

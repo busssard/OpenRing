@@ -103,6 +103,7 @@ public class WatchTest {
 
         // record parts the decoder does not read: types and counts only
         for (int t : Records.READ_PARTS) check("469: the decoder reads part " + Frame.hexType(t), Records.reads(t));
+        readPartsMatchTheDecoder();
         check("469: walking level and the version part are not read", !Records.reads(Proto.REC_WALK) && !Records.reads(Proto.REC_VERSION));
         Map<Integer, Long> skipped = new TreeMap<Integer, Long>();
         List<byte[][]> recs = new ArrayList<byte[][]>();
@@ -1672,6 +1673,65 @@ public class WatchTest {
         st3.failAt = 5;
         r = Session.run(w3, plan(), new Gate(), st3, new Lines());
         check("lost piece: damaged bytes that cannot be stored end the session", Session.NOT_STORED.equals(r.ended) && !r.activityDone, r.ended);
+    }
+
+    /**
+     * Review of 1e2e83a (Should fix): READ_PARTS is kept by hand next to the {@code case} labels of {@code Rec.part}, so the
+     * source is read here and every {@code case Proto.X:} there must be in the list (the time and the end part, read in
+     * {@code decode}, too). A new case without the list fails here instead of showing as "not decoded" in the Data check.
+     */
+    static void readPartsMatchTheDecoder() {
+        String src;
+        try {
+            src = new String(java.nio.file.Files.readAllBytes(new java.io.File("app/src/main/java/app/openring/core/withings/Records.java").toPath()), "UTF-8");
+        } catch (IOException e) {
+            check("469: Records.java read for the READ_PARTS check", false, e);
+            return;
+        }
+        List<String> cases = decoderCases(src);
+        check("469: Rec.part's cases found in Records.java (the check reads them)", cases.size() >= 9, cases);
+        check("469: every case Proto.X of Rec.part is in READ_PARTS", notListed(cases).isEmpty(), notListed(cases));
+        Set<String> all = new HashSet<String>(cases);
+        all.add("REC_TIME");
+        all.add("END");
+        check("469: READ_PARTS is those cases plus the time and the end part, nothing else", Records.READ_PARTS.length == all.size()
+                && notListed(new ArrayList<String>(all)).isEmpty(), Records.READ_PARTS.length + " listed, " + all);
+        check("469: the time and the end part are read in decode",
+                src.contains("p.type == Proto.END") && src.contains("p.type == Proto.REC_TIME"));
+        // the check itself: a new case that is not in the list is named
+        String added = src.replace("                case Proto.REC_HEART_RATE:", "                case Proto.REC_WALK:\n                case Proto.REC_HEART_RATE:");
+        check("469: a new case missing from READ_PARTS is caught", notListed(decoderCases(added)).equals(Collections.singletonList("REC_WALK")),
+                notListed(decoderCases(added)));
+    }
+
+    /** The names X of every {@code case Proto.X:} in Rec.part of the source of Records.java. */
+    static List<String> decoderCases(String src) {
+        List<String> names = new ArrayList<String>();
+        int from = src.indexOf("void part(Frame.Part p)");
+        int to = from < 0 ? -1 : src.indexOf("default:", from);
+        if (from < 0 || to < from) return names;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("case\\s+Proto\\.(\\w+)\\s*:").matcher(src.substring(from, to));
+        while (m.find()) names.add(m.group(1));
+        return names;
+    }
+
+    /** Those of {@code names} that are no Proto constant in READ_PARTS. */
+    static List<String> notListed(List<String> names) {
+        List<String> out = new ArrayList<String>();
+        for (String n : names) {
+            Integer v = protoConstant(n);
+            if (v == null || !Records.reads(v)) out.add(n);
+        }
+        return out;
+    }
+
+    /** The value of a constant of Proto by its name, or null. */
+    static Integer protoConstant(String name) {
+        try {
+            return Proto.class.getField(name).getInt(null);
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
     }
 
     /**
