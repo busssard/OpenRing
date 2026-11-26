@@ -123,6 +123,11 @@ public class EffectPipelineTest {
         check("#292 phase 3 demo: an earlier day after Alcohol says That night", that != null && that.size() >= 1 && that.get(0).startsWith("After a day with Alcohol, ")
                 && that.get(0).contains(" That night: "), earlier + " " + that);
         check("#292 phase 3 demo: the lines change nothing stored (readiness and every score as before)", stored(db).equals(before), null);
+        // screens.sh scrolls to these words to find each open row (issue #473): change both together
+        check("#292 demo: the open rows' sentences start as screens.sh looks for them, After a day with Alcohol and After a day with Meditation",
+                alc != null && med != null && FactorEffect.headline(alc, Locale.US).startsWith("After a day with Alcohol")
+                        && FactorEffect.headline(med, Locale.US).startsWith("After a day with Meditation"),
+                alc == null || med == null ? null : FactorEffect.headline(alc, Locale.US) + " | " + FactorEffect.headline(med, Locale.US));
         int few = 0;
         for (FactorEffect.Result r : l) if (r.state == FactorEffect.FEW_WITH) few++;
         check("#292 demo: some factors have too few days yet (the count shows)", few >= 1, few);
