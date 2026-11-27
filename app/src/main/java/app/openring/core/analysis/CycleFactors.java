@@ -32,7 +32,7 @@ public final class CycleFactors {
     public static final int WITH = 0, WITHOUT = 1, UNKNOWN = 2;
     /**
      * The touch readout's lines are wrapped at this many characters: 40 at 11.5 dp fit the chart on a 360 dp phone (the
-     * Design review said about 40; 50 was too wide, review of #488).
+     * build run's design comment of 25 November said about 40; 50 was too wide, review of #488).
      */
     public static final int WRAP = 40;
 
@@ -231,7 +231,17 @@ public final class CycleFactors {
     /** An average of days late: "1.4 days later than expected on average", or about on the expected day below half a day. */
     static String cameOnAverage(double late, Locale loc) {
         if (Math.abs(late) < 0.5) return "about on the expected day on average";
-        return String.format(loc, "%.1f", Math.abs(late)) + " days " + (late > 0 ? "later" : "earlier") + " than expected on average";
+        return days(late, loc) + " " + (late > 0 ? "later" : "earlier") + " than expected on average";
+    }
+
+    /**
+     * The size of an average of days: "2 days", "1 day", "1.5 days", rounded to a tenth with a decimal only when that is not
+     * whole (review of 6835a38: "2.0 days" read oddly).
+     */
+    public static String days(double late, Locale loc) {
+        double r = Math.round(Math.abs(late) * 10) / 10.0;
+        if (r == Math.rint(r)) return Texts.count((int) r, "day", "days");
+        return String.format(loc, "%.1f", r) + " days";
     }
 
     /**
@@ -257,7 +267,7 @@ public final class CycleFactors {
         String s = f.name + " was logged in " + with.size() + " of " + (with.size() + without.size()) + " cycles. Those periods came "
                 + cameOnAverage(mean(with), loc) + ", the other " + (without.size() == 1 ? "one " : without.size() + " ");
         double o = mean(without);
-        s += Math.abs(o) < 0.5 ? "came about on the expected day." : "came " + String.format(loc, "%.1f", Math.abs(o)) + " days " + (o > 0 ? "later." : "earlier.");
+        s += Math.abs(o) < 0.5 ? "came about on the expected day." : "came " + days(o, loc) + " " + (o > 0 ? "later" : "earlier") + " than expected.";
         return s;
     }
 

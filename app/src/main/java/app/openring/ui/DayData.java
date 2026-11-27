@@ -61,16 +61,16 @@ public final class DayData {
     /** False when the life factors could not be read (the cards say so; the screens' other numbers are unaffected). */
     public boolean lifeOk = true;
     /**
-     * Life factors phase 2 (issue #292): how the nights went after each factor, in the card's order ({@code data/LifeEffects},
-     * worked out here in the background, kept while nothing changed). Empty without a ring or without factors; null when it
-     * could not be worked out (the card says so).
-     */
-    /**
      * The life factors logged in each scored cycle of "How close the estimates were" (issue #383, phase 2), null when the period
      * tracker is hidden, has no period, or the factors could not be read.
      */
     public app.openring.core.analysis.CycleFactors periodFactors;
-    public List<app.openring.core.analysis.FactorEffect.Result> lifeEffects =new ArrayList<app.openring.core.analysis.FactorEffect.Result>();
+    /**
+     * Life factors phase 2 (issue #292): how the nights went after each factor, in the card's order ({@code data/LifeEffects},
+     * worked out here in the background, kept while nothing changed). Empty without a ring or without factors; null when it
+     * could not be worked out (the card says so).
+     */
+    public List<app.openring.core.analysis.FactorEffect.Result> lifeEffects = new ArrayList<app.openring.core.analysis.FactorEffect.Result>();
     /** The card asks "Have your periods stopped?" (phase 1a2): the profile age, the log and "Not yet" say so. */
     public boolean periodAsk;
     /** The first and last day of Body's temperature chart with the cycle on it ({@code Cycles.tempWindow}), null without the tracker. */
