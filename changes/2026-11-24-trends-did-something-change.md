@@ -1,0 +1,4 @@
+* Trends now says whether something changed: when one of your numbers stepped up or down and stayed there, a dashed line marks the day on the chart with your average before and after, and a sentence says by how much ("From about 12 June you sleep 25 min longer on average than before")
+* A step is shown only when it stands out from your weeks shuffled 999 times; otherwise Trends says "No clear change over this time"
+* Small marks under the chart show what happened around then: a switch to another device, a trip, a time left out, a logged period, a workout, a week without data. Touch a period to read them
+* It shows when your numbers moved, not why. Its date is rough (a small step only names the part of the month), a slow change shows as one step where it moved fastest, and nothing here changes your stored numbers

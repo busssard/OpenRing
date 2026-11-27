@@ -274,6 +274,17 @@ public final class HandNight {
         return times(day, zone, Math.min(t[0], up - MIN_NIGHT_S), up, true);
     }
 
+    /** The hour of the screen test's fixed "now" ({@link #demoNow}, issue #458). */
+    public static final int DEMO_NOW_H = 9;
+
+    /**
+     * The fixed "now" of the screen test's entry (issue #458, demo mode only): {@link #DEMO_NOW_H}:00 of {@code day} in
+     * {@code zone}, in unix seconds, so the picture's Up does not depend on the hour the emulator runs. The app uses the clock.
+     */
+    public static double demoNow(LocalDate day, ZoneId zone) {
+        return day.atTime(DEMO_NOW_H, 0).atZone(zone).toEpochSecond();
+    }
+
     /** Minutes after 18:00 by the clock in {@code zone} (0 to 1439): 23:00 is 300, 07:00 is 780. */
     public static double barMinute(double unix, ZoneId zone) {
         ZonedDateTime t = Instant.ofEpochSecond((long) Math.floor(unix)).atZone(zone);
