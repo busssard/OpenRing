@@ -621,6 +621,10 @@ public class SyncProgressTest {
         check("source: core/SyncProgress knows no Android", !sp.contains("import android"));
         String svc = read(base + "sync/SyncService.java");
         check("source: the notification's title and its text without the title's words", svc.contains(".setContentTitle(app.openring.core.SyncProgress.NOTIFICATION_TITLE)")
-                && svc.contains("build(app.openring.core.SyncProgress.notificationText(RingManager.get(this).status()))"));
+                && svc.contains("String text = app.openring.core.SyncProgress.notificationText(RingManager.get(this).status());")
+                && svc.contains("nm.notify(ID, build(text));"));
+        // an unchanged text is not sent again (review of dbc5c9d): the check comes before notify
+        int same = svc.indexOf("text.equals(shownText)) return;"), sent = svc.indexOf("nm.notify(ID, build(text));");
+        check("source: the same notification text is not sent again", same > 0 && same < sent && svc.contains("shownText = text;"));
     }
 }
