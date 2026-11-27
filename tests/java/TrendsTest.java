@@ -566,8 +566,10 @@ public class TrendsTest {
         int out = 0;
         for (Cycles.Cycle x : c.cycles) if (x.leftOut) out++;
         eq("the tracker leaves one cycle out (64 days)", out, 1);
-        Trends.View m = Trends.cycles(c.cycles, Trends.MONTHS);
-        eq("cycle months: October 2025 to July 2026", m.buckets.size(), 10);
+        Trends.View m = Trends.cycles(c.cycles, Trends.MONTHS, CYCLE_TODAY);
+        eq("cycle months: October 2025 to today's August 2026 (the axis runs to today, as the other measures')", m.buckets.size(), 11);
+        check("August 2026, no cycle started yet: a gap at the end", m.buckets.get(10).n == 0 && Double.isNaN(m.buckets.get(10).value)
+                && m.buckets.get(10).start.equals(LocalDate.parse("2026-08-01")));
         eq("every cycle a small dot", m.dayDates.size(), 9);
         int dec = m.indexOf(LocalDate.parse("2025-12-01")), jan = m.indexOf(LocalDate.parse("2026-01-01"));
         near("a cycle across New Year is filed under December, the month it started", m.buckets.get(dec).value, 29, 1e-9);
@@ -584,29 +586,48 @@ public class TrendsTest {
         Trends.Bucket a = m.buckets.get(apr);
         check("a left out cycle alone: a hollow dot at its length", a.hollow && Math.abs(a.value - 64) < 1e-9);
         eq("its readout says so", t(Trends.readout(m, apr, L)), "April 2026: cycle of 64 days, started 28 April, left out of your averages");
+        int hollowDots = 0;
+        for (int i = 0; i < m.dayDates.size(); i++) if (m.dayHollow.get(i)) {
+            hollowDots++;
+            check("the hollow small dot is the left out cycle", m.dayDates.get(i).equals(LocalDate.parse("2026-04-28")) && m.dayValues.get(i) == 64);
+        }
+        eq("one hollow small dot, one flag per small dot", hollowDots + "/" + m.dayHollow.size(), "1/9");
         eq("the chart's bubble", Trends.tip(m, mar, L), "March 2026\n29 days");
         eq("the bubble of a gap", Trends.tip(m, feb, L), "February 2026\nnone");
-        Trends.View y = Trends.cycles(c.cycles, Trends.YEARS);
+        Trends.View y = Trends.cycles(c.cycles, Trends.YEARS, CYCLE_TODAY);
         eq("cycle years: 2025 and 2026", y.buckets.size(), 2);
         Trends.Bucket y5 = y.buckets.get(0), y6 = y.buckets.get(1);
         check("2025: four cycles of 29 days, a band with 4 or more", y5.n == 4 && Math.abs(y5.value - 29) < 1e-9 && y5.lo == 29 && y5.hi == 29);
         eq("2025's readout", t(Trends.readout(y, 0, L)), "2025: 4 cycles, 29 days on average, middle half 29 to 29 days");
         near("2026: the left out cycle not in the mean", y6.value, (35 + 27 + 31 + 29) / 4.0, 1e-9);
         check("2026: not hollow, as it has cycles kept", !y6.hollow && y6.n == 5);
+        int yh = 0;
+        for (int i = 0; i < y.dayDates.size(); i++) if (y.dayHollow.get(i)) yh++;
+        eq("years: the left out cycle's small dot is still hollow among the kept ones", yh, 1);
         check("2026's readout counts the one left out: " + t(Trends.readout(y, 1, L)), Trends.readout(y, 1, L).startsWith("2026: 5 cycles, 31 days on average, middle half ")
                 && Trends.readout(y, 1, L).endsWith(", 1 left out of your averages"));
-        Trends.View w = Trends.cycles(c.cycles, Trends.WEEKS);
+        Trends.View w = Trends.cycles(c.cycles, Trends.WEEKS, CYCLE_TODAY);
         int wk = w.indexOf(LocalDate.parse("2025-12-27"));
         eq("weeks: the cycle of 27 December in the week of 22 December", w.buckets.get(wk).start, LocalDate.parse("2025-12-22"));
         eq("weeks: one value", w.buckets.get(wk).n, 1);
         int n = 0;
         for (Trends.Bucket b : w.buckets) n += b.n;
         eq("weeks: every cycle once", n, 9);
-        check("no cycles: an empty view", Trends.cycles(new ArrayList<Cycles.Cycle>(), Trends.MONTHS).buckets.isEmpty()
-                && Trends.cycles(null, Trends.MONTHS).empty());
+        check("no cycles: an empty view", Trends.cycles(new ArrayList<Cycles.Cycle>(), Trends.MONTHS, CYCLE_TODAY).buckets.isEmpty()
+                && Trends.cycles(null, Trends.MONTHS, CYCLE_TODAY).empty());
+        // a period logged ahead (a day after today): the cycle ending in it does not count, nor in the line
+        Cycles ahead = cyclesOf(LocalDate.parse("2026-07-20"), STARTS);
+        Trends.View av = Trends.cycles(ahead.cycles, Trends.MONTHS, LocalDate.parse("2026-07-20"));
+        int an = 0;
+        for (Trends.Bucket b : av.buckets) an += b.n;
+        eq("a cycle ending in a period logged for a later day is not counted", an, 8);
+        eq("the axis still runs to today's month", av.buckets.get(av.buckets.size() - 1).start, LocalDate.parse("2026-07-01"));
+        int pa = 0;
+        for (Trends.Bucket b : Trends.periods(ahead.finished(), Trends.MONTHS, LocalDate.parse("2026-07-20")).buckets) pa += b.n;
+        eq("nor the period logged ahead", pa, 9);
         // three left out in a year with none kept, and three cycles in a month
         List<Cycles.Cycle> few = cyclesOf(LocalDate.parse("2026-12-01"), "2026-01-01", "2026-01-11", "2026-01-21", "2026-01-31").cycles;
-        Trends.View fm = Trends.cycles(few, Trends.MONTHS);
+        Trends.View fm = Trends.cycles(few, Trends.MONTHS, LocalDate.parse("2026-02-15"));
         eq("three cycles in a month", t(Trends.readout(fm, 0, L)), "January 2026: 3 cycles, 10, 10 and 10 days, 10 on average");
         eq("the chart's text", t(Trends.note(Trends.CYCLE, Trends.MONTHS)), "Dot: the average of the cycles that started in each month. "
                 + "Band: their middle half, with 4 cycles or more. Hollow: left out of your averages. Small dots: each cycle. Touch to read.");
@@ -619,7 +640,7 @@ public class TrendsTest {
     /** Period length: days from a period's first to its last day, filed by its start; the one still running left out. */
     static void periodLength() {
         Cycles c = cyclesOf(CYCLE_TODAY, STARTS);
-        Trends.View m = Trends.periods(c.periods, c.running, Trends.MONTHS);
+        Trends.View m = Trends.periods(c.finished(), Trends.MONTHS, CYCLE_TODAY);
         eq("periods of 5 days, filed by their start", m.buckets.get(0).value, 5.0);
         eq("one period's readout", t(Trends.readout(m, m.indexOf(LocalDate.parse("2026-01-25")), L)), "January 2026: period of 5 days, started 25 January");
         eq("two periods' readout", t(Trends.readout(m, 0, L)), "October 2025: 2 periods, 5 and 5 days, 5 on average");
@@ -629,7 +650,7 @@ public class TrendsTest {
         // a period still running (its last day 2 days ago) counts once it ends
         Cycles run = cyclesOf(LocalDate.parse("2026-08-05"), STARTS);
         check("the newest period is running", run.running != null);
-        Trends.View r = Trends.periods(run.periods, run.running, Trends.MONTHS);
+        Trends.View r = Trends.periods(run.finished(), Trends.MONTHS, LocalDate.parse("2026-08-05"));
         int k = 0;
         for (Trends.Bucket b : r.buckets) k += b.n;
         eq("the running period is not counted", k, 9);
@@ -644,14 +665,14 @@ public class TrendsTest {
         double[] last = {29, 29, 35, 27, 31, 29};
         String want = "Your last 6 cycles: " + Math.round(Stats.mean(last)) + " days on average, middle half " + Math.round(Stats.percentile(last, 0.25))
                 + " to " + Math.round(Stats.percentile(last, 0.75)) + " days.";
-        eq("the last 6 cycles", t(Trends.cycleLine(c.cycles)), want);
-        eq("the last 6 periods", t(Trends.periodLine(c.periods, c.running)), "Your last 6 periods: 5 days on average, middle half 5 to 5 days.");
+        eq("the last 6 cycles", t(Trends.cycleLine(c.cycles, CYCLE_TODAY)), want);
+        eq("the last 6 periods", t(Trends.periodLine(c.finished(), CYCLE_TODAY)), "Your last 6 periods: 5 days on average, middle half 5 to 5 days.");
         Cycles three = cyclesOf(CYCLE_TODAY, "2026-01-01", "2026-01-28", "2026-02-27", "2026-03-28");
-        eq("fewer than 6: all of them, from the shortest to the longest", t(Trends.cycleLine(three.cycles)), "Your 3 cycles: 29 days on average, from 27 to 30 days.");
+        eq("fewer than 6: all of them, from the shortest to the longest", t(Trends.cycleLine(three.cycles, CYCLE_TODAY)), "Your 3 cycles: 29 days on average, from 27 to 30 days.");
         Cycles one = cyclesOf(CYCLE_TODAY, "2026-01-01", "2026-01-28");
-        eq("one cycle: too few", t(Trends.cycleLine(one.cycles)), "Too few cycles yet.");
-        eq("no cycles: too few", Trends.cycleLine(null), Trends.FEW_CYCLES);
-        eq("one period ended: too few", t(Trends.periodLine(cyclesOf(CYCLE_TODAY, "2026-01-01").periods, null)), "Too few periods yet.");
+        eq("one cycle: too few", t(Trends.cycleLine(one.cycles, CYCLE_TODAY)), "Too few cycles yet.");
+        eq("no cycles: too few", Trends.cycleLine(null, CYCLE_TODAY), Trends.FEW_CYCLES);
+        eq("one period ended: too few", t(Trends.periodLine(cyclesOf(CYCLE_TODAY, "2026-01-01").finished(), CYCLE_TODAY)), "Too few periods yet.");
     }
 
     /** Made up life log: two factors on one day, an own tag, a month without any factor, a factor before the first day, one after today. */
@@ -687,7 +708,13 @@ public class TrendsTest {
         check("no band and no small dots for a count", Double.isNaN(m.buckets.get(1).lo) && m.dayDates.isEmpty());
         eq("the bubble", Trends.tip(m, 1, L), "January 2026\n2 of 31 days");
         eq("the bubble of a gap", Trends.tip(m, 2, L), "February 2026\nnothing logged");
-        near("the chart starts at none", m.range()[0], 0, 0);
+        TreeMap<LocalDate, List<String>> many = new TreeMap<LocalDate, List<String>>();
+        for (int k = 0; k < 2; k++) many.put(LocalDate.parse("2026-01-05").plusDays(k), Arrays.asList("alcohol"));
+        for (int k = 0; k < 5; k++) many.put(LocalDate.parse("2026-02-05").plusDays(k), Arrays.asList("alcohol"));
+        Trends.View mv = Trends.counts(many, "alcohol", "alcohol", Trends.MONTHS, LocalDate.parse("2026-02-20"), LIFE_FIRST);
+        check("the lowest count is 2", mv.buckets.get(0).value == 2 && mv.buckets.get(1).value == 5);
+        near("the chart starts at none all the same", mv.range()[0], 0, 0);
+        near("its top is the highest count", mv.range()[1], 5, 0);
         Trends.View y = Trends.counts(d, "alcohol", "alcohol", Trends.YEARS, LIFE_TODAY, LIFE_FIRST);
         eq("years: 2025 from its first logged day", t(Trends.readout(y, 0, L)), "2025: alcohol on 1 of 2 days");
         eq("years: 2026 so far", t(Trends.readout(y, 1, L)), "2026: alcohol on 4 of 105 days so far");
@@ -744,8 +771,11 @@ public class TrendsTest {
         eq("an own tag as typed", Trends.inSentence("own:1", "Late Dinner"), "Late Dinner");
         eq("no name", Trends.inSentence(null, null), "it");
         eq("the line under Mark days with", t(Trends.markNote("alcohol", Trends.MONTHS)),
-                "Dots under the chart: each month with alcohol. Touch a month to read on how many days. They change no number here.");
-        t(Trends.markNote("alcohol", Trends.WEEKS));
+                "Dots under the chart: each month with alcohol. Touch a month to see on how many days you logged it. They do not change any number.");
+        eq("by week", t(Trends.markNote("alcohol", Trends.WEEKS)),
+                "Dots under the chart: each week with alcohol. Touch a week to see on how many days you logged it. They do not change any number.");
+        check("explain lines name every period, not only months", Trends.explain(Trends.CYCLE, -1).contains("week, month or year")
+                && Trends.explain(Trends.PERIOD_DAYS, -1).contains("week, month or year") && Trends.explain(Trends.LIFE, -1).contains("week, month or year"));
         eq("the chart's text", t(Trends.note(Trends.LIFE, Trends.MONTHS)), "Dot: the days you logged it in each month. No dot: nothing logged that month. Touch to read.");
         t(Trends.explain(Trends.LIFE, -1));
         eq("a count of days", Trends.value(Trends.LIFE, 6, L), "6 days");
@@ -773,6 +803,7 @@ public class TrendsTest {
             app.openring.ui.Explain.TRENDS_LINK, app.openring.ui.Explain.TRENDS_COMPARE, app.openring.ui.Explain.TRENDS_COMPARE_CAPTION,
             app.openring.ui.Explain.TRENDS_DEMO, app.openring.ui.Explain.TRENDS_FAILED, app.openring.ui.Explain.TRENDS_CYCLES_CAPTION,
             app.openring.ui.Explain.TRENDS_PERIODS_CAPTION, app.openring.ui.Explain.TRENDS_CYCLES_NOTE, app.openring.ui.Explain.TRENDS_LIFE_COMPARE,
+            app.openring.ui.Explain.TRENDS_PERIODS_NOTE,
             app.openring.ui.Explain.TRENDS_MARK, app.openring.ui.Explain.TRENDS_MARK_NONE}) TEXTS.add(x);
         boolean ok = true;
         for (String x : TEXTS) {

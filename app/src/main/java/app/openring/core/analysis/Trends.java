@@ -220,6 +220,8 @@ public final class Trends {
         public final List<Integer> dayBucket = new ArrayList<Integer>();
         public final List<Double> dayOffset = new ArrayList<Double>();
         public final List<Double> dayValues = new ArrayList<Double>();
+        /** Each small dot drawn hollow: a cycle the tracker leaves out of its averages (phase 3); false for every other. */
+        public final List<Boolean> dayHollow = new ArrayList<Boolean>();
         /** Clock measures: the middle of the whole history's times; values are drawn as this plus up to 12 hours either way. */
         public double centre = Double.NaN;
         /**
@@ -327,6 +329,7 @@ public final class Trends {
                 if (Double.isNaN(x)) continue;
                 out.dayDates.add(d.date);
                 out.dayValues.add(x);
+                out.dayHollow.add(false);
             }
             spread(out, startAt);
             out.buckets.add(b);
@@ -555,10 +558,10 @@ public final class Trends {
             case STEPS: return "Steps of each day the device was worn for an hour or more (days without it are left out, not zero).";
             case KCAL: return "Active calories of each day worn for an hour or more (days without it are left out, not zero).";
             case CYCLE: return "Days from the first day of one period to the first day of the next, as the period tracker counts them, "
-                    + "in the month the cycle started. A cycle the tracker leaves out of its averages (far from your usual, often a gap in the log) is hollow.";
-            case PERIOD_DAYS: return "Days from the first to the last day of each logged period, in the month it started. A period still running counts once it ends.";
-            case LIFE: return "Days you logged this factor in each month, this month up to today. A month without any logged factor is "
-                    + "left empty, not zero, as nothing tells a day you did not log from a day without it.";
+                    + "in the week, month or year the cycle started. A cycle the tracker leaves out of its averages (far from your usual, often a gap in the log) is hollow.";
+            case PERIOD_DAYS: return "Days from the first to the last day of each logged period, in the week, month or year it started. A period still running counts once it ends.";
+            case LIFE: return "Days you logged this factor in each week, month or year, the current one up to today. One without any logged "
+                    + "factor is left empty, not zero, as nothing tells a day you did not log from a day without it.";
             default: return "Screen time of each whole day this phone recorded, without the apps you left out.";
         }
     }
@@ -730,7 +733,10 @@ public final class Trends {
         return Double.isNaN(x) ? 0 : x * x;
     }
 
-    /** What a difference is called: "you sleep", "longer", "shorter" and how it is said. */
+    /**
+     * What a difference is called: "you sleep", "longer", "shorter" and how it is said. The last three entries (cycle length,
+     * period length, life factors) are used by no sentence; they only keep the arrays as long as {@link #MEASURES}.
+     */
     static final String[] SUBJECT = {"you sleep", "you fall asleep", "you wake up", "your bedtimes vary", "you have", "your sleep score is",
         "your readiness is", "your resting heart rate is", "your HRV is", "your temperature is", "you walk", "you burn",
         "your screen time is", "your cycles are", "your periods are", "you have it on"};
@@ -811,22 +817,28 @@ public final class Trends {
      * Cycle length (phase 3): one value per cycle ({@code Cycles.cycles}, from one period's first day to the next one's), filed
      * under the week, month or year the cycle started. A period's dot is the mean of its cycles the tracker keeps, the band
      * their middle half with 4 or more; a cycle left out of its averages ({@link Cycles.Cycle#leftOut}) is a small dot and not
-     * in the mean; a period with only such cycles is a hollow dot at their mean. Every cycle is a small dot.
+     * in the mean and drawn as a hollow small dot ({@link View#dayHollow}); a period with only such cycles is a hollow dot at
+     * their mean. Every cycle is a small dot. A cycle ending in a period logged for a day after {@code today} does not count
+     * (as {@code Cycles.finished}); the time axis runs to {@code today}'s period, as the other measures' do.
      */
-    public static View cycles(List<Cycles.Cycle> cycles, int period) {
+    public static View cycles(List<Cycles.Cycle> cycles, int period, LocalDate today) {
         List<Item> items = new ArrayList<Item>();
-        if (cycles != null) for (Cycles.Cycle c : cycles) items.add(new Item(c.start, c.length, c.leftOut));
-        return items(CYCLE, items, period);
+        if (cycles != null) for (Cycles.Cycle c : cycles) if (!c.next.isAfter(today)) items.add(new Item(c.start, c.length, c.leftOut));
+        return items(CYCLE, items, period, today);
     }
 
-    /** Period length (phase 3): days from each period's first day to its last ({@code Period.days()}), filed as {@link #cycles}; the running one left out. */
-    public static View periods(List<Cycles.Period> periods, Cycles.Period running, int period) {
+    /**
+     * Period length (phase 3): days from each period's first day to its last ({@code Period.days()}), filed as {@link #cycles}.
+     * {@code finished}: the periods that are over ({@code Cycles.finished()}: not the running one, not one logged for a day
+     * after today); one starting after {@code today} is left out here too.
+     */
+    public static View periods(List<Cycles.Period> finished, int period, LocalDate today) {
         List<Item> items = new ArrayList<Item>();
-        if (periods != null) for (Cycles.Period p : periods) if (p != running) items.add(new Item(p.start, p.days(), false));
-        return items(PERIOD_DAYS, items, period);
+        if (finished != null) for (Cycles.Period p : finished) if (!p.start.isAfter(today)) items.add(new Item(p.start, p.days(), false));
+        return items(PERIOD_DAYS, items, period, today);
     }
 
-    static View items(int measure, List<Item> in, int period) {
+    static View items(int measure, List<Item> in, int period, LocalDate today) {
         View out = new View(measure, period);
         if (in.isEmpty()) return out;
         List<Item> all = new ArrayList<Item>(in);
@@ -836,7 +848,9 @@ public final class Trends {
                 return a.start.compareTo(b.start);
             }
         });
+        // up to today's period (a gap at the end when no cycle started since), never before the last one
         LocalDate last = all.get(all.size() - 1).start;
+        if (today != null && today.isAfter(last)) last = today;
         int at = 0;
         for (LocalDate s = start(all.get(0).start, period); !s.isAfter(last); s = next(s, period)) {
             LocalDate e = next(s, period).minusDays(1);
@@ -849,6 +863,7 @@ public final class Trends {
                 (it.leftOut ? left : kept).add((double) it.days);
                 out.dayDates.add(it.start);
                 out.dayValues.add((double) it.days);
+                out.dayHollow.add(it.leftOut);
             }
             b.n = b.items.size();
             if (!kept.isEmpty()) {
@@ -924,16 +939,19 @@ public final class Trends {
      * average, middle half 27 to 30 days." The cycles the tracker keeps in its averages, the last {@link #LAST}; fewer: all of
      * them ("Your 3 cycles: 29 days on average, from 27 to 31 days."); under 2: {@link #FEW_CYCLES}.
      */
-    public static String cycleLine(List<Cycles.Cycle> cycles) {
+    public static String cycleLine(List<Cycles.Cycle> cycles, LocalDate today) {
         List<Integer> v = new ArrayList<Integer>();
-        if (cycles != null) for (Cycles.Cycle c : cycles) if (!c.leftOut) v.add(c.length);
+        if (cycles != null) for (Cycles.Cycle c : cycles) if (!c.leftOut && !c.next.isAfter(today)) v.add(c.length);
         return line(v, "cycles", FEW_CYCLES);
     }
 
-    /** As {@link #cycleLine} for the periods' lengths (the running one left out): "Your last 6 periods: 5 days on average, ...". */
-    public static String periodLine(List<Cycles.Period> periods, Cycles.Period running) {
+    /**
+     * As {@link #cycleLine} for the lengths of every period that has ended ({@code finished}, {@code Cycles.finished()}): "Your
+     * last 6 periods: 5 days on average, ...".
+     */
+    public static String periodLine(List<Cycles.Period> finished, LocalDate today) {
         List<Integer> v = new ArrayList<Integer>();
-        if (periods != null) for (Cycles.Period p : periods) if (p != running) v.add(p.days());
+        if (finished != null) for (Cycles.Period p : finished) if (!p.start.isAfter(today)) v.add(p.days());
         return line(v, "periods", FEW_PERIODS);
     }
 
@@ -1044,11 +1062,12 @@ public final class Trends {
 
     /**
      * The line under "Mark days with" when a factor is picked: "Dots under the chart: each month with alcohol. Touch a month to
-     * read on how many days." Display only: the marks change no number and no sentence.
+     * see on how many days you logged it. They do not change any number." Display only: the marks change no number and no sentence.
      */
     public static String markNote(String name, int period) {
         String each = period == WEEKS ? "week" : period == MONTHS ? "month" : "year";
-        return "Dots under the chart: each " + each + " with " + name + ". Touch a " + each + " to read on how many days. They change no number here.";
+        return "Dots under the chart: each " + each + " with " + name + ". Touch a " + each + " to see on how many days you logged it. "
+                + "They do not change any number.";
     }
 
     /** "11 %". */

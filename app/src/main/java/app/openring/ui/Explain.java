@@ -1201,8 +1201,10 @@ public final class Explain {
 
     /** Phase 3 (issue #374): the card under the chart for cycle and period length, instead of this month against the last. */
     public static final String TRENDS_CYCLES_CAPTION = "Your recent cycles", TRENDS_PERIODS_CAPTION = "Your recent periods";
-    public static final String TRENDS_CYCLES_NOTE = "Only cycles and periods the period tracker keeps in its averages, as on Body. "
-            + "One value for each cycle cannot be compared month against month, so the last ones are summed up instead.";
+    public static final String TRENDS_CYCLES_NOTE = "Only cycles the period tracker keeps in its averages, as on Body. "
+            + "One value for each cycle cannot be compared month against month, so the last ones are shown together.";
+    public static final String TRENDS_PERIODS_NOTE = "Every period that has ended. One value for each period cannot be compared month "
+            + "against month, so the last ones are shown together.";
     /** Under the Life group's this month against the last. */
     public static final String TRENDS_LIFE_COMPARE = "Days you logged, as a share of the days so far. No range: a log you keep by hand "
             + "is the evidence itself, and a range would suggest more precision than it has.";

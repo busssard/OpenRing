@@ -89,8 +89,9 @@ public final class TrendsActivity extends Activity {
             group = b.getInt(GROUP, group);
             measure = b.getInt(MEASURE, measure);
             period = b.getInt(PERIOD, period);
-            factor = b.getString(FACTOR, factor);
-            mark = b.getString(MARK, mark);
+            // only when saved: a mark set back to None stays None after a turn of the phone
+            if (b.containsKey(FACTOR)) factor = b.getString(FACTOR);
+            if (b.containsKey(MARK)) mark = b.getString(MARK);
             String t = b.getString(TOUCHED);
             try {
                 touched = t == null ? null : LocalDate.parse(t);
@@ -337,11 +338,12 @@ public final class TrendsActivity extends Activity {
                         view = Trends.counts(lf, fk, fName, p, t, first);
                         compared = Trends.lifeCompare(lf, fk, fName, t, first);
                     } else if (m == Trends.CYCLE) {
-                        view = Trends.cycles(cy.cycles, p);
-                        compared = Trends.cycleLine(cy.cycles);
+                        view = Trends.cycles(cy.cycles, p, t);
+                        compared = Trends.cycleLine(cy.cycles, t);
                     } else if (m == Trends.PERIOD_DAYS) {
-                        view = Trends.periods(cy.periods, cy.running, p);
-                        compared = Trends.periodLine(cy.periods, cy.running);
+                        // the periods that are over, as the tracker's own rule (not the running one, not one logged ahead)
+                        view = Trends.periods(cy.finished(), p, t);
+                        compared = Trends.periodLine(cy.finished(), t);
                     } else {
                         view = Trends.of(ds, m, p, t);
                         compared = Trends.compare(ds, m, t, l).text;
@@ -513,13 +515,12 @@ public final class TrendsActivity extends Activity {
         body.addView(ch);
 
         LinearLayout cmp = Ui.card(this);
-        boolean cyc = measure == Trends.CYCLE || measure == Trends.PERIOD_DAYS;
         cmp.addView(Ui.caption(this, measure == Trends.CYCLE ? Explain.TRENDS_CYCLES_CAPTION : measure == Trends.PERIOD_DAYS
                 ? Explain.TRENDS_PERIODS_CAPTION : Explain.TRENDS_COMPARE_CAPTION));
         cmp.addView(Ui.gap(this, 6));
         cmp.addView(Ui.body(this, compared));
         cmp.addView(Ui.gap(this, 6));
-        cmp.addView(Ui.text(this, cyc ? Explain.TRENDS_CYCLES_NOTE : measure == Trends.LIFE ? Explain.TRENDS_LIFE_COMPARE : Explain.TRENDS_COMPARE,
+        cmp.addView(Ui.text(this, measure == Trends.CYCLE ? Explain.TRENDS_CYCLES_NOTE : measure == Trends.PERIOD_DAYS ? Explain.TRENDS_PERIODS_NOTE : measure == Trends.LIFE ? Explain.TRENDS_LIFE_COMPARE : Explain.TRENDS_COMPARE,
                 12, Ui.TEXT_3, Ui.REGULAR));
         body.addView(cmp);
 

@@ -726,7 +726,8 @@ on and 2 periods logged, the rule of Body's cycle cards) and the life log (`Life
 `Trends.factors`) once per read; `TrendDays.stamp` counts `life_days` and `life_tags`, so a tag set or removed reads again. Body
 gets **Cycle length** and **Period length** (`Trends.cycles`, `Trends.periods`: one value per cycle or period, filed under the
 week, month or year it started, the dot the mean of the cycles the tracker keeps, the band from 4 of them, a period with only
-`leftOut` cycles a hollow dot; a running period counts once it ends). Instead of this month against the last, one line on the last
+`leftOut` cycles a hollow dot, each left out cycle a hollow small dot; only what `Cycles.finished` counts: no running period, none
+logged for a later day, no cycle ending in one; the axis runs to today's period). Instead of this month against the last, one line on the last
 6 (`Trends.cycleLine`); no change test (one value per cycle is no daily series), and no "Period started" marks there. A sixth
 group **Life** shows the days with each factor (`Trends.counts`): a count per period of the days from the first day up to today,
 no band; a period without any logged factor is a gap, not 0. Its comparison is plain shares ("on 3 of 27 days so far (11 %)"),

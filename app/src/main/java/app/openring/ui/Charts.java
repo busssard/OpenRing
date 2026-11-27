@@ -1775,7 +1775,7 @@ public final class Charts {
         private int selected = -1, pending = -1;
         private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint(Paint.ANTI_ALIAS_FLAG), day = new Paint(Paint.ANTI_ALIAS_FLAG),
                 band = new Paint(Paint.ANTI_ALIAS_FLAG), dot = new Paint(Paint.ANTI_ALIAS_FLAG), ring = new Paint(Paint.ANTI_ALIAS_FLAG),
-                line = new Paint(Paint.ANTI_ALIAS_FLAG);
+                line = new Paint(Paint.ANTI_ALIAS_FLAG), dayRing = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF r = new RectF();
 
         public Months(Context c, app.openring.core.analysis.Trends.View view, int color) {
@@ -1788,6 +1788,9 @@ public final class Charts {
             grid.setStrokeWidth(1);
             grid.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 3), Ui.dp(c, 4)}, 0));
             day.setColor(Ui.alpha(color, 0.28f));
+            dayRing.setColor(Ui.alpha(color, 0.7f));
+            dayRing.setStyle(Paint.Style.STROKE);
+            dayRing.setStrokeWidth(Ui.dp(c, 1f));
             band.setColor(Ui.alpha(color, 0.30f));
             dot.setColor(color);
             ring.setColor(color);
@@ -1893,7 +1896,9 @@ public final class Charts {
             float small = Ui.dp(getContext(), 1.6f);
             for (int i = 0; i < view.dayDates.size(); i++) {
                 float dx = left + slot * (view.dayBucket.get(i) + 0.5f) + (float) (view.dayOffset.get(i) * slot);
-                cv.drawCircle(dx, y(view.dayValues.get(i), lo, hi, top, bottom), small, day);
+                // phase 3: a cycle left out of the tracker's averages as a hollow small dot, whatever else its period holds
+                boolean hollow = i < view.dayHollow.size() && view.dayHollow.get(i);
+                cv.drawCircle(dx, y(view.dayValues.get(i), lo, hi, top, bottom), hollow ? small + Ui.dp(getContext(), 0.8f) : small, hollow ? dayRing : day);
             }
             float half = Math.max(Ui.dp(getContext(), 1.5f), Math.min(Ui.dp(getContext(), 7), slot * 0.32f));
             float[] xs = new float[bs.size()];

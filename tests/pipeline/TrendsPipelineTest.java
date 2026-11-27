@@ -244,12 +244,12 @@ public class TrendsPipelineTest {
         double ms = (System.nanoTime() - t0) / 1e6;
         check("#374 phase 3: the demo's logs read without a failure", skipped[0] == 0, skipped[0]);
         check("#374 phase 3: the demo's period log gives cycles", logs.cycles != null && logs.cycles.cycles.size() >= 10, logs.cycles == null ? null : logs.cycles.cycles.size());
-        Trends.View cy = Trends.cycles(logs.cycles.cycles, Trends.MONTHS);
+        Trends.View cy = Trends.cycles(logs.cycles.cycles, Trends.MONTHS, today);
         int withCycle = 0;
         for (Trends.Bucket b : cy.buckets) if (!Double.isNaN(b.value)) withCycle++;
         check("#374 phase 3: cycle length by month has a dot for most months", withCycle >= 10 && cy.dayDates.size() == logs.cycles.cycles.size(),
                 withCycle + " of " + cy.buckets.size());
-        Trends.View pv = Trends.periods(logs.cycles.periods, logs.cycles.running, Trends.MONTHS);
+        Trends.View pv = Trends.periods(logs.cycles.finished(), Trends.MONTHS, today);
         double meanDays = 0;
         int np = 0;
         for (Trends.Bucket b : pv.buckets) for (Trends.Item it : b.items) {
@@ -258,9 +258,9 @@ public class TrendsPipelineTest {
         }
         check("#374 phase 3: period length of every period but a running one, 2 to 10 days on average", np >= logs.cycles.periods.size() - 1 && meanDays / np >= 2 && meanDays / np <= 10,
                 np + " " + (np == 0 ? 0 : meanDays / np));
-        System.out.println("    #374 phase 3, demo: " + Trends.cycleLine(logs.cycles.cycles) + " " + Trends.periodLine(logs.cycles.periods, logs.cycles.running)
+        System.out.println("    #374 phase 3, demo: " + Trends.cycleLine(logs.cycles.cycles, today) + " " + Trends.periodLine(logs.cycles.finished(), today)
                 + " (logs read in " + Math.round(ms) + " ms)");
-        check("#374 phase 3: the demo's cycle line", Trends.cycleLine(logs.cycles.cycles).startsWith("Your last 6 cycles: "), Trends.cycleLine(logs.cycles.cycles));
+        check("#374 phase 3: the demo's cycle line", Trends.cycleLine(logs.cycles.cycles, today).startsWith("Your last 6 cycles: "), Trends.cycleLine(logs.cycles.cycles, today));
         check("#374 phase 3: the demo's factors, alcohol and meditation among them", logs.factors.contains("alcohol") && logs.factors.contains("meditation")
                 && "Alcohol".equals(logs.names.get("alcohol")), logs.factors);
         check("#374 phase 3: never Intimacy in the demo", !logs.factors.contains("intimacy"), null);
