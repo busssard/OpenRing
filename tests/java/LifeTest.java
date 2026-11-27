@@ -99,6 +99,8 @@ public class LifeTest {
         eq("a removed own tag cannot be logged, nor removed again", keys(k.own()), Arrays.asList("own:1000", "own:2000"));
         check("a removed own tag is not in All factors", !keys(k.loggable()).contains("own:3000") && k.loggable().size() == 13);
         eq("names in the list order", k.names(Arrays.asList("own:2000", "alcohol", "own:9")), Arrays.asList("Alcohol", "Sauna", "Own factor"));
+        eq("keys in the order of the names (#292 phase 3)", k.keys(Arrays.asList("own:2000", "alcohol", "own:9")), Arrays.asList("alcohol", "own:2000", "own:9"));
+        check("keys of none is empty", k.keys(null).isEmpty());
         eq("the name of an own tag nobody knows", k.name("own:9"), "Own factor");
         // the stored order wins
         List<LifeTags.Choice> ord = new ArrayList<LifeTags.Choice>();
@@ -172,7 +174,7 @@ public class LifeTest {
                 "This month: Meditation on 3 days, Alcohol on 1 day, Stress on 1 day.");
         eq("a month without tags", LifeTags.monthLine(days, YearMonth.of(2026, 9), k), "Nothing logged this month.");
         List<String> all = new ArrayList<String>(Arrays.asList(LifeTags.TITLE, LifeTags.TITLE_PAST, LifeTags.NOTE, LifeTags.ALL, LifeTags.SEVERAL,
-                LifeTags.ADD_OWN, LifeTags.CHOOSE, LifeTags.REMOVE_OWN, LifeTags.OWN_HINT, LifeTags.BODY_TITLE, LifeTags.MONTH_HINT,
+                LifeTags.ADD_OWN, LifeTags.CHOOSE, LifeTags.REMOVE_OWN, LifeTags.OWN_HINT, LifeTags.BODY_TITLE, LifeTags.LOGGED_HINT, LifeTags.MONTH_HINT,
                 LifeTags.NONE_YET, LifeTags.NO_EFFECT_YET, LifeTags.NOT_SAVED, LifeTags.NOT_UNDONE, LifeTags.UNREADABLE, LifeTags.CSV_CHOICE,
                 LifeTags.CSV_INTIMACY, LifeTags.CSV_NOTE, LifeTags.SPAN_FUTURE, LifeTags.SPAN_BACKWARDS, LifeTags.OWN_REFUSED, LifeTags.monthLine(days, YearMonth.of(2026, 11), k),
                 LifeTags.spanDone(1), LifeTags.spanDone(5), RESTORE_TEXT));
@@ -280,6 +282,7 @@ public class LifeTest {
                 Arrays.asList("own:1000", "meditation", "friends", "alcohol", "stress", "hard_workout", "own:2000")); // the own Sauna in force: no fixed Sauna chip (#435)
         eq("one entry in All factors and in Remove one of your own", keys(k.own()), Arrays.asList("own:1000", "own:2000"));
         eq("names: a day with both keys names it once", k.names(Arrays.asList("own:5000", "own:1000", "alcohol")), Arrays.asList("Alcohol", "Sauna"));
+        eq("keys: a day with both keys gives the factor's key once", k.keys(Arrays.asList("own:5000", "own:1000", "alcohol")), Arrays.asList("alcohol", "own:1000"));
         Map<LocalDate, List<String>> days = new TreeMap<LocalDate, List<String>>();
         days.put(LocalDate.of(2026, 11, 1), Arrays.asList("own:1000"));
         days.put(LocalDate.of(2026, 11, 2), Arrays.asList("alcohol", "own:5000"));

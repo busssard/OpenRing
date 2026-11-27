@@ -763,23 +763,46 @@ final class LifeCard {
         return d.life.names(d.lifeDays.get(d.date.minusDays(1)));
     }
 
+    /**
+     * The clear effects of the day before's tags (issue #292, phase 3, option A): one line each, from the phase 2 results already
+     * worked out; empty without one. Display only, no number changes.
+     */
+    static List<String> effectLines(DayData d) {
+        if (!d.lifeOk || d.life == null) return new ArrayList<String>();
+        LocalDate before = d.date.minusDays(1);
+        return app.openring.core.analysis.FactorEffect.beside(d.lifeEffects, d.life.keys(d.lifeDays.get(before)), before,
+                d.date.equals(LocalDate.now()), Locale.getDefault());
+    }
+
     /** Sleep: "Before this night: Alcohol, Meditation." under the night, null without tags. A tap opens Body's month. */
     static View night(Context c, DayData d, Pages.Nav nav) {
-        return line(c, LifeTags.beforeNight(dayBefore(d)), nav);
+        return line(c, LifeTags.beforeNight(dayBefore(d)), effectLines(d), app.openring.core.analysis.FactorEffect.BESIDE_NOTE_SLEEP, nav);
     }
 
     /** Readiness: "Logged yesterday: Alcohol." the morning after, null without tags. */
     static View morning(Context c, DayData d, Pages.Nav nav) {
-        return line(c, LifeTags.morning(dayBefore(d), d.date, LocalDate.now(), Locale.getDefault()), nav);
+        return line(c, LifeTags.morning(dayBefore(d), d.date, LocalDate.now(), Locale.getDefault()), effectLines(d),
+                app.openring.core.analysis.FactorEffect.BESIDE_NOTE_READY, nav);
     }
 
-    static View line(Context c, String text, final Pages.Nav nav) {
+    /** The card: the logged line, under it each clear effect and the note once, then the hint. Beside the number, never in it. */
+    static View line(Context c, String text, List<String> effects, String note, final Pages.Nav nav) {
         if (text == null) return null;
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, LifeTags.BODY_TITLE));
         card.addView(Ui.gap(c, 4));
         card.addView(Ui.text(c, text, 15, Ui.TEXT, Ui.REGULAR));
-        card.addView(Ui.text(c, "As you logged them on Today. Tap for the month on Body.", 12, Ui.TEXT_3, Ui.REGULAR));
+        boolean any = effects != null && !effects.isEmpty();
+        if (any) {
+            for (String e : effects) {
+                card.addView(Ui.gap(c, 6));
+                card.addView(Ui.text(c, e, 14, Ui.TEXT_2, Ui.REGULAR));
+            }
+            card.addView(Ui.gap(c, 6));
+            card.addView(Ui.text(c, note, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
+        card.addView(Ui.text(c, any ? app.openring.core.analysis.FactorEffect.BESIDE_HINT : app.openring.core.LifeTags.LOGGED_HINT,
+                12, Ui.TEXT_3, Ui.REGULAR));
         card.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -889,15 +912,17 @@ final class LifeCard {
      * Body's card "Life factors and your nights" (issue #292, phase 2): one row per factor with a night in the last 12 months
      * ({@code core/analysis/FactorEffect}, worked out by {@code DayData.load} in the background), folded with its short answer as
      * status; open, the sentence, the range as a bar, the evidence chart (touch reads a night) with a chip per measure, the other
-     * measures and the overlap. Null without a ring (nothing to compare).
+     * measures and the overlap. Null without a ring (nothing to compare), and null when the life factors could not be read: the
+     * month card above already says so (issue #475, the same error twice looked like two problems).
      */
     static View effects(final Context c, final DayData d) {
-        if (!d.has.ring) return null;
+        if (!d.has.ring || !d.lifeOk) return null;
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, app.openring.core.analysis.FactorEffect.TITLE));
         card.addView(Ui.gap(c, 4));
-        if (!d.lifeOk || d.lifeEffects == null) {
-            card.addView(Ui.body(c, d.lifeOk ? app.openring.core.analysis.FactorEffect.UNREADABLE : LifeTags.UNREADABLE));
+        if (d.lifeEffects == null) {
+            // the factors were read, but how the nights went after them could not be worked out
+            card.addView(Ui.body(c, app.openring.core.analysis.FactorEffect.UNREADABLE));
             return card;
         }
         Locale l = Locale.getDefault();

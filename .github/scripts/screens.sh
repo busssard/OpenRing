@@ -215,6 +215,17 @@ launch --ei tab 0 --es card WHAT_WAS;                                 shot today
 launch --ei tab 0 --es card WHAT_WAS --ez life_more true;             shot today-life-more 2
 launch --ei tab 1 --es card LIFE_FACTORS;                           shot sleep-life 2
 launch --ei tab 2 --es card LIFE_FACTORS;                           shot readiness-life 2
+# Phase 3 of #292 (option A): beside readiness, one line per factor of the day before with a clear effect (the demo's Alcohol,
+# made up as clear; yesterday's shows on readiness-life above with "Last night"). Here an earlier day after one of the demo's
+# weekend Alcohol evenings (LifeTags.demo: a Friday or Saturday an even number of days back, a week or more ago), so the line
+# says "That night"; the demo's dates move with today, so the day is worked out here the same way
+LIFE_BACK=""
+for b in $(seq 8 2 28); do
+  case "$(date -d "$b days ago" +%u)" in 5|6) LIFE_BACK=$b; break;; esac
+done
+if [ -n "$LIFE_BACK" ]; then
+  launch --ei tab 2 --es day "$(date -d "$((LIFE_BACK - 1)) days ago" +%F)" --es card LIFE_FACTORS; shot readiness-life-effect 2
+else echo "::warning::issue #292 phase 3 step: no demo day after an Alcohol evening was found"; fi
 # When and how long (issue #435): the sheet opened on Today's row for Sauna (extra life_time, demo mode only; nothing is saved
 # without a tap): From as two wheels, How long as the tag's usual lengths, Save, Without a time
 launch --ei tab 0 --es card WHAT_WAS --ez life_time true;           shot today-life-time 3
@@ -243,9 +254,11 @@ launch --es settings sounds;                shot settings-sounds 3
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 # An older day keeps the newer days in the charts (owner, 23 November): 3 days back, the 7 day bars still end today with the
-# picked day's bar highlighted, and Ready's 30 day HRV still ends today with a line on the picked day
-launch --ei tab 1 --es day "$(date -d '3 days ago' +%F)" --es card TOTAL_SLEEP;   shot sleep-week-picked 2
-launch --ei tab 2 --es day "$(date -d '3 days ago' +%F)" --es card HRV;           shot ready-month-picked 2
+# picked day's bar highlighted, and Ready's 30 day HRV still ends today with a line on the picked day. The card extra stops at
+# the first text that starts with it, so it names the chart captions ("Total sleep, last 7 days", "HRV, last 30 days"): plain
+# TOTAL_SLEEP and HRV stopped at the Details stat and the HRV balance part above the charts (issue #479)
+launch --ei tab 1 --es day "$(date -d '3 days ago' +%F)" --es card TOTAL_SLEEP,_LAST; shot sleep-week-picked 2
+launch --ei tab 2 --es day "$(date -d '3 days ago' +%F)" --es card HRV,_LAST;     shot ready-month-picked 2
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
@@ -452,15 +465,16 @@ scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors
 shot body-life-touch 1
 # how the nights went after each factor (issue #292, phase 2): the card with every row folded, then Alcohol's row opened (the
 # demo's made up clear effect: the sentence, the range bar, the chart of the nights touched on its newest night after Alcohol)
-# and Meditation's (a number that is not clear yet); extra life_effect is a factor's key, demo mode only
+# and Meditation's (a number that is not clear yet); extra life_effect is a factor's key, demo mode only. The open row's sentence
+# starts with FactorEffect.lead, "After a day with Alcohol" (issue #473; EffectPipelineTest pins it for the demo)
 launch --ei tab 4 --es card LIFE_FACTORS_AND; sleep 3
 scroll_to "LIFE FACTORS AND YOUR NIGHTS" 3 || echo "::warning::issue #292 step: the card Life factors and your nights was not found on Body"
 shot body-life-effect 1
 launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect alcohol; sleep 3
-scroll_to "After alcohol" 4 || echo "::warning::issue #292 step: Alcohol's row was not open on Body"
+scroll_to "After a day with Alcohol" 4 || echo "::warning::issue #292 step: Alcohol's row was not open on Body"
 shot body-life-effect-clear 1
 launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect meditation; sleep 3
-scroll_to "After meditation" 4 || echo "::warning::issue #292 step: Meditation's row was not open on Body"
+scroll_to "After a day with Meditation" 4 || echo "::warning::issue #292 step: Meditation's row was not open on Body"
 shot body-life-effect-unclear 1
 # the demo's sauna yesterday at 19:00 for 45 minutes as a band on yesterday's heart rate (issue #435), touched in the band (82 % of
 # the chart's width is about 19:20), and the line under the chart: what the ring measured during it next to the day's average
@@ -479,8 +493,14 @@ launch --ei tab 4 --es card HOW_CLOSE_THE_ESTIMATES_WERE; sleep 3
 scroll_to "HOW CLOSE THE ESTIMATES WERE" 3 || echo "::warning::issue #383 step: the card How close the estimates were was not found on Body"
 shot body-period-accuracy 1
 scroll_to "Each period, " 12 || echo "::warning::issue #383 step: the chart of each period's error was not found"
-if touch_desc "Days each period came" 70; then shot body-period-accuracy-touch 1
+# touched at 92 % (phase 2 of #383): a period of the demo's made up year, so the readout also names the life factors of its cycle
+if touch_desc "Days each period came" 92; then shot body-period-accuracy-touch 1
 else echo "::warning::issue #383 step skipped: the chart of each period's error was not on screen to touch it"; fi
+# phase 2 of #383: Mark a life factor, Illness: the period after the demo's made up ill week ringed and touched, the cycles before
+# the made up year faded, the line under the chart (only what was logged next to the period, never a cause); the chips sit under
+# the chart, so they are on screen with it
+if tap_text "Illness"; then shot body-period-accuracy-factor 2
+else echo "::warning::issue #383 phase 2 step skipped: the chip Illness was not on screen under the chart"; fi
 # Phase 2 of #252: "Ovulation from your temperature" in Your cycles (this cycle's measured day, in how many cycles a rise
 # was found, the own time from ovulation to the period, a line under each cycle), the Period card's measured lines, and the
 # rise marked on the night temperature line (baseline, ringed high nights, the ovulation line), opened touched on its first

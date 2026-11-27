@@ -8,8 +8,10 @@ import java.util.Locale;
 import java.util.Random;
 
 import app.openring.core.LifeTags;
+import app.openring.core.analysis.CycleFactors;
 import app.openring.core.analysis.Cycles;
 import app.openring.core.analysis.FactorEffect;
+import app.openring.core.analysis.cycleforecast.Methods;
 import app.openring.data.Db;
 import app.openring.data.Demo;
 import app.openring.data.LifeEffects;
@@ -45,6 +47,7 @@ public class EffectPipelineTest {
         demo();
         threeYears();
         cacheKey();
+        ownTagZone();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -94,6 +97,40 @@ public class EffectPipelineTest {
                 alc == null ? null : FactorEffect.status(alc, Locale.US));
         check("#292 demo: Meditation has a number that is not clear yet", med != null && med.state == FactorEffect.NUMBER && !med.clear(),
                 med == null ? null : FactorEffect.status(med, Locale.US));
+        // phase 3 (option A): the lines beside readiness and the night, from the same results; nothing stored, no score changed
+        LifeTags.Known known = LifeLog.known(db);
+        java.util.Map<LocalDate, List<String>> days = LifeLog.all(db);
+        LocalDate y = today.minusDays(1);
+        List<String> keys = known.keys(days.get(y));
+        List<String> lines = FactorEffect.beside(l, keys, y, true, Locale.US);
+        for (String s : lines) System.out.println("    beside: " + s);
+        check("#292 phase 3 demo: yesterday's tags in the order of the logged line", keys.contains(LifeTags.ALCOHOL)
+                && known.names(days.get(y)).size() == keys.size() && known.names(days.get(y)).indexOf("Alcohol") == keys.indexOf(LifeTags.ALCOHOL), keys);
+        check("#292 phase 3 demo: Alcohol's line beside today's readiness, with last night", lines.size() >= 1 && lines.get(0).startsWith("After a day with Alcohol, your HRV is on average ")
+                && lines.get(0).contains(" lower that night (clear, from " + alc.m[FactorEffect.HRV].nWith + " nights after it). Last night: "), lines);
+        check("#292 phase 3 demo: no line for Meditation (not clear yet)", keys.contains(LifeTags.MEDITATION) && lines.size() == FactorEffect.beside(l,
+                java.util.Arrays.asList(LifeTags.ALCOHOL), y, true, Locale.US).size() + FactorEffect.beside(l, java.util.Arrays.asList(LifeTags.SAUNA), y, true, Locale.US).size(), lines);
+        LocalDate bare = null;
+        for (int back = 2; back < 30 && bare == null; back++) {
+            List<String> t = days.get(today.minusDays(back + 1));
+            if (t == null || t.isEmpty()) bare = today.minusDays(back);
+        }
+        check("#292 phase 3 demo: a day after a day without tags gets no line", bare != null
+                && FactorEffect.beside(l, known.keys(days.get(bare.minusDays(1))), bare.minusDays(1), false, Locale.US).isEmpty(), bare);
+        LocalDate earlier = null;
+        for (int back = 2; back < 60 && earlier == null; back++) {
+            List<String> t = days.get(today.minusDays(back + 1));
+            if (t != null && t.contains(LifeTags.ALCOHOL)) earlier = today.minusDays(back);
+        }
+        List<String> that = earlier == null ? null : FactorEffect.beside(l, known.keys(days.get(earlier.minusDays(1))), earlier.minusDays(1), false, Locale.US);
+        check("#292 phase 3 demo: an earlier day after Alcohol says That night", that != null && that.size() >= 1 && that.get(0).startsWith("After a day with Alcohol, ")
+                && that.get(0).contains(" That night: "), earlier + " " + that);
+        check("#292 phase 3 demo: the lines change nothing stored (readiness and every score as before)", stored(db).equals(before), null);
+        // screens.sh scrolls to these words to find each open row (issue #473): change both together
+        check("#292 demo: the open rows' sentences start as screens.sh looks for them, After a day with Alcohol and After a day with Meditation",
+                alc != null && med != null && FactorEffect.headline(alc, Locale.US).startsWith("After a day with Alcohol")
+                        && FactorEffect.headline(med, Locale.US).startsWith("After a day with Meditation"),
+                alc == null || med == null ? null : FactorEffect.headline(alc, Locale.US) + " | " + FactorEffect.headline(med, Locale.US));
         int few = 0;
         for (FactorEffect.Result r : l) if (r.state == FactorEffect.FEW_WITH) few++;
         check("#292 demo: some factors have too few days yet (the count shows)", few >= 1, few);
@@ -124,6 +161,7 @@ public class EffectPipelineTest {
         db.addExcluded(s, s + 3600, 1234567);
         FactorEffect.Result a1 = find(read(db, today, z, true), LifeTags.ALCOHOL);
         check("#292 demo: a night in a left out time is skipped", a1.nWith == a0.nWith - 1, a0.nWith + " " + a1.nWith);
+        periodFactors(db, today, z);
         Demo.leave(c);
     }
 
@@ -182,5 +220,104 @@ public class EffectPipelineTest {
         check("#292 cache key: two sets with the same hash give different keys", a.hashCode() == b.hashCode() && !LifeEffects.days(a).equals(LifeEffects.days(b)),
                 LifeEffects.days(a) + " " + LifeEffects.days(b));
         check("#292 cache key: the same days give the same key", LifeEffects.days(a).equals(LifeEffects.days(new java.util.TreeSet<LocalDate>(a))), null);
+    }
+
+    /**
+     * Issue #383, phase 2: the demo's made up tags beside each period of "How close the estimates were", as {@code DayData} works
+     * them out: Illness only on the cycle with the made up ill week, Holiday and Travel on the newest period, the cycles before the
+     * made up year unknown, no Intimacy; reading changes nothing stored.
+     */
+    static void periodFactors(Db db, LocalDate today, ZoneId z) {
+        String before = stored(db);
+        Cycles cy = Periods.measured(db, Periods.cycles(db, today).withMethod(Methods.BEST), z);
+        app.openring.core.analysis.cycleforecast.Backtest.Score use = cy.backtest().of(cy.methodId);
+        long t0 = System.nanoTime();
+        CycleFactors cf = CycleFactors.of(cy, use, LifeEffects.tagFactors(LifeLog.known(db), LifeLog.all(db), z));
+        double ms = (System.nanoTime() - t0) / 1e6;
+        StringBuilder chips = new StringBuilder();
+        for (FactorEffect.Factor f : cf.chips) {
+            chips.append(f.key).append(' ');
+            System.out.println("    #383 demo, " + f.name + ": " + cf.line(f.key, Locale.US));
+        }
+        int last = cf.periods.size() - 1;
+        System.out.println("    #383 demo, the newest period's readout: " + cf.tip(last, null, Locale.US).replace("\n", " / ") + " (" + Math.round(ms) + " ms)");
+        check("#383 demo: one dot for each scored period", cf.periods.size() == use.n && use.n > 20, use.n);
+        int ill = 0;
+        boolean illRight = true;
+        LocalDate illFrom = Demo.illFrom(today);
+        for (int i = 0; i < cf.periods.size(); i++) {
+            if (cf.state(i, LifeTags.ILLNESS) != CycleFactors.WITH) continue;
+            ill++;
+            Cycles.Cycle k = cf.periods.get(i).cycle;
+            illRight &= !illFrom.isBefore(k.start) && illFrom.isBefore(k.next);
+        }
+        check("#383 demo: Illness on exactly the cycle with the made up ill week", ill == 1 && illRight, ill);
+        check("#383 demo: Holiday and Travel on the newest period", cf.state(last, LifeTags.HOLIDAY) == CycleFactors.WITH
+                && cf.state(last, LifeTags.TRAVEL) == CycleFactors.WITH && cf.newest(LifeTags.TRAVEL) == last, cf.periods.get(last).logged.keySet());
+        check("#383 demo: the cycles before the made up year are unknown, their readout says so", cf.state(0, LifeTags.ILLNESS) == CycleFactors.UNKNOWN
+                && cf.tip(0, null, Locale.US).startsWith("Before you started logging life factors"), cf.tip(0, null, Locale.US));
+        check("#383 demo: the chips hold Illness, Travel and Meditation, never Intimacy", cf.offered(LifeTags.ILLNESS) && cf.offered(LifeTags.TRAVEL)
+                && cf.offered(LifeTags.MEDITATION) && !cf.offered(LifeTags.INTIMACY), chips);
+        check("#383 demo: Illness reads as the decisions' sentence", cf.line(LifeTags.ILLNESS, Locale.US).startsWith("The period on ")
+                && cf.line(LifeTags.ILLNESS, Locale.US).endsWith("; you logged Illness that cycle (" + Demo.ILL_DAYS + " days)."), cf.line(LifeTags.ILLNESS, Locale.US));
+        check("#383 demo: reading changes nothing stored", stored(db).equals(before), null);
+        check("#383 demo: worked out in under 100 ms", ms < 100, ms);
+    }
+
+    /**
+     * Review of #488: the date line test in ForecastTest worked out the made day itself, so it could not fail on a zone bug. Here
+     * the real conversion, {@link LifeEffects#tagFactors}, turns an own tag's key (the moment it was made, in millis) into its
+     * made day: made at 23:50 in Honolulu on the first day of a cycle (09:50 the next day in UTC, the next evening in Auckland),
+     * logged only in the cycle after. In Honolulu that cycle counts as without it and the cycle before is unknown; a conversion in
+     * any other zone would make the day after, and the cycle unknown. The phone's own zone (the JVM default) must not matter.
+     */
+    static void ownTagZone() {
+        int[] h = {29, 28, 30, 29, 28, 29, 30};
+        java.util.TreeMap<LocalDate, Integer> log = new java.util.TreeMap<LocalDate, Integer>();
+        LocalDate s = LocalDate.of(2023, 1, 9);
+        for (int i = 0; i <= h.length; i++) {
+            for (int k = 0; k < 5; k++) log.put(s.plusDays(k), k < 2 ? Cycles.HEAVY : Cycles.MEDIUM);
+            if (i < h.length) s = s.plusDays(h[i]);
+        }
+        Cycles cy = Cycles.of(log, null, s.plusDays(6));
+        app.openring.core.analysis.cycleforecast.Backtest.Score use = cy.backtest().of(cy.methodId);
+        CycleFactors none = CycleFactors.of(cy, use, new java.util.ArrayList<FactorEffect.Factor>());
+        int j = none.periods.size() - 2;
+        boolean shape = j >= 1 && none.periods.get(j - 1).cycle.next.equals(none.periods.get(j).cycle.start);
+        check("#383 review: two scored cycles in a row before the newest", shape, none.periods.size());
+        if (!shape) return;
+        LocalDate start = none.periods.get(j).cycle.start;
+        ZoneId hnl = ZoneId.of("Pacific/Honolulu");
+        long millis = start.atTime(23, 50).atZone(hnl).toInstant().toEpochMilli();
+        String own = LifeTags.ownKey(millis);
+        LifeTags.Known known = new LifeTags.Known(java.util.Arrays.asList(new LifeTags.Choice(own, "Market visit", null, null, false)));
+        java.util.Map<LocalDate, List<String>> days = new java.util.TreeMap<LocalDate, List<String>>();
+        days.put(none.periods.get(j + 1).cycle.start.plusDays(2), java.util.Arrays.asList(own));
+        // logging started long before (a factor counts from the first day anything was logged, an own tag from its made day)
+        days.put(none.periods.get(0).cycle.start, java.util.Arrays.asList(LifeTags.ILLNESS));
+        java.util.TimeZone was = java.util.TimeZone.getDefault();
+        boolean same = true;
+        String first = null;
+        try {
+            for (String phone : new String[] {"UTC", "Pacific/Auckland", "Pacific/Honolulu", "Europe/Zurich"}) {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(phone));
+                CycleFactors cf = CycleFactors.of(cy, use, LifeEffects.tagFactors(known, days, hnl));
+                String got = cf.state(j - 1, own) + " " + cf.state(j, own) + " " + cf.state(j + 1, own);
+                if (first == null) first = got;
+                same &= got.equals(first);
+            }
+        } finally {
+            java.util.TimeZone.setDefault(was);
+        }
+        String want = CycleFactors.UNKNOWN + " " + CycleFactors.WITHOUT + " " + CycleFactors.WITH;
+        check("#383 review: made in Honolulu on a cycle's first day: the cycle before unknown, that cycle without, the next with", want.equals(first), first);
+        check("#383 review: the phone's zone does not change it", same, null);
+        CycleFactors auckland = CycleFactors.of(cy, use, LifeEffects.tagFactors(known, days, ZoneId.of("Pacific/Auckland")));
+        check("#383 review: the zone given is the one used (in Auckland it was made the next day, so that cycle is unknown)",
+                auckland.state(j, own) == CycleFactors.UNKNOWN && auckland.state(j + 1, own) == CycleFactors.WITH, auckland.state(j, own));
+        LifeTags.Known gone = new LifeTags.Known(java.util.Arrays.asList(new LifeTags.Choice(own, "Market visit", null, null, true)));
+        boolean left = true;
+        for (FactorEffect.Factor f : LifeEffects.tagFactors(gone, days, hnl)) left &= !f.key.equals(own);
+        check("#383 review: a removed own tag gives no factor", left, null);
     }
 }

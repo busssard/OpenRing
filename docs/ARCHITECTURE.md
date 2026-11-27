@@ -242,6 +242,21 @@ the end of the expected range); there is no second temperature chart at the end 
 
 **Prediction methods (issue #383).** Nothing new is stored but one setting, `Prefs.periodMethod` (`period_method`, in the backup; 0 Best for you, the default, else a method's id; an unknown id keeps the current choice on restore). `Cycles.withMethod` builds the same log with the chosen method: `Cycles.of` alone stays Open Ring, so its numbers (`typical`, `length`, `sd`, used for regularity, unusual cycles and when the estimate waits) never change; the method gives `step` (the expected length the next start and the months ahead count with), the range and the spread for the ovulation range. Best for you runs `cycleforecast.Backtest` (each method predicts each logged start from only the cycles before it; a cycle more than 10 days from the middle value of the ones before it is not scored) and takes the smallest mean error only when it is at least `Backtest.MARGIN` (0.25) days below Open Ring's over at least `Backtest.MIN_SCORED` (6) scored cycles, else Open Ring (design round of #383; ties go to the method listed first). The temperature rise stays a modifier on top (`riseUsed`), decided by the choice, not the method (`Cycles.riseAllowed`): never for drip style chosen by hand, and Best for you (whatever method it picked) leaves it out when at least 3 replayed cycles (`RiseBacktest`, always on the calendar method in use) say it was further off than the calendar. `Cycles.make` runs that replay on a finished first Cycles, then builds the one that uses its answer; `measured()` and `withMethod()` hand the calendar backtest on. The statistics (median, trimmed mean, sample SD) live once in `cycleforecast.Methods`, Open Ring's rule in `OpenRingMethod.typical`. DayData works out both backtests in the background for Body's card How close the estimates were; the reminder (`PeriodReminder.own`) and Settings' line on what Best for you uses read the same way.
 
+**Life factors beside each period (issue #383, phase 2; design comment of 25 November).** Nothing is stored. `core/analysis/CycleFactors`
+takes the scored periods of the backtest of the method in use and the logged tags as factors (`LifeEffects.tagFactors`, the same as Life
+factors and your nights: one factor per name, removed own tags left out, each counting from the first day anything was logged, an own tag
+from the day it was made). A factor counts for a period when it was logged on any day of the cycle that period ended, from its period's
+first day to the day before the next start, by calendar day: periods and tags are both stored as dates, so no clock or time zone moves a
+factor into another cycle (Travel and Holiday are what was logged, never read from zone changes; `ForecastTest` works a trip across the
+date line out in five zones; `EffectPipelineTest.ownTagZone` turns an own tag's key into its made day through `tagFactors` itself, where a
+zone bug changes the result). A cycle is with the factor, without it (the whole cycle after the factor could be logged) or unknown
+(before). `DayData.load` works it out in the background (`d.periodFactors`, also without a ring). On "How close the estimates were" every
+dot's readout names the factors of its cycle with their days (lines of at most 40 characters, `CycleFactors.WRAP`, which fit a 360 dp
+phone; the chart grows by the longest readout's extra lines and the dots start below it, `Dots.lines`, so the readout never covers them); the chips "Mark a life factor" ring the periods with one factor in
+`Ui.LIFE` and fade the unknown ones, a tap touches the newest ringed period, and one line only describes (one cycle: "The period on 4 Jan
+came 3 days later than expected; you logged Illness that cycle (5 days)."; from two: the averages with and without; in every cycle: none
+to set against), always followed by "not what moved it". The picked chip is kept in memory only. The estimate does not use any of it.
+
 **Phase 2: ovulation from the temperature rise.** Nothing is stored (no schema change, no setting): `Periods.measured` reads
 the nights and temperatures on each load (`DayData`, only while the tracker shows; 5 years of day summaries take about 0.15 s
 in the JVM test) and `Cycles.measured` returns the estimate with them. The ring's signal is `temp` of each day summary (the
@@ -415,6 +430,13 @@ before the 365 days on. The demo (`Demo.enter` only) gets made up tags over its 
 (`LifeTags.demoYear`, written by `LifeLog.demoYear` after `Demo.olderYear`): Alcohol on Friday and Saturday evenings before nights with
 HRV more than 4 % under their usual (a made up clear effect), Meditation on every third day (not clear), Stress, a hard workout twice a
 week, Illness on the year's ill week. `Demo.history` and the year's nights are unchanged.
+
+**Phase 3, beside the number (issue #292, option A).** The cards beside readiness (`LifeCard.morning`) and beside the night on Sleep
+(`LifeCard.night`) add one line under the logged line for each tag of the day before (`LifeTags.Known.keys`, in the order of that line)
+whose phase 2 result in `DayData.lifeEffects` is clear and does not show as 0 (`FactorEffect.beside`): "After a day with Alcohol, your HRV is on average
+12 % lower that night (clear, from 26 nights after it). Last night: 9 % lower than your usual." ("That night" for an earlier day; the second sentence
+only when that night's point has a value and a usual). Not clear tags, cycle factors and days without a ring get no line. Display only:
+nothing stored, readiness and every score unchanged (option B, a factor moving the number, is still open). Tested in `EffectTest` (its `beside` checks) and `EffectPipelineTest`.
 
 **Sleep sounds (issue #380), phase 1a.** Only the storage and the detector; there is no microphone permission, service or screen
 yet (1b brings the listening and the Sleep card, 1c the marks on the night's timeline). `core/analysis/SoundDetector` (pure Java,

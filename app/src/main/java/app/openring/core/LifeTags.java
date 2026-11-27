@@ -61,6 +61,8 @@ public final class LifeTags {
             OWN_REFUSED = "This name is empty, too long or already there.";
     /** Body's card. */
     public static final String BODY_TITLE = "Life factors";
+    /** The hint of the cards beside readiness and the night without an effect line (they open Body's month), as before phase 3. */
+    public static final String LOGGED_HINT = "As you logged them on Today. Tap for the month on Body.";
     public static final String MONTH_HINT = "Touch and slide across the days to read what you logged. The arrows page through the months.";
     public static final String NONE_YET = "Nothing logged yet. Tap the chips on Today to log what a day was like.";
     /** Where the effect is (issue #292, phase 2): said once on the Body card's month view. */
@@ -319,11 +321,21 @@ public final class LifeTags {
         /** The names of {@code keys} in the list order (fixed tags first), for the lines beside a night. */
         public List<String> names(java.util.Collection<String> keys) {
             List<String> out = new ArrayList<String>();
+            for (String k : keys(keys)) out.add(all.containsKey(k) ? all.get(k).name : name(k));
+            return out;
+        }
+
+        /**
+         * {@code keys} as their factors' keys (an alias read as its older key, each once) in the order of {@link #names}, for the
+         * effect lines beside a night (issue #292, phase 3).
+         */
+        public List<String> keys(java.util.Collection<String> keys) {
+            List<String> out = new ArrayList<String>();
             if (keys == null) return out;
             java.util.Set<String> in = new java.util.LinkedHashSet<String>();
             for (String k : keys) in.add(key(k));
-            for (String k : all.keySet()) if (in.contains(k)) out.add(all.get(k).name);
-            for (String k : in) if (!all.containsKey(k)) out.add(name(k));
+            for (String k : all.keySet()) if (in.contains(k)) out.add(k);
+            for (String k : in) if (!all.containsKey(k)) out.add(k);
             return out;
         }
     }

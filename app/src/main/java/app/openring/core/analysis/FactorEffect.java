@@ -524,7 +524,7 @@ public final class FactorEffect {
     }
 
     /** True when {@code x} shows as no change at all. */
-    static boolean none(int measure, double x, Locale l) {
+    static boolean none(int measure, double x) {
         return Double.parseDouble(number(measure, x, Locale.ROOT)) == 0;
     }
 
@@ -534,9 +534,9 @@ public final class FactorEffect {
         return x > 0 ? "higher" : "lower";
     }
 
-    /** "12 % lower", or "no change". */
+    /** "12 % lower", or "about the same" when it shows as 0 (issue #474: "no change to 2 % higher" read like an increase). */
     static String said(int measure, double x, Locale l) {
-        return none(measure, x, l) ? "no change" : amount(measure, x, l) + " " + word(measure, x);
+        return none(measure, x) ? "about the same" : amount(measure, x, l) + " " + word(measure, x);
     }
 
     /** "After a day with Alcohol", "In the nights after ovulation", "On period days": the start of the sentence. */
@@ -582,16 +582,16 @@ public final class FactorEffect {
         Measure m = r.m[r.headline];
         int k = r.headline;
         StringBuilder b = new StringBuilder(lead(f)).append(", ").append(SUBJECT[k]).append(" was ");
-        b.append(none(k, m.diff, l) ? "about the same" : amount(k, m.diff, l) + " " + word(k, m.diff)).append(thatNight(f));
+        b.append(none(k, m.diff) ? "about the same" : amount(k, m.diff, l) + " " + word(k, m.diff)).append(thatNight(f));
         b.append(' ').append(counts(f, m.nWith, m.nWithout));
         if (m.clear()) {
             double near = m.lo > 0 ? m.lo : m.hi, far = m.lo > 0 ? m.hi : m.lo;
             // a near end that shows as 0 reads "up to": "somewhere between 0 % and 4 % lower" would read as no change
-            if (none(k, near, l)) b.append(", somewhere up to ").append(amount(k, far, l));
+            if (none(k, near)) b.append(", somewhere up to ").append(amount(k, far, l));
             else b.append(", somewhere between ").append(number(k, near, l)).append(k == HRV ? " %" : "").append(" and ").append(amount(k, far, l));
             b.append(' ').append(word(k, far)).append(". This is a pattern in your own data, not a general rule.");
         } else {
-            b.append(". It could be anything from ").append(said(k, m.lo, l)).append(" to ").append(said(k, m.hi, l)).append(", so this is not clear yet.");
+            b.append(". ").append(unclear(k, m.lo, m.hi, l));
         }
         return b.toString();
     }
@@ -610,7 +610,7 @@ public final class FactorEffect {
         }
         Measure m = r.m[r.headline];
         int k = r.headline;
-        return LABEL[k] + " " + (none(k, m.diff, l) ? "about the same" : amount(k, m.diff, l) + " " + word(k, m.diff)) + ", "
+        return LABEL[k] + " " + (none(k, m.diff) ? "about the same" : amount(k, m.diff, l) + " " + word(k, m.diff)) + ", "
                 + (m.clear() ? "clear" : "not clear yet") + " (" + m.nWith + " nights)";
     }
 
@@ -618,20 +618,41 @@ public final class FactorEffect {
     public static String detail(Result r, int k, Locale l) {
         Measure m = r.m[k];
         if (!m.enough()) return LABEL[k] + ": too few nights with a value.";
-        StringBuilder b = new StringBuilder(LABEL[k]).append(": ").append(none(k, m.diff, l) ? "about the same" : amount(k, m.diff, l) + " " + word(k, m.diff));
+        StringBuilder b = new StringBuilder(LABEL[k]).append(": ").append(none(k, m.diff) ? "about the same" : amount(k, m.diff, l) + " " + word(k, m.diff));
         if (m.clear()) {
             double near = m.lo > 0 ? m.lo : m.hi, far = m.lo > 0 ? m.hi : m.lo;
-            if (none(k, near, l)) b.append(", up to ").append(number(k, far, l));
+            if (none(k, near)) b.append(", up to ").append(number(k, far, l));
             else b.append(", between ").append(number(k, near, l)).append(" and ").append(number(k, far, l));
             b.append(' ').append(word(k, far)).append(". Clear.");
         } else {
-            b.append(", could be ").append(rangeEnd(k, m.lo, l)).append(" to ").append(rangeEnd(k, m.hi, l)).append(". Not clear yet.");
+            b.append(unclearDetail(k, m.lo, m.hi, l));
         }
         return b.toString();
     }
 
+    /**
+     * The headline's end for a range across zero: "It could be anything from 1 % lower to 2 % higher, so this is not clear yet.",
+     * "... from about the same to 2 % higher ...", or "Your HRV stayed about the same across the whole range, so there is no
+     * clear difference." when both ends show as 0 (review of f8ddbc5: "about the same, yet not clear" read as a contradiction).
+     */
+    public static String unclear(int k, double lo, double hi, Locale l) {
+        if (none(k, lo) && none(k, hi)) return "Your " + measureName(k) + " stayed about the same across the whole range, so there is no clear difference.";
+        return "It could be anything from " + said(k, lo, l) + " to " + said(k, hi, l) + ", so this is not clear yet.";
+    }
+
+    /** A detail line's end for a range across zero: ", could be 0.8 lower to 1.2 higher. Not clear yet." (no units, as the line's range). */
+    public static String unclearDetail(int k, double lo, double hi, Locale l) {
+        if (none(k, lo) && none(k, hi)) return ", about the same at both ends, no clear difference.";
+        return ", could be " + rangeEnd(k, lo, l) + " to " + rangeEnd(k, hi, l) + ". Not clear yet.";
+    }
+
+    /** The measure's name inside a sentence: "HRV", "lowest heart rate", "temperature", "sleep score". */
+    static String measureName(int k) {
+        return k == HRV ? LABEL[k] : LABEL[k].toLowerCase(Locale.ROOT);
+    }
+
     static String rangeEnd(int k, double x, Locale l) {
-        return none(k, x, l) ? "no change" : number(k, x, l) + " " + word(k, x);
+        return none(k, x) ? "about the same" : number(k, x, l) + " " + word(k, x);
     }
 
     /** "Often logged together with Alcohol, so the effect may belong to either." Null without an overlap or without a number. */
@@ -648,8 +669,27 @@ public final class FactorEffect {
         if (Double.isNaN(p.value[k])) return head + "\n" + LABEL[k] + ": no value";
         if (Double.isNaN(p.usual[k])) return head + "\n" + LABEL[k] + " " + value(k, p.value[k], l) + ", no usual yet";
         double d = p.diff[k];
-        String side = none(k, d, l) ? "as usual" : amount(k, d, l) + (d > 0 ? " over" : " under");
-        return head + "\n" + LABEL[k] + " " + value(k, p.value[k], l) + ", your usual " + number(k == HRV ? SCORE : k, p.usual[k], l) + " (" + side + ")";
+        String side = none(k, d) ? "as usual" : amount(k, d, l) + (d > 0 ? " over" : " under");
+        return head + "\n" + LABEL[k] + " " + value(k, p.value[k], l) + ", your usual " + usual(k, p.usual[k], l) + " (" + side + ")";
+    }
+
+    /**
+     * The usual with its unit (issue #474): "53 ms", "52.4 bpm", "35.80 °C", "78". The heart rate keeps its decimal (not
+     * {@link #value}, which rounds it), so the difference in brackets still fits it.
+     */
+    public static String usual(int k, double v, Locale l) {
+        // the precision is number()'s, so it lives in one place (review of f8ddbc5); a usual is never below 0
+        String n = number(k, v, l);
+        switch (k) {
+            case HRV:
+                return n + " ms";
+            case RHR:
+                return n + " bpm";
+            case TEMP:
+                return n + " °C";
+            default:
+                return n;
+        }
     }
 
     /** A night's own value: "42 ms", "52 bpm", "35.92 °C", "78". */
@@ -668,13 +708,68 @@ public final class FactorEffect {
 
     /** The axis and chart label of a difference: "+12 %", "-2.1 bpm" ... as a signed short text. */
     public static String axis(int k, double x, Locale l) {
-        String s = x > 0 && !none(k, x, l) ? "+" : x < 0 && !none(k, x, l) ? "−" : "";
+        String s = x > 0 && !none(k, x) ? "+" : x < 0 && !none(k, x) ? "−" : "";
         return s + amount(k, x, l).replace(" points", "").replace(" point", "");
+    }
+
+    // ------------------------------------------------------------------ beside the number (phase 3)
+
+    /**
+     * Under the lines beside readiness when at least one effect shows (phase 3, option A: display only). "the night's", not
+     * "last night's": an earlier day shown says "That night" (review of 9cfb9c4), as {@link #BESIDE_NOTE_SLEEP} does.
+     */
+    public static final String BESIDE_NOTE_READY = "A pattern in your own nights, not a rule. Readiness does not change because of it: the night's readings already show the effect.";
+    /** The same under Sleep's "Before this night" line. */
+    public static final String BESIDE_NOTE_SLEEP = "A pattern in your own nights, not a rule. The sleep score itself does not change: it comes from the night's own readings.";
+    /** The hint of the card with at least one effect line (it opens Body, where the card Life factors and your nights is). */
+    public static final String BESIDE_HINT = "Tap for how your nights went after each factor on Body.";
+
+    /**
+     * Phase 3 (issue #292, option A): one sentence per tag of the day before ({@code keys}, in the order of the logged line) whose
+     * result is clear and whose difference does not show as 0, for the card beside readiness and beside the night. Not clear
+     * tags, tags without a result and the cycle factors get no line. Empty for null or empty input. Changes no number.
+     */
+    public static List<String> beside(List<Result> results, List<String> keys, LocalDate dayBefore, boolean shownIsToday, Locale l) {
+        List<String> out = new ArrayList<String>();
+        if (results == null || keys == null || dayBefore == null) return out;
+        for (String key : keys) {
+            Result r = null;
+            for (Result x : results) if (x != null && x.factor.kind == TAG && x.factor.key.equals(key)) r = x;
+            if (r == null || r.state != NUMBER || r.headline < 0 || !r.clear()) continue;
+            int k = r.headline;
+            Measure m = r.m[k];
+            double last = Double.NaN;
+            for (Point p : r.points) {
+                if (!p.tagDay.equals(dayBefore)) continue;
+                if (!Double.isNaN(p.value[k]) && !Double.isNaN(p.usual[k])) last = p.diff[k];
+            }
+            String s = besideLine(r.factor.name, k, m.diff, m.nWith, last, shownIsToday, l);
+            if (s != null) out.add(s);
+        }
+        return out;
+    }
+
+    /**
+     * One line beside the number: "After a day with Alcohol, your HRV is on average 12 % lower that night (clear, from 26 nights after it). Last night: 9 %
+     * lower than your usual." The second sentence only for a {@code last} difference (NaN for none); "That night" for an earlier
+     * day shown. Null when {@code diff} shows as 0 (nothing to say beside the number).
+     */
+    public static String besideLine(String name, int k, double diff, int nights, double last, boolean shownIsToday, Locale l) {
+        if (Double.isNaN(diff) || none(k, diff)) return null;
+        StringBuilder b = new StringBuilder("After a day with ").append(name).append(", ").append(SUBJECT[k]).append(" is on average ")
+                .append(amount(k, diff, l)).append(' ').append(word(k, diff)).append(" that night (clear, from ").append(nights)
+                .append(nights == 1 ? " night after it)." : " nights after it).");
+        if (!Double.isNaN(last) && !Double.isInfinite(last)) {
+            b.append(shownIsToday ? " Last night: " : " That night: ").append(said(k, last, l)).append(" ").append(none(k, last) ? "as" : "than")
+                    .append(" your usual.");
+        }
+        return b.toString();
     }
 
     /** Every fixed text, for the tests (plain, no dashes). */
     public static String[] texts() {
-        return new String[] {TITLE, INTRO, NOT_ADVICE, NOTHING, NO_RING, CYCLE_TEMP, UNREADABLE, CHART_NOTE, BAR_NOTE};
+        return new String[] {TITLE, INTRO, NOT_ADVICE, NOTHING, NO_RING, CYCLE_TEMP, UNREADABLE, CHART_NOTE, BAR_NOTE, BESIDE_NOTE_READY, BESIDE_NOTE_SLEEP,
+            BESIDE_HINT};
     }
 
     /** Days between two dates (for the chart's axis). */
