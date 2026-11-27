@@ -335,8 +335,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * key_unreadable (boolean, demo mode only) shows the status line of a saved key this phone cannot read (issue #199),
      * period_edit (boolean, demo mode only, with tab 4) opens the period tracker's day editor on Body (issue #252),
      * badges (boolean) opens the Badges page (issue #265),
-     * trends (int, the group: 0 Sleep, 1 Readiness, 2 Activity, 3 Body, 4 Screen) opens Trends (issue #374), with trends_measure (int,
-     * a measure of {@code core/analysis/Trends}), trends_period (int, 0 weeks, 1 months, 2 years) and day (the shown day),
+     * trends (int, the group: 0 Sleep, 1 Readiness, 2 Activity, 3 Body, 4 Screen, 5 Life) opens Trends (issue #374), with trends_measure (int,
+     * a measure of {@code core/analysis/Trends}), trends_period (int, 0 weeks, 1 months, 2 years), day (the shown day) and
+     * trends_factor (string, a life factor's key: the factor shown in the Life group, else the one marked under the chart),
      * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
      * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
      * rise it marks (phase 2),
@@ -480,6 +481,9 @@ public final class MainActivity extends Activity implements RingManager.Listener
                     .putExtra(TrendsActivity.MEASURE, i.getIntExtra("trends_measure", -1))
                     .putExtra(TrendsActivity.PERIOD, i.getIntExtra("trends_period", app.openring.core.analysis.Trends.MONTHS));
             if (day != null) t.putExtra(TrendsActivity.DAY, day);
+            // phase 3: a factor's key, shown in the Life group (trends 5) or marked on the other groups' measures
+            String factor = i.getStringExtra("trends_factor");
+            if (factor != null) t.putExtra(TrendsActivity.FACTOR, factor);
             startActivity(t);
         }
         // screen test: open Find my ring (issue #74)

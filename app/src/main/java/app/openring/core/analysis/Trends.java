@@ -8,7 +8,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
+
+import app.openring.core.LifeTags;
 
 /**
  * Trends (issue #374, phase 1): the days of the whole history grouped into calendar weeks (Monday to Sunday), months and
@@ -32,25 +35,49 @@ public final class Trends {
     public static final int NONE = 0, RING = 1, WATCH = 2, PHONE = 3, HAND = 4;
     static final String[] SOURCE_NAMES = {"", "ring", "watch", "phone", "by hand"};
 
+    /**
+     * The measures with a value per day ({@link Day#v} holds the first {@link #COUNT}), then phase 3's (issue #374): cycle
+     * length and period length (one value per cycle or period, from the period tracker, {@link #cycles} and {@link #periods})
+     * and the days with a life factor ({@link #counts}); {@link #MEASURES} in all.
+     */
     public static final int ASLEEP = 0, BEDTIME = 1, WAKE = 2, REGULARITY = 3, WAKE_UPS = 4, SLEEP_SCORE = 5, READINESS = 6, RHR = 7,
-            HRV = 8, TEMP = 9, STEPS = 10, KCAL = 11, SCREEN = 12, COUNT = 13;
+            HRV = 8, TEMP = 9, STEPS = 10, KCAL = 11, SCREEN = 12, COUNT = 13, CYCLE = 13, PERIOD_DAYS = 14, LIFE = 15, MEASURES = 16;
 
-    /** The chip of each measure. */
+    /** The chip of each measure (the Life group's chips are the factors' names instead). */
     public static final String[] NAMES = {"Time asleep", "Bedtime", "Wake time", "Regularity", "Wake ups", "Sleep score", "Readiness",
-        "Resting heart rate", "HRV", "Temperature", "Steps", "Active calories", "Screen time"};
+        "Resting heart rate", "HRV", "Temperature", "Steps", "Active calories", "Screen time", "Cycle length", "Period length", "Days with it"};
 
-    public static final int G_SLEEP = 0, G_READINESS = 1, G_ACTIVITY = 2, G_BODY = 3, G_SCREEN = 4;
-    /** The group chips, as the tabs (Sleep, Ready, Activity, Body, Screen). */
-    public static final String[] GROUP_NAMES = {"Sleep", "Readiness", "Activity", "Body", "Screen"};
-    /** The measures of each group, the first one shown when the group is picked. */
+    public static final int G_SLEEP = 0, G_READINESS = 1, G_ACTIVITY = 2, G_BODY = 3, G_SCREEN = 4, G_LIFE = 5;
+    /** The group chips, as the tabs (Sleep, Ready, Activity, Body, Screen), then the life factors (phase 3). */
+    public static final String[] GROUP_NAMES = {"Sleep", "Readiness", "Activity", "Body", "Screen", "Life"};
+    /**
+     * The measures of each group, the first one shown when the group is picked. Body's cycle and period length only with the
+     * period tracker on and 2 periods logged, the Life group only with a logged factor ({@link #measures}).
+     */
     public static final int[][] GROUPS = {{ASLEEP, BEDTIME, WAKE, REGULARITY, WAKE_UPS, SLEEP_SCORE}, {READINESS, TEMP, HRV, RHR},
-        {STEPS, KCAL}, {RHR, HRV, TEMP}, {SCREEN}};
+        {STEPS, KCAL}, {RHR, HRV, TEMP, CYCLE, PERIOD_DAYS}, {SCREEN}, {LIFE}};
 
-    /** How a period's dot is worked out from its days. */
-    static final int MEAN = 0, MEDIAN = 1, CLOCK = 2, SPREAD = 3;
-    static final int[] KIND = {MEAN, CLOCK, CLOCK, SPREAD, MEAN, MEAN, MEAN, MEAN, MEAN, MEAN, MEAN, MEAN, MEDIAN};
+    /** How a period's dot is worked out from its days (COUNTS: the days with a life factor). */
+    static final int MEAN = 0, MEDIAN = 1, CLOCK = 2, SPREAD = 3, COUNTS = 4;
+    static final int[] KIND = {MEAN, CLOCK, CLOCK, SPREAD, MEAN, MEAN, MEAN, MEAN, MEAN, MEAN, MEAN, MEAN, MEDIAN, MEAN, MEAN, COUNTS};
     /** A value of the night (counted in nights) or of the day. */
-    static final boolean[] NIGHT = {true, true, true, true, true, true, false, true, true, true, false, false, false};
+    static final boolean[] NIGHT = {true, true, true, true, true, true, false, true, true, true, false, false, false, false, false, false};
+
+    /** True for a measure with a value per day (phase 1 and 2); false for cycle length, period length and the life factors. */
+    public static boolean daily(int measure) {
+        return measure >= 0 && measure < COUNT;
+    }
+
+    /** The measures of {@code group} the page shows: Body's cycle and period length only when {@code cycles}. */
+    public static int[] measures(int group, boolean cycles) {
+        int[] all = GROUPS[group];
+        int n = 0;
+        for (int m : all) if (cycles || m != CYCLE && m != PERIOD_DAYS) n++;
+        int[] out = new int[n];
+        int k = 0;
+        for (int m : all) if (cycles || m != CYCLE && m != PERIOD_DAYS) out[k++] = m;
+        return out;
+    }
 
     /** The group a tab opens Trends at: Sleep 1, Ready 2, Activity 3, Body 4, Screen 5 (Today 0 opens Sleep). */
     public static int groupOfTab(int tab) {
@@ -148,8 +175,15 @@ public final class Trends {
         public final int[] bySource = new int[SOURCE_NAMES.length];
         /** The dot (mean, median, clock average or spread) and the band (25th to 75th percentile), NaN for none. */
         public double value = Double.NaN, lo = Double.NaN, hi = Double.NaN;
-        /** Fewer days than {@link #FEW}: drawn hollow, "only 4 nights". */
+        /** Fewer days than {@link #FEW}: drawn hollow, "only 4 nights". Cycle length: only cycles left out of your averages. */
         public boolean hollow;
+        /** Cycle and period length (phase 3): each cycle or period that started in this period, oldest first. */
+        public final List<Item> items = new ArrayList<Item>();
+        /** Life factors (phase 3): the days of this period counted (from the first day, up to today), and whether any factor was logged in it. */
+        public int of;
+        public boolean logged;
+        /** Life factors: the period holds today, so its days are counted "so far". */
+        public boolean now;
 
         Bucket(LocalDate start, LocalDate end) {
             this.start = start;
@@ -157,9 +191,24 @@ public final class Trends {
         }
     }
 
+    /** One cycle or period (phase 3): its first day, its length in days, and whether the period tracker leaves it out of its averages. */
+    public static final class Item {
+        public final LocalDate start;
+        public final int days;
+        public final boolean leftOut;
+
+        public Item(LocalDate start, int days, boolean leftOut) {
+            this.start = start;
+            this.days = days;
+            this.leftOut = leftOut;
+        }
+    }
+
     /** A measure grouped into periods over the whole history, with every day's value for the faint dots behind them. */
     public static final class View {
         public final int measure, period;
+        /** Life factors (phase 3): the factor's key and its name as said in a sentence ("alcohol"). */
+        public String key, name;
         public final List<Bucket> buckets = new ArrayList<Bucket>();
         /** The days with a value and their value as drawn (clock times unwrapped around {@link #centre}). */
         public final List<LocalDate> dayDates = new ArrayList<LocalDate>();
@@ -171,6 +220,8 @@ public final class Trends {
         public final List<Integer> dayBucket = new ArrayList<Integer>();
         public final List<Double> dayOffset = new ArrayList<Double>();
         public final List<Double> dayValues = new ArrayList<Double>();
+        /** Each small dot drawn hollow: a cycle the tracker leaves out of its averages (phase 3); false for every other. */
+        public final List<Boolean> dayHollow = new ArrayList<Boolean>();
         /** Clock measures: the middle of the whole history's times; values are drawn as this plus up to 12 hours either way. */
         public double centre = Double.NaN;
         /**
@@ -209,6 +260,8 @@ public final class Trends {
                     hi = Math.max(hi, v);
                 }
             }
+            // a count of days starts at none (display only)
+            if (measure == LIFE && lo <= hi) lo = Math.min(lo, 0);
             return lo > hi ? new double[] {Double.NaN, Double.NaN} : new double[] {lo, hi};
         }
     }
@@ -276,23 +329,30 @@ public final class Trends {
                 if (Double.isNaN(x)) continue;
                 out.dayDates.add(d.date);
                 out.dayValues.add(x);
+                out.dayHollow.add(false);
             }
-            // the days of this period spread over its column by date, from its first day with a value to its last
-            int count = out.dayDates.size() - startAt;
-            if (count > 0) {
-                long a = out.dayDates.get(startAt).toEpochDay(), z = a;
-                for (int j = startAt; j < out.dayDates.size(); j++) {
-                    a = Math.min(a, out.dayDates.get(j).toEpochDay());
-                    z = Math.max(z, out.dayDates.get(j).toEpochDay());
-                }
-                for (int j = startAt; j < out.dayDates.size(); j++) {
-                    out.dayBucket.add(out.buckets.size());
-                    out.dayOffset.add(z == a ? 0.0 : 0.4 * (2.0 * (out.dayDates.get(j).toEpochDay() - a) - (z - a)) / (z - a));
-                }
-            }
+            spread(out, startAt);
             out.buckets.add(b);
         }
         return out;
+    }
+
+    /**
+     * The small dots from {@code startAt} on, of the period about to be added: spread over its column by date, from its first
+     * day with a value to its last.
+     */
+    static void spread(View out, int startAt) {
+        int count = out.dayDates.size() - startAt;
+        if (count <= 0) return;
+        long a = out.dayDates.get(startAt).toEpochDay(), z = a;
+        for (int j = startAt; j < out.dayDates.size(); j++) {
+            a = Math.min(a, out.dayDates.get(j).toEpochDay());
+            z = Math.max(z, out.dayDates.get(j).toEpochDay());
+        }
+        for (int j = startAt; j < out.dayDates.size(); j++) {
+            out.dayBucket.add(out.buckets.size());
+            out.dayOffset.add(z == a ? 0.0 : 0.4 * (2.0 * (out.dayDates.get(j).toEpochDay() - a) - (z - a)) / (z - a));
+        }
     }
 
     /** The dot and band of a period from its values; a spread (NaN for one night) has no band. */
@@ -382,9 +442,18 @@ public final class Trends {
                 return String.format(l, "%,d", Math.round(v));
             case KCAL:
                 return Math.round(v) + " kcal";
+            case CYCLE:
+            case PERIOD_DAYS:
+            case LIFE:
+                return days(Math.round(v));
             default:
                 return String.valueOf(Math.round(v));
         }
+    }
+
+    /** "1 day", "29 days". */
+    static String days(long n) {
+        return n == 1 ? "1 day" : n + " days";
     }
 
     /** The value of a period as the readout says it: "7h 5m asleep on average", "asleep at 23:40 on average". */
@@ -429,6 +498,8 @@ public final class Trends {
      * ring, 9 watch".
      */
     public static String readout(View view, int i, Locale l) {
+        if (view.measure == CYCLE || view.measure == PERIOD_DAYS) return itemReadout(view, i);
+        if (view.measure == LIFE) return lifeReadout(view, i);
         Bucket b = view.buckets.get(i);
         String head = label(b.start, view.period) + ": ";
         String none = NIGHT[view.measure] ? "no nights" : "no days";
@@ -444,12 +515,23 @@ public final class Trends {
     /** The short readout on the chart itself: "March 2026" and the value. */
     public static String tip(View view, int i, Locale l) {
         Bucket b = view.buckets.get(i);
+        if (view.measure == LIFE) return label(b.start, view.period) + "\n" + (b.logged ? b.n + " of " + days(b.of) : "nothing logged");
+        if (view.measure == CYCLE || view.measure == PERIOD_DAYS) return label(b.start, view.period) + "\n" + (b.n == 0 ? "none" : value(view.measure, b.value, l));
         return label(b.start, view.period) + "\n" + (b.n == 0 ? "no data" : value(view.measure, b.value, l));
     }
 
     /** The note under the chart: what dot, band and hollow mean for this period and measure. */
     public static String note(int measure, int period) {
         String each = period == WEEKS ? "week" : period == MONTHS ? "month" : "year";
+        if (measure == CYCLE) {
+            return "Dot: the average of the cycles that started in each " + each + ". Band: their middle half, with 4 cycles or more. "
+                    + "Hollow: left out of your averages. Small dots: each cycle. Touch to read.";
+        }
+        if (measure == PERIOD_DAYS) {
+            return "Dot: the average of the periods that started in each " + each + ". Band: their middle half, with 4 periods or more. "
+                    + "Small dots: each period. Touch to read.";
+        }
+        if (measure == LIFE) return "Dot: the days you logged it in each " + each + ". No dot: nothing logged that " + each + ". Touch to read.";
         String unit = NIGHT[measure] ? "nights" : "days";
         String few = "Hollow: fewer than " + FEW[period] + " " + unit + ".";
         if (KIND[measure] == SPREAD) {
@@ -475,6 +557,11 @@ public final class Trends {
             case TEMP: return "Night skin temperature against your usual. The ring measures it, a watch does not.";
             case STEPS: return "Steps of each day the device was worn for an hour or more (days without it are left out, not zero).";
             case KCAL: return "Active calories of each day worn for an hour or more (days without it are left out, not zero).";
+            case CYCLE: return "Days from the first day of one period to the first day of the next, as the period tracker counts them, "
+                    + "in the week, month or year the cycle started. A cycle the tracker leaves out of its averages (far from your usual, often a gap in the log) is hollow.";
+            case PERIOD_DAYS: return "Days from the first to the last day of each logged period, in the week, month or year it started. A period still running counts once it ends.";
+            case LIFE: return "Days you logged this factor in each week, month or year, the current one up to today. One without any logged "
+                    + "factor is left empty, not zero, as nothing tells a day you did not log from a day without it.";
             default: return "Screen time of each whole day this phone recorded, without the apps you left out.";
         }
     }
@@ -568,6 +655,8 @@ public final class Trends {
      * weeks with a value and {@link #MIN_DAYS} days, else it says so.
      */
     public static Compare compare(List<Day> days, int measure, LocalDate today, Locale l) {
+        // phase 3's measures have their own line ({@link #cycleLine}, {@link #periodLine}, {@link #lifeCompare})
+        if (!daily(measure)) return Compare.not("");
         LocalDate thisFrom = today.withDayOfMonth(1), thisTo = today.minusDays(1);
         LocalDate lastFrom = thisFrom.minusMonths(1), lastTo = thisFrom.minusDays(1);
         String lastName = monthName(lastFrom);
@@ -644,12 +733,17 @@ public final class Trends {
         return Double.isNaN(x) ? 0 : x * x;
     }
 
-    /** What a difference is called: "you sleep", "longer", "shorter" and how it is said. */
+    /**
+     * What a difference is called: "you sleep", "longer", "shorter" and how it is said. The last three entries (cycle length,
+     * period length, life factors) are used by no sentence; they only keep the arrays as long as {@link #MEASURES}.
+     */
     static final String[] SUBJECT = {"you sleep", "you fall asleep", "you wake up", "your bedtimes vary", "you have", "your sleep score is",
         "your readiness is", "your resting heart rate is", "your HRV is", "your temperature is", "you walk", "you burn",
-        "your screen time is"};
-    static final String[] UP = {"longer", "later", "later", "more", "more", "higher", "higher", "higher", "higher", "higher", "more", "more", "longer"};
-    static final String[] DOWN = {"shorter", "earlier", "earlier", "less", "fewer", "lower", "lower", "lower", "lower", "lower", "fewer", "fewer", "shorter"};
+        "your screen time is", "your cycles are", "your periods are", "you have it on"};
+    static final String[] UP = {"longer", "later", "later", "more", "more", "higher", "higher", "higher", "higher", "higher", "more", "more", "longer",
+        "longer", "longer", "more"};
+    static final String[] DOWN = {"shorter", "earlier", "earlier", "less", "fewer", "lower", "lower", "lower", "lower", "lower", "fewer", "fewer", "shorter",
+        "shorter", "shorter", "fewer"};
 
     /** A difference without its sign: "12 min", "1h 5m", "0.8 wake ups a night", "3 points", "1,200 steps a day". */
     public static String amount(int measure, double v, Locale l) {
@@ -714,6 +808,289 @@ public final class Trends {
             s.append("could be ").append(loNone ? "the same" : amount(measure, lo, l) + " " + word(measure, lo)).append(" to ")
                     .append(hiNone ? "the same" : amount(measure, hi, l) + " " + word(measure, hi)).append("), so about the same.");
         }
+        return s.toString();
+    }
+
+    // ------------------------------------------------------------------ phase 3: cycle and period length
+
+    /**
+     * Cycle length (phase 3): one value per cycle ({@code Cycles.cycles}, from one period's first day to the next one's), filed
+     * under the week, month or year the cycle started. A period's dot is the mean of its cycles the tracker keeps, the band
+     * their middle half with 4 or more; a cycle left out of its averages ({@link Cycles.Cycle#leftOut}) is a small dot and not
+     * in the mean and drawn as a hollow small dot ({@link View#dayHollow}); a period with only such cycles is a hollow dot at
+     * their mean. Every cycle is a small dot. A cycle ending in a period logged for a day after {@code today} does not count
+     * (as {@code Cycles.finished}); the time axis runs to {@code today}'s period, as the other measures' do.
+     */
+    public static View cycles(List<Cycles.Cycle> cycles, int period, LocalDate today) {
+        List<Item> items = new ArrayList<Item>();
+        if (cycles != null) for (Cycles.Cycle c : cycles) if (!c.next.isAfter(today)) items.add(new Item(c.start, c.length, c.leftOut));
+        return items(CYCLE, items, period, today);
+    }
+
+    /**
+     * Period length (phase 3): days from each period's first day to its last ({@code Period.days()}), filed as {@link #cycles}.
+     * {@code finished}: the periods that are over ({@code Cycles.finished()}: not the running one, not one logged for a day
+     * after today); one starting after {@code today} is left out here too.
+     */
+    public static View periods(List<Cycles.Period> finished, int period, LocalDate today) {
+        List<Item> items = new ArrayList<Item>();
+        if (finished != null) for (Cycles.Period p : finished) if (!p.start.isAfter(today)) items.add(new Item(p.start, p.days(), false));
+        return items(PERIOD_DAYS, items, period, today);
+    }
+
+    static View items(int measure, List<Item> in, int period, LocalDate today) {
+        View out = new View(measure, period);
+        if (in.isEmpty()) return out;
+        List<Item> all = new ArrayList<Item>(in);
+        java.util.Collections.sort(all, new java.util.Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return a.start.compareTo(b.start);
+            }
+        });
+        // up to today's period (a gap at the end when no cycle started since), never before the last one
+        LocalDate last = all.get(all.size() - 1).start;
+        if (today != null && today.isAfter(last)) last = today;
+        int at = 0;
+        for (LocalDate s = start(all.get(0).start, period); !s.isAfter(last); s = next(s, period)) {
+            LocalDate e = next(s, period).minusDays(1);
+            Bucket b = new Bucket(s, e);
+            List<Double> kept = new ArrayList<Double>(), left = new ArrayList<Double>();
+            int startAt = out.dayDates.size();
+            while (at < all.size() && !all.get(at).start.isAfter(e)) {
+                Item it = all.get(at++);
+                b.items.add(it);
+                (it.leftOut ? left : kept).add((double) it.days);
+                out.dayDates.add(it.start);
+                out.dayValues.add((double) it.days);
+                out.dayHollow.add(it.leftOut);
+            }
+            b.n = b.items.size();
+            if (!kept.isEmpty()) {
+                double[] v = Stats.toArray(kept);
+                b.value = Stats.mean(v);
+                if (v.length >= 4) {
+                    b.lo = Stats.percentile(v, 0.25);
+                    b.hi = Stats.percentile(v, 0.75);
+                }
+            } else if (!left.isEmpty()) {
+                b.value = Stats.mean(Stats.toArray(left));
+                b.hollow = true;
+            }
+            spread(out, startAt);
+            out.buckets.add(b);
+        }
+        return out;
+    }
+
+    /** "4 March", "4 March 2025" when it is not in the year of the period it is filed under (a week across New Year). */
+    static String dayName(LocalDate d, LocalDate periodStart) {
+        return d.getDayOfMonth() + " " + monthName(d) + (d.getYear() != periodStart.getYear() ? " " + d.getYear() : "");
+    }
+
+    /** "27 and 31", "27, 29 and 31". */
+    static String and(List<Item> items) {
+        StringBuilder s = new StringBuilder();
+        for (int i = 0; i < items.size(); i++) {
+            s.append(i == 0 ? "" : i == items.size() - 1 ? " and " : ", ").append(items.get(i).days);
+        }
+        return s.toString();
+    }
+
+    /**
+     * The touch readout of a period of cycle or period length: "March 2026: cycle of 29 days, started 4 March", "March 2026:
+     * 2 cycles, 27 and 31 days, 29 on average", "2025: 13 cycles, 29 days on average, middle half 27 to 31 days, 1 left out of
+     * your averages".
+     */
+    static String itemReadout(View view, int i) {
+        Bucket b = view.buckets.get(i);
+        boolean cycle = view.measure == CYCLE;
+        String one = cycle ? "cycle" : "period", many = cycle ? "cycles" : "periods";
+        StringBuilder s = new StringBuilder(label(b.start, view.period)).append(": ");
+        if (b.n == 0) return s.append("no ").append(one).append(" started").toString();
+        int out = 0;
+        for (Item it : b.items) if (it.leftOut) out++;
+        if (b.n == 1) {
+            Item it = b.items.get(0);
+            s.append(one).append(" of ").append(days(it.days)).append(", started ").append(dayName(it.start, b.start));
+            if (it.leftOut) s.append(", left out of your averages");
+            return s.toString();
+        }
+        s.append(b.n).append(' ').append(many).append(", ");
+        if (b.n <= 3) {
+            s.append(and(b.items)).append(" days");
+            if (out == b.n) return s.append(b.n == 2 ? ", both" : ", all").append(" left out of your averages").toString();
+            s.append(", ").append(Math.round(b.value)).append(" on average");
+        } else {
+            if (out == b.n) return s.append("all left out of your averages").toString();
+            s.append(days(Math.round(b.value))).append(" on average");
+            if (!Double.isNaN(b.lo)) s.append(", middle half ").append(Math.round(b.lo)).append(" to ").append(days(Math.round(b.hi)));
+        }
+        if (out > 0) s.append(", ").append(out).append(" left out of your averages");
+        return s.toString();
+    }
+
+    /** Cycles and periods the line under the chart looks back on. */
+    public static final int LAST = 6;
+    public static final String FEW_CYCLES = "Too few cycles yet.", FEW_PERIODS = "Too few periods yet.";
+
+    /**
+     * Instead of this month against the last (one value a month cannot be compared that way): "Your last 6 cycles: 29 days on
+     * average, middle half 27 to 30 days." The cycles the tracker keeps in its averages, the last {@link #LAST}; fewer: all of
+     * them ("Your 3 cycles: 29 days on average, from 27 to 31 days."); under 2: {@link #FEW_CYCLES}.
+     */
+    public static String cycleLine(List<Cycles.Cycle> cycles, LocalDate today) {
+        List<Integer> v = new ArrayList<Integer>();
+        if (cycles != null) for (Cycles.Cycle c : cycles) if (!c.leftOut && !c.next.isAfter(today)) v.add(c.length);
+        return line(v, "cycles", FEW_CYCLES);
+    }
+
+    /**
+     * As {@link #cycleLine} for the lengths of every period that has ended ({@code finished}, {@code Cycles.finished()}): "Your
+     * last 6 periods: 5 days on average, ...".
+     */
+    public static String periodLine(List<Cycles.Period> finished, LocalDate today) {
+        List<Integer> v = new ArrayList<Integer>();
+        if (finished != null) for (Cycles.Period p : finished) if (!p.start.isAfter(today)) v.add(p.days());
+        return line(v, "periods", FEW_PERIODS);
+    }
+
+    static String line(List<Integer> all, String what, String few) {
+        if (all.size() < 2) return few;
+        List<Integer> last = all.subList(Math.max(0, all.size() - LAST), all.size());
+        double[] v = new double[last.size()];
+        for (int i = 0; i < v.length; i++) v[i] = last.get(i);
+        StringBuilder s = new StringBuilder(all.size() > LAST ? "Your last " : "Your ").append(v.length).append(' ').append(what).append(": ")
+                .append(days(Math.round(Stats.mean(v)))).append(" on average, ");
+        if (v.length >= 4) {
+            s.append("middle half ").append(Math.round(Stats.percentile(v, 0.25))).append(" to ").append(days(Math.round(Stats.percentile(v, 0.75))));
+        } else {
+            double lo = v[0], hi = v[0];
+            for (double x : v) {
+                lo = Math.min(lo, x);
+                hi = Math.max(hi, x);
+            }
+            s.append("from ").append(Math.round(lo)).append(" to ").append(days(Math.round(hi)));
+        }
+        return s.append('.').toString();
+    }
+
+    // ------------------------------------------------------------------ phase 3: life factors
+
+    /**
+     * The factors of the Life group: every key logged on any day of {@code days}, the most days first, then in {@code order}
+     * (the list order of {@code LifeTags.Known}), then by key.
+     */
+    public static List<String> factors(Map<LocalDate, List<String>> days, final List<String> order) {
+        final Map<String, Integer> n = new java.util.HashMap<String, Integer>();
+        if (days != null) for (List<String> l : days.values()) if (l != null) for (String k : new java.util.HashSet<String>(l)) n.put(k, (n.containsKey(k) ? n.get(k) : 0) + 1);
+        List<String> out = new ArrayList<String>(n.keySet());
+        java.util.Collections.sort(out, new java.util.Comparator<String>() {
+            @Override
+            public int compare(String a, String b) {
+                int c = Integer.compare(n.get(b), n.get(a));
+                if (c != 0) return c;
+                int ia = order == null ? -1 : order.indexOf(a), ib = order == null ? -1 : order.indexOf(b);
+                if (ia >= 0 && ib >= 0) return Integer.compare(ia, ib);
+                if (ia >= 0 || ib >= 0) return ia >= 0 ? -1 : 1;
+                return a.compareTo(b);
+            }
+        });
+        return out;
+    }
+
+    /** A factor's name inside a sentence: a fixed tag in small letters ("alcohol"), an own tag as typed. */
+    public static String inSentence(String key, String name) {
+        if (name == null || name.isEmpty()) return "it";
+        if (key != null && LifeTags.isOwn(key)) return name;
+        return name.substring(0, 1).toLowerCase(Locale.ROOT) + name.substring(1);
+    }
+
+    /** {@link #counts} with the key as the name. */
+    public static View counts(Map<LocalDate, List<String>> days, String key, int period, LocalDate today, LocalDate first) {
+        return counts(days, key, key, period, today, first);
+    }
+
+    /**
+     * Days with the factor {@code key} (phase 3): the count per week, month or year from the period of {@code first} (the
+     * history's first day, or an earlier logged day) to today's, drawn as dots without a band. Each period counts its days from
+     * the first day up to today ({@link Bucket#of}); a period without any logged factor is a gap, not 0 (nothing tells "not
+     * logged" from "did not happen"). Days after today are not counted. {@code name}: the factor as said in a sentence.
+     */
+    public static View counts(Map<LocalDate, List<String>> days, String key, String name, int period, LocalDate today, LocalDate first) {
+        View out = new View(LIFE, period);
+        out.key = key;
+        out.name = name;
+        java.util.TreeMap<LocalDate, List<String>> by = new java.util.TreeMap<LocalDate, List<String>>();
+        if (days != null) {
+            for (Map.Entry<LocalDate, List<String>> e : days.entrySet()) {
+                if (e.getKey() == null || e.getKey().isAfter(today) || e.getValue() == null || e.getValue().isEmpty()) continue;
+                by.put(e.getKey(), e.getValue());
+            }
+        }
+        LocalDate begin = first;
+        if (!by.isEmpty() && (begin == null || by.firstKey().isBefore(begin))) begin = by.firstKey();
+        if (begin == null || begin.isAfter(today)) return out;
+        for (LocalDate s = start(begin, period); !s.isAfter(today); s = next(s, period)) {
+            LocalDate e = next(s, period).minusDays(1);
+            Bucket b = new Bucket(s, e);
+            LocalDate from = s.isBefore(begin) ? begin : s, to = e.isAfter(today) ? today : e;
+            b.of = (int) ChronoUnit.DAYS.between(from, to) + 1;
+            b.now = !today.isAfter(e);
+            for (List<String> l : by.subMap(from, true, to, true).values()) {
+                b.logged = true;
+                if (l.contains(key)) b.n++;
+            }
+            if (b.logged) b.value = b.n;
+            out.buckets.add(b);
+        }
+        return out;
+    }
+
+    /** "March 2026: alcohol on 6 of 31 days", this month "... on 3 of 27 days so far", "March 2026: nothing logged". */
+    static String lifeReadout(View view, int i) {
+        Bucket b = view.buckets.get(i);
+        String head = label(b.start, view.period) + ": ";
+        if (!b.logged) return head + "nothing logged";
+        return head + view.name + " " + share(b);
+    }
+
+    /** "on 6 of 31 days", "on 3 of 27 days so far" for the period holding today. */
+    static String share(Bucket b) {
+        return "on " + b.n + " of " + days(b.of) + (b.now ? " so far" : "");
+    }
+
+    /**
+     * The line under "Mark days with" when a factor is picked: "Dots under the chart: each month with alcohol. Touch a month to
+     * see on how many days you logged it. They do not change any number." Display only: the marks change no number and no sentence.
+     */
+    public static String markNote(String name, int period) {
+        String each = period == WEEKS ? "week" : period == MONTHS ? "month" : "year";
+        return "Dots under the chart: each " + each + " with " + name + ". Touch a " + each + " to see on how many days you logged it. "
+                + "They do not change any number.";
+    }
+
+    /** "11 %". */
+    static String percent(Bucket b) {
+        return Math.round(100.0 * b.n / Math.max(1, b.of)) + " %";
+    }
+
+    /**
+     * Life factors' "This month against the last": "This month: alcohol on 3 of 27 days so far (11 %), last month on 6 of 31
+     * days (19 %)." Plain shares, no range: a count of days logged by hand is the evidence itself. A month without any logged
+     * factor says so.
+     */
+    public static String lifeCompare(Map<LocalDate, List<String>> days, String key, String name, LocalDate today, LocalDate first) {
+        View v = counts(days, key, name, MONTHS, today, first);
+        Bucket now = v.buckets.isEmpty() ? null : v.buckets.get(v.buckets.size() - 1);
+        Bucket last = v.buckets.size() < 2 ? null : v.buckets.get(v.buckets.size() - 2);
+        boolean n = now != null && now.logged, b = last != null && last.logged;
+        if (!n && !b) return "Nothing logged this month or last month.";
+        StringBuilder s = new StringBuilder("This month: ");
+        if (n) s.append(name).append(' ').append(share(now)).append(" (").append(percent(now)).append("), last month ");
+        else s.append("nothing logged yet, last month ").append(name).append(' ');
+        if (b) s.append(share(last)).append(" (").append(percent(last)).append(").");
+        else s.append("nothing logged.");
         return s.toString();
     }
 }

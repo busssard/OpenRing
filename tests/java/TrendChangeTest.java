@@ -46,6 +46,8 @@ public class TrendChangeTest {
         events();
         place();
         readouts();
+        lifeMarks();
+        phase3Measures();
         speed();
         plain();
         System.out.println("trend changes: " + passed + " passed, " + failed + " failed");
@@ -587,6 +589,79 @@ public class TrendChangeTest {
                 + "Marks under the chart: events such as a new device, a trip or a time left out. Touch a period to read them.");
         eq("chart note: marks only", t(TrendChange.chartNote(null, ev)), "Marks under the chart: events such as a new device, a trip or a time left out. Touch a period to read them.");
         eq("chart note: steps only", t(TrendChange.chartNote(r, null)), "Dashed line: where your values stepped. Lines: your average before and after. Touch a period to read them.");
+    }
+
+    /**
+     * Phase 3: the marks of the factor picked under "Mark days with": only its days, on every measure but the factors' own,
+     * none for None, counted in the readout, one per period on the chart, and never in a sentence or a test.
+     */
+    static void lifeMarks() {
+        java.util.TreeMap<LocalDate, List<String>> log = new java.util.TreeMap<LocalDate, List<String>>();
+        log.put(LocalDate.parse("2026-06-05"), java.util.Arrays.asList("alcohol", "meditation"));
+        log.put(LocalDate.parse("2026-06-12"), java.util.Arrays.asList("alcohol"));
+        log.put(LocalDate.parse("2026-06-20"), java.util.Arrays.asList("meditation"));
+        log.put(LocalDate.parse("2026-08-01"), java.util.Arrays.asList("alcohol"));
+        List<TrendChange.Event> al = TrendChange.life(log, "alcohol", "Alcohol");
+        eq("only the picked factor's days", al.size(), 3);
+        check("each a day of kind LIFE named as on Today", al.get(0).kind == TrendChange.LIFE && al.get(0).from.equals(al.get(0).to)
+                && "Alcohol".equals(al.get(0).text) && al.get(0).from.equals(LocalDate.parse("2026-06-05")));
+        check("None: no marks", TrendChange.life(log, null, null).isEmpty() && TrendChange.life(null, "alcohol", "Alcohol").isEmpty());
+        boolean every = true;
+        for (int m = 0; m < Trends.MEASURES; m++) every &= TrendChange.applies(TrendChange.LIFE, m) == (m != Trends.LIFE);
+        check("marked on every measure but the factors' own", every);
+        List<Trends.Day> h = history(7, 365, Trends.ASLEEP, LocalDate.parse("2026-06-15"), 30);
+        int on = 0;
+        for (int m = 0; m < Trends.COUNT; m++) {
+            int n = 0;
+            for (TrendChange.Event e : TrendChange.events(h, m, TODAY, al)) if (e.kind == TrendChange.LIFE) n++;
+            if (n == 3) on++;
+        }
+        eq("every daily measure gets the three marks", on, Trends.COUNT);
+        int cyc = 0;
+        for (TrendChange.Event e : TrendChange.events(h, Trends.CYCLE, TODAY, al)) if (e.kind == TrendChange.LIFE) cyc++;
+        eq("cycle length gets them too", cyc, 3);
+        eq("the readout counts them", t(TrendChange.list(al, LocalDate.parse("2026-06-01"), LocalDate.parse("2026-06-30"))), "Alcohol on 2 days");
+        eq("one day", t(TrendChange.list(al, LocalDate.parse("2026-08-01"), LocalDate.parse("2026-08-31"))), "Alcohol on 1 day");
+        List<TrendChange.Event> mixed = new ArrayList<TrendChange.Event>(al);
+        mixed.add(new TrendChange.Event(TrendChange.WORKOUT, LocalDate.parse("2026-06-07"), LocalDate.parse("2026-06-07"), "Workout"));
+        eq("after the other marks", t(TrendChange.list(mixed, LocalDate.parse("2026-06-01"), LocalDate.parse("2026-06-30"))), "1 workout, Alcohol on 2 days");
+        // one mark per month in the middle of its column
+        Trends.View v = Trends.of(h, Trends.ASLEEP, Trends.MONTHS, TODAY);
+        TrendChange.Drawn dr = TrendChange.drawn(v, null, al);
+        int shown = 0;
+        int jun = v.indexOf(LocalDate.parse("2026-06-01")), aug = v.indexOf(LocalDate.parse("2026-08-01"));
+        boolean middle = true;
+        for (int i = 0; i < al.size(); i++) {
+            check("a life mark is flagged", dr.eventLife[i]);
+            if (Double.isNaN(dr.eventFrom[i])) continue;
+            shown++;
+            middle &= dr.eventFrom[i] == jun + 0.5 || dr.eventFrom[i] == aug + 0.5;
+        }
+        check("one mark per month with alcohol (" + shown + "), in its middle", shown == 2 && middle);
+        // display only: the sentences and the change test are the same with the marks
+        TrendChange.Result r = TrendChange.of(h, Trends.ASLEEP, TODAY, L);
+        List<TrendChange.Event> base = TrendChange.events(h, Trends.ASLEEP, TODAY, null), marked = TrendChange.events(h, Trends.ASLEEP, TODAY, al);
+        eq("the text around a step is the same with the marks", TrendChange.around(r, marked), TrendChange.around(r, base));
+        eq("the note under the chart is the same with the marks", TrendChange.chartNote(r, marked), TrendChange.chartNote(r, base));
+        eq("only marks of a factor: no phase 2 note", TrendChange.chartNote(null, al), "");
+        String ro = TrendChange.readout(v, jun, r, marked, L);
+        check("the touch readout adds them: " + ro, ro.endsWith("Alcohol on 2 days") && ro.startsWith(Trends.readout(v, jun, L)));
+    }
+
+    /** Phase 3's measures have no value per day: no test, a sentence why, and only the trips and stored events as marks. */
+    static void phase3Measures() {
+        List<Trends.Day> h = history(5, 200, Trends.ASLEEP, null, 0);
+        TrendChange.Result c = TrendChange.of(h, Trends.CYCLE, TODAY, L), p = TrendChange.of(h, Trends.PERIOD_DAYS, TODAY, L),
+                f = TrendChange.of(h, Trends.LIFE, TODAY, L);
+        eq("cycle length", t(c.text), "Cycle length has one value per cycle, not per day, so no change is looked for here.");
+        eq("period length", t(p.text), "Period length has one value per period, not per day, so no change is looked for here.");
+        eq("life factors", t(f.text), "These are days you logged, so no change is looked for here. What a factor goes with in your nights is on Body, card Life factors and your nights.");
+        check("nothing tested, no step", !c.looked && !p.looked && !f.looked && c.steps.isEmpty() && f.levels.isEmpty());
+        List<TrendChange.Event> known = new ArrayList<TrendChange.Event>();
+        known.add(new TrendChange.Event(TrendChange.PERIOD, TODAY.minusDays(30), TODAY.minusDays(30), "Period started"));
+        known.add(new TrendChange.Event(TrendChange.LEFT_OUT, TODAY.minusDays(40), TODAY.minusDays(39), "Time left out"));
+        List<TrendChange.Event> e = TrendChange.events(h, Trends.CYCLE, TODAY, known);
+        check("cycle length: the time left out, not each period start (every dot is one)", e.size() == 1 && e.get(0).kind == TrendChange.LEFT_OUT);
     }
 
     /** Three years, every measure: well under the time Trends may take (the phone is a few times slower). */

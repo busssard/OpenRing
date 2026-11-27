@@ -235,6 +235,45 @@ public final class TrendDays {
         return out;
     }
 
+    /**
+     * Phase 3 of #374: the period tracker's cycles and periods and the life log, read once per page read with the days.
+     * {@code cycles} is null when the tracker is off ({@code periodShown} false) or fewer than 2 periods are logged (the rule of
+     * the cycle cards on Body); {@code life} every day with a tag in force ({@link LifeLog#all}), {@code factors} the keys
+     * logged, the most days first ({@link Trends#factors}), {@code names} their names as on Today's row. A log that cannot be
+     * read gives nothing of its kind ({@code skipped[0]} counts them, for the log). Nothing is stored.
+     */
+    public static Logs logs(Db db, LocalDate today, boolean periodShown, int[] skipped) {
+        Logs out = new Logs();
+        if (periodShown) {
+            try {
+                app.openring.core.analysis.Cycles c = Periods.cycles(db, today);
+                if (c.periods.size() >= 2) out.cycles = c;
+            } catch (RuntimeException e) {
+                skipped[0]++;
+            }
+        }
+        try {
+            app.openring.core.LifeTags.Known known = LifeLog.known(db);
+            out.life = LifeLog.all(db);
+            out.factors = Trends.factors(out.life, new ArrayList<String>(known.all.keySet()));
+            for (String k : out.factors) out.names.put(k, known.name(k));
+        } catch (RuntimeException e) {
+            out.life = new TreeMap<LocalDate, List<String>>();
+            out.factors = new ArrayList<String>();
+            out.names.clear();
+            skipped[0]++;
+        }
+        return out;
+    }
+
+    /** What {@link #logs} reads. */
+    public static final class Logs {
+        public app.openring.core.analysis.Cycles cycles;
+        public TreeMap<LocalDate, List<String>> life = new TreeMap<LocalDate, List<String>>();
+        public List<String> factors = new ArrayList<String>();
+        public final Map<String, String> names = new HashMap<String, String>();
+    }
+
     /** The local date of {@code unix} in the zone noted for that day. */
     static LocalDate day(double unix, DeviceHistory.DayZones zones, ZoneId phone) {
         java.time.Instant t = java.time.Instant.ofEpochSecond((long) Math.floor(unix));
@@ -244,7 +283,8 @@ public final class TrendDays {
 
     /**
      * A short text that changes whenever what {@link #read} reads may have changed: the last analysis, the stored nights and days,
-     * the screen sessions and reads, the apps, the zones, the watch's and the phone's rows, the nights by hand. Trends reads the history again only
+     * the screen sessions and reads, the apps, the zones, the watch's and the phone's rows, the nights by hand, the period log and
+     * the life log (phase 3: a tag set or removed). Trends reads the history again only
      * when it differs from the last read (code review of #413), so coming back to the page keeps the period touched. A table
      * that cannot be counted gives "?".
      */
@@ -258,7 +298,9 @@ public final class TrendDays {
             "SELECT COALESCE(SUM(made), 0) FROM sleep_manual WHERE COALESCE(gone, 0) = 0",
             // the events of phase 2: left out times, the period log (an edit notes when it was made), the watch's workouts
             "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM excluded", "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM period_days",
-            "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM period_ends", "SELECT COUNT(*) FROM watch_workouts"};
+            "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM period_ends", "SELECT COUNT(*) FROM watch_workouts",
+            // phase 3: the life log (a tag set or taken off writes a row with when it was made) and its own tags
+            "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM life_days", "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM life_tags"};
         for (String x : q) {
             try {
                 b.append('|').append(db.count(x));

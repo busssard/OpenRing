@@ -25,7 +25,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `.github/scripts/screens.sh`, `.github/scripts/badge.sh` | The emulator script that opens every screen with demo data; the README badge publisher |
 | `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` | Templates for issues (bug, idea) and pull requests |
 | `docs/` | This guide and the architecture notes |
-| `tests/java/TrendChangeTest.java` | Trends phase 2, `core/analysis/TrendChange` (issue #374): a known step found within a week of its date, the false alarm rate across all measures without a change, two steps, the events on the time axis; run by `tests/run_tests.sh` after `TrendsTest` |
+| `tests/java/TrendChangeTest.java` | Trends phase 2, `core/analysis/TrendChange` (issue #374): a known step found within a week of its date, the false alarm rate across all measures without a change, two steps, the events on the time axis, phase 3's marks of a life factor (only the picked one, on every other measure, one per period, never in a sentence) and no test on cycle, period and life measures; run by `tests/run_tests.sh` after `TrendsTest`. Phase 3 in `TrendsTest`: cycle and period length filed by their start, a cycle across New Year, two in a month, a left out one hollow and not in the mean, the cycle and period lines, the axis up to today, the days with a life factor per week, month and year with days so far, a gap month, own tags, a factor before the first day, the Life group's this month against the last; in `TrendsPipelineTest`: the demo's cycles and year of tags, reading changes nothing stored, a tag moves the stamp, 3 years with daily tags |
 | `tools/make_icon.py` | Draws the icon (launcher, themed, notification, `docs/images/icon.svg` and `.png`) from one shape; run it after changing the icon |
 | `changes/` | One note per user visible pull request; they count the version and become the release notes (see `changes/README.md`) |
 | `CHANGELOG.md` | User facing changes up to 1.28 |
@@ -113,9 +113,11 @@ Your cycles and on the night temperature card on Body; closed is the default, is
 demo mode only: the Period card's calendar opens this many months after the shown day's month, with the expected cycles there;
 owner's feedback of 11 November on #252).
 
-Three for Trends (issue #374; it only reads, so no demo mode needed): `trends` (int, opens Trends at a group: 0 Sleep, 1 Readiness,
-2 Activity, 3 Body, 4 Screen; with `day` the shown day, whose week, month or year opens touched when it is an earlier one),
-`trends_measure` (int, a measure of `core/analysis/Trends`, for example 10 steps) and `trends_period` (int, 0 weeks, 1 months, 2 years).
+Four for Trends (issue #374; it only reads, so no demo mode needed): `trends` (int, opens Trends at a group: 0 Sleep, 1 Readiness,
+2 Activity, 3 Body, 4 Screen, 5 Life (phase 3, only with a logged factor); with `day` the shown day, whose week, month or year opens
+touched when it is an earlier one), `trends_measure` (int, a measure of `core/analysis/Trends`, for example 10 steps, 13 cycle length,
+14 period length), `trends_period` (int, 0 weeks, 1 months, 2 years) and `trends_factor` (string, a life factor's key such as
+`alcohol`: with `trends 5` the factor shown, with any other group the factor marked under the chart instead of None).
 
 Two for Today: `battery_open` (boolean, demo mode only: the battery lines under the scores folded open, owner's wish of 17
 November) and `day_line_why` (boolean, demo mode only: Why this line opened on the Your day card, each check of

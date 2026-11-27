@@ -1775,7 +1775,7 @@ public final class Charts {
         private int selected = -1, pending = -1;
         private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint(Paint.ANTI_ALIAS_FLAG), day = new Paint(Paint.ANTI_ALIAS_FLAG),
                 band = new Paint(Paint.ANTI_ALIAS_FLAG), dot = new Paint(Paint.ANTI_ALIAS_FLAG), ring = new Paint(Paint.ANTI_ALIAS_FLAG),
-                line = new Paint(Paint.ANTI_ALIAS_FLAG);
+                line = new Paint(Paint.ANTI_ALIAS_FLAG), dayRing = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF r = new RectF();
 
         public Months(Context c, app.openring.core.analysis.Trends.View view, int color) {
@@ -1788,6 +1788,9 @@ public final class Charts {
             grid.setStrokeWidth(1);
             grid.setPathEffect(new DashPathEffect(new float[] {Ui.dp(c, 3), Ui.dp(c, 4)}, 0));
             day.setColor(Ui.alpha(color, 0.28f));
+            dayRing.setColor(Ui.alpha(color, 0.7f));
+            dayRing.setStyle(Paint.Style.STROKE);
+            dayRing.setStrokeWidth(Ui.dp(c, 1f));
             band.setColor(Ui.alpha(color, 0.30f));
             dot.setColor(color);
             ring.setColor(color);
@@ -1810,7 +1813,8 @@ public final class Charts {
         }
 
         private app.openring.core.analysis.TrendChange.Drawn drawn;
-        private final Paint stepLine = new Paint(Paint.ANTI_ALIAS_FLAG), level = new Paint(Paint.ANTI_ALIAS_FLAG), mark = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint stepLine = new Paint(Paint.ANTI_ALIAS_FLAG), level = new Paint(Paint.ANTI_ALIAS_FLAG), mark = new Paint(Paint.ANTI_ALIAS_FLAG),
+                lifeMark = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         /**
          * Phase 2 of #374: the steps found (a dashed line at each, the average before and after as lines over the days they
@@ -1827,6 +1831,8 @@ public final class Charts {
             level.setStrokeWidth(Ui.dp(getContext(), 2));
             mark.setColor(Ui.TEXT_2);
             mark.setStrokeWidth(Ui.dp(getContext(), 1.5f));
+            // phase 3: the picked life factor's periods, a dot in the life factors' colour above the other marks
+            lifeMark.setColor(Ui.LIFE);
             return this;
         }
 
@@ -1856,6 +1862,8 @@ public final class Charts {
             double pad = Math.max((hi - lo) * 0.12, view.measure == app.openring.core.analysis.Trends.TEMP ? 0.05 : 1);
             lo -= pad;
             hi += pad;
+            // a count of days (phase 3) never goes under none
+            if (view.measure == app.openring.core.analysis.Trends.LIFE && lo < 0) lo = 0;
             String[] ys = {label(lo + (hi - lo) * 0), label(lo + (hi - lo) * 0.5), label(hi)};
             float left = 0;
             for (String s : ys) left = Math.max(left, txt.measureText(s));
@@ -1888,7 +1896,9 @@ public final class Charts {
             float small = Ui.dp(getContext(), 1.6f);
             for (int i = 0; i < view.dayDates.size(); i++) {
                 float dx = left + slot * (view.dayBucket.get(i) + 0.5f) + (float) (view.dayOffset.get(i) * slot);
-                cv.drawCircle(dx, y(view.dayValues.get(i), lo, hi, top, bottom), small, day);
+                // phase 3: a cycle left out of the tracker's averages as a hollow small dot, whatever else its period holds
+                boolean hollow = i < view.dayHollow.size() && view.dayHollow.get(i);
+                cv.drawCircle(dx, y(view.dayValues.get(i), lo, hi, top, bottom), hollow ? small + Ui.dp(getContext(), 0.8f) : small, hollow ? dayRing : day);
             }
             float half = Math.max(Ui.dp(getContext(), 1.5f), Math.min(Ui.dp(getContext(), 7), slot * 0.32f));
             float[] xs = new float[bs.size()];
@@ -1933,6 +1943,10 @@ public final class Charts {
                     if (Float.isNaN(a) && Float.isNaN(b)) continue;
                     if (Float.isNaN(a)) a = left;
                     if (Float.isNaN(b)) b = w;
+                    if (drawn.eventLife[i]) {
+                        cv.drawCircle(a, bottom - Ui.dp(getContext(), 9), Ui.dp(getContext(), 2.2f), lifeMark);
+                        continue;
+                    }
                     if (drawn.eventDay[i] || b - a < 2) cv.drawLine(a, bottom - tick, a, bottom, mark);
                     else cv.drawRect(a, bottom - Ui.dp(getContext(), 3), b, bottom, mark);
                 }
