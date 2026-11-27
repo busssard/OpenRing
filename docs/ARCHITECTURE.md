@@ -31,7 +31,8 @@ The six tabs (issue #293, phase 0): `ui/Pages` is the entry (`Nav`, the tab numb
 its own class, `TodayPage`, `SleepPage` (with the night timeline, Recent nights and Further analysis), `ReadinessPage`,
 `ActivityPage`, `BodyPage` and `ScreenPage`, and `PageParts` holds what several tabs share (the score card `hero`,
 `contributors`, `infoCard`, `chartCard`, `leftOutCard`, the stage rows, the Steps tile). The helpers other screens called as
-`Pages.hero` and so on still answer under that name. The sentences of the tabs that say how the day looks are in
+`Pages.hero` and so on still answer under that name; new code calls the tab class or `PageParts` directly, and those `Pages`
+delegates go in phase 1, when their callers move. The sentences of the tabs that say how the day looks are in
 `core/analysis/DaySummary` (the Readiness headline, the readiness and sleep debt line under Today's day line, each body
 signal's "usual" line and its colour), tested against the code they replaced (`tests/java/DaySummaryTest.java`).
 
