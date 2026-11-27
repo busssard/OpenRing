@@ -171,7 +171,10 @@ public final class Trends {
         public final List<Double> dayValues = new ArrayList<Double>();
         /** Clock measures: the middle of the whole history's times; values are drawn as this plus up to 12 hours either way. */
         public double centre = Double.NaN;
-        /** Wake ups: the stage detail level of every night counted ({@link SleepHistory}'s rule), -1 when they differ. */
+        /**
+         * Wake ups: the stage detail level of every night counted ({@link SleepHistory}'s rule), -1 when they differ. Nights by
+         * hand have none and are left out (issue #459); with only those, Detailed.
+         */
         public int detail = StageFilter.DETAILED;
 
         View(int measure, int period) {
@@ -249,7 +252,8 @@ public final class Trends {
                 vals.add(d.v[col]);
                 b.n++;
                 b.bySource[Math.max(0, Math.min(SOURCE_NAMES.length - 1, d.src[col]))]++;
-                if (measure == WAKE_UPS) {
+                // a night by hand has no stages, so no detail level: its wake ups count, the note does not ask (issue #459)
+                if (measure == WAKE_UPS && d.src[col] != HAND) {
                     int lv = d.detail < 0 ? StageFilter.DETAILED : StageFilter.clampLevel(d.detail);
                     if (firstDetail) out.detail = lv;
                     else if (out.detail >= 0 && WakeUps.shortestKeptMin(out.detail) != WakeUps.shortestKeptMin(lv)) out.detail = -1;
@@ -616,11 +620,14 @@ public final class Trends {
         return out;
     }
 
-    /** Wake ups of every night in [{@code from}, {@code to}] counted by one rule ({@link #of}'s: a night without a level as Detailed). */
+    /**
+     * Wake ups of every night in [{@code from}, {@code to}] counted by one rule ({@link #of}'s: a night without a level as
+     * Detailed, a night by hand left out, as it has no detail level; issue #459).
+     */
     static boolean oneRule(List<Day> days, LocalDate from, LocalDate to) {
         int col = column(WAKE_UPS), shortest = -1;
         for (Day d : days) {
-            if (d.date.isBefore(from) || d.date.isAfter(to) || Double.isNaN(d.v[col])) continue;
+            if (d.date.isBefore(from) || d.date.isAfter(to) || Double.isNaN(d.v[col]) || d.src[col] == HAND) continue;
             int k = WakeUps.shortestKeptMin(d.detail < 0 ? StageFilter.DETAILED : StageFilter.clampLevel(d.detail));
             if (shortest < 0) shortest = k;
             else if (k != shortest) return false;

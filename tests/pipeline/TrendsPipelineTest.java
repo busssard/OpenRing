@@ -614,6 +614,24 @@ public class TrendsPipelineTest {
         String ro = Trends.readout(month, month.indexOf(free), Locale.US);
         System.out.println("    #427 " + ro);
         check("#427 Trends: the readout names the night by hand", ro.endsWith(", 1 by hand"), ro);
+        // issue #459: the ring's nights at Calm detail with the night by hand in the same month: no "mixed" wake ups note
+        List<Trends.Day> calm = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
+        for (Trends.Day x : calm) if (x.src[Trends.WAKE_UPS] == Trends.RING) x.detail = app.openring.core.analysis.StageFilter.CALM;
+        Trends.Day hb = day(calm, free);
+        check("#459 Trends: Calm ring nights and a night by hand in one month, no mixed wake ups note", hb != null && hb.src[Trends.WAKE_UPS] == Trends.HAND
+                && Trends.of(calm, Trends.WAKE_UPS, Trends.MONTHS, today).detail == app.openring.core.analysis.StageFilter.CALM,
+                Trends.of(calm, Trends.WAKE_UPS, Trends.MONTHS, today).detail);
+        // issue #459: the page's stamp follows every field of the devices, the age (a night by hand's score) and the goal too
+        ShownNights.Devices a40 = new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 40);
+        check("#459 Trends stamp: the devices' key changes with the age and the goal, not without a change",
+                a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 40).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 41).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 9000, 40).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.WATCH, true, false, -1, 8000, 40).key()), a40.key());
+        double s40 = day(TrendDays.read(db, today, now, none, a40, z), free).v[Trends.SLEEP_SCORE];
+        double s80 = day(TrendDays.read(db, today, now, none, new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 80), z), free).v[Trends.SLEEP_SCORE];
+        check("#459 Trends: the age changes a night by hand's sleep score (so the stamp needs it)", !Double.isNaN(s40) && !Double.isNaN(s80) && s40 != s80,
+                s40 + " " + s80);
         // only the phone: no night at all, as on Sleep
         ShownNights.Devices phoneOnly = new ShownNights.Devices(MainDevice.PHONE, false, false, MainDevice.PHONE, 8000, 40);
         check("#427 Trends with only the phone: no night by hand", from(TrendDays.read(db, today, now, none, phoneOnly, z), Trends.HAND) == 0, null);
@@ -663,6 +681,18 @@ public class TrendsPipelineTest {
         List<Trends.Day> longer = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
         check("#427 Trends starts with a night by hand older than the ring's data", longer.get(0).date.equals(early) && longer.get(0).v[Trends.ASLEEP] == 480
                 && longer.get(0).src[Trends.ASLEEP] == Trends.HAND, longer.get(0).date);
+        // issue #459 (code review of 9295aa0): the ring's nights at Calm, nights by hand before, between none and after them:
+        // Sleep's Further analysis has one level (Calm), no "each night at its own detail level" line, as Trends
+        db.getWritableDatabase().execSQL("UPDATE nights SET json = replace(replace(json, '\"stage_detail\":0', '\"stage_detail\":2'), '\"stage_detail\":1', '\"stage_detail\":2')");
+        long calmNights = db.count("SELECT COUNT(*) FROM nights WHERE main = 1 AND json LIKE '%\"stage_detail\":2%'");
+        SleepHistory all = SleepHistory.load(db, "0000-01-01", today.toString(), z);
+        boolean handFirst = app.openring.data.HandNights.withoutRingNight(db, "0000-01-01", today.toString(), z).size() == 2;
+        check("#459 Sleep: Calm ring nights with nights by hand (the first night by hand), Further analysis at Calm, not mixed",
+                calmNights == ringJs.size() && handFirst && all.nights == ringJs.size() + 2 && all.stageDetail == app.openring.core.analysis.StageFilter.CALM,
+                calmNights + " " + all.nights + " " + all.stageDetail);
+        SleepHistory onlyHand = SleepHistory.load(db, early.toString(), early.toString(), z);
+        check("#459 Sleep: a period with only a night by hand counts as Detailed, as before", onlyHand.nights == 1
+                && onlyHand.stageDetail == app.openring.core.analysis.StageFilter.DETAILED, onlyHand.nights + " " + onlyHand.stageDetail);
     }
 
     /** Three years of nights and days (copies of the demo's) and of screen sessions: read and grouped under 1.5 s. */
