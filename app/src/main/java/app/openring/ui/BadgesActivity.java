@@ -84,6 +84,8 @@ public final class BadgesActivity extends Activity {
         BadgeDays.History history;
         LocalDate seen, today;
         boolean failed;
+        /** The device whose days stand in without a ring ({@code DeviceHistory.device}), -1 with a ring: the rules' texts follow it (issue #329). */
+        int device = -1;
     }
 
     void load() {
@@ -99,7 +101,9 @@ public final class BadgesActivity extends Activity {
                     Prefs p = Prefs.of(ctx);
                     Db db = Db.get(ctx);
                     // the nights and, without a ring, the days of the watch or the phone, as Today's badges (owner's report of 14 November)
-                    l.history = BadgeDays.all(db, p.targetKcal(), p.screenExcluded(), l.today, System.currentTimeMillis() / 1000.0, DayData.shownNow(ctx));
+                    app.openring.data.ShownNights.Devices dev = DayData.shownNow(ctx);
+                    l.device = dev.history;
+                    l.history = BadgeDays.all(db, p.targetKcal(), p.screenExcluded(), l.today, System.currentTimeMillis() / 1000.0, dev);
                     l.seen = BadgeViews.seen(db);
                     // opening the page marks every badge as seen; written here, before Today can load again
                     BadgeViews.writeSeen(db, Badges.newest(l.history.badges));
@@ -135,7 +139,7 @@ public final class BadgesActivity extends Activity {
 
         LinearLayout intro = Ui.card(this);
         intro.addView(Ui.body(this, Explain.BADGES));
-        String wait = Explain.badgesWait(l.history.nights);
+        String wait = Explain.badgesWait(l.history.nights, l.device, l.history.stepDays);
         if (wait != null) {
             intro.addView(Ui.gap(this, 8));
             intro.addView(Ui.text(this, wait, 13, Ui.ACTIVE, Ui.REGULAR));
@@ -250,7 +254,7 @@ public final class BadgesActivity extends Activity {
                 if (last == null || b.date.isAfter(last)) last = b.date;
             }
             counts[k] = Explain.badgeCount(n, last, today);
-            rules[k] = Explain.badgeRule(k);
+            rules[k] = Explain.badgeRule(k, l.device);
             lasts[k] = last;
             levels[k] = last == null ? BadgeViews.NOT_YET : Badges.thisWeek(last, today) ? BadgeViews.RECENT : BadgeViews.EARLIER;
             LinearLayout item = BadgeViews.chip(this, k, levels[k], counts[k], false);

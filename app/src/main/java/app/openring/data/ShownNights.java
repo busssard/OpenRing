@@ -36,6 +36,7 @@ public final class ShownNights {
 
     /** Which devices a day is shown with: worked out by the day load from the settings and what is paired, never stored. */
     public static final class Devices {
+        // every field below is part of key() (Trends' stamp, issue #459): a new field must be added there too
         /** The main device ({@link MainDevice#RING}, {@code WATCH} or {@code PHONE}) as the day load shows it. */
         public final int main;
         /** The ring's results are shown (false only for the demo shown as without a ring). */
@@ -58,6 +59,14 @@ public final class ShownNights {
             this.history = history;
             this.goal = goal;
             this.age = age;
+        }
+
+        /**
+         * Every field in one text, for a page's stamp (Trends): the values it reads change with each of them, the age too (the
+         * score of a night by hand and of the watch's nights, issue #459) and the goal (the device's days' readiness).
+         */
+        public String key() {
+            return main + "," + ring + "," + watch + "," + history + "," + goal + "," + age;
         }
 
         /** Only the ring's results, as before the watch: callers without a choice (and the tests of the ring's own numbers). */
