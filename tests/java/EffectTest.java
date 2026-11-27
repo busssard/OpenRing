@@ -475,13 +475,16 @@ public class EffectTest {
         String c = FactorEffect.unclear(H, -1.4, 2.2, L);
         check("range: both ends with a size stay as they were", c.equals("It could be anything from 1 % lower to 2 % higher, so this is not clear yet."), c);
         String d = FactorEffect.unclear(S, -0.4, 0.3, L);
-        check("range: both ends at 0 say it once", d.equals("Its whole range is about the same, so this is not clear yet."), d);
+        check("range: both ends at 0 say it once", d.equals("Your sleep score stayed about the same across the whole range, so there is no clear difference."), d);
+        String d2 = FactorEffect.unclear(H, 0.3, -0.2, L), d3 = FactorEffect.unclear(R, 0.01, -0.02, L);
+        check("range: both ends at 0, with the measure's name", d2.equals("Your HRV stayed about the same across the whole range, so there is no clear difference.")
+                && d3.equals("Your lowest heart rate stayed about the same across the whole range, so there is no clear difference."), d2 + " / " + d3);
         String e = FactorEffect.unclearDetail(T, -0.002, 0.12, L);
         check("range 0: the detail line", e.equals(", could be about the same to 0.12 warmer. Not clear yet."), e);
         String f = FactorEffect.unclearDetail(R, -0.8, 1.24, L);
         check("range: the detail line with both ends", f.equals(", could be 0.8 lower to 1.2 higher. Not clear yet."), f);
         String g = FactorEffect.unclearDetail(H, 0.2, -0.1, L);
-        check("range: the detail line with both ends at 0", g.equals(", about the same at both ends. Not clear yet."), g);
+        check("range: the detail line with both ends at 0", g.equals(", about the same at both ends, no clear difference."), g);
         boolean no = true;
         for (String s : new String[] {a, b, c, d, e, f, g}) no &= !s.contains("no change");
         check("range: never \"no change\"", no, null);
@@ -605,7 +608,7 @@ public class EffectTest {
         int to = card.indexOf("static void fillEffect(", from);
         String effects = from < 0 || to < 0 ? "" : card.substring(from, to);
         check("unreadable once: the effect card is left out when the factors cannot be read",
-                effects.contains("if (!d.has.ring || !d.lifeOk) return null;") && !effects.contains("LifeTags.UNREADABLE") && effects.contains("FactorEffect.UNREADABLE"),
+                effects.contains("!d.lifeOk) return null") && !effects.contains("LifeTags.UNREADABLE") && effects.contains("FactorEffect.UNREADABLE"),
                 effects.length());
     }
 
