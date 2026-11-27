@@ -196,6 +196,9 @@ final class DeviceViews {
         card.addView(Ui.statRow(c,
                 steps(c, d, Start.STEPS_PHONE),
                 Ui.stat(c, "Screen time", Double.isNaN(screen) ? "--" : Ui.hm(screen), "", Ui.OXY, Start.SCREEN_TODAY)));
+        // calories from walking, an estimate from the steps and the weight (issue #329, phase 2; how: on Activity)
+        View kcal = PhoneViews.caloriesStat(c, d);
+        if (kcal != null) card.addView(Ui.statRow(c, kcal));
         if (Pages.phoneCounted(d)) card.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
         return card;
     }

@@ -231,7 +231,8 @@ else echo "::warning::issue #292 phase 3 step: no demo day after an Alcohol even
 launch --ei tab 0 --es card WHAT_WAS --ez life_time true;           shot today-life-time 3
 # A night by hand (issue #427), before the left out examples below change the demo file: hand_night (demo mode only, nothing
 # stored) shows today and the day before yesterday as without a device night, so Today asks for last night and the demo's
-# made up night by hand shows on its day; hand_entry opens the entry for last night with two wake marks (nothing is saved)
+# made up night by hand shows on its day; hand_entry opens the entry for last night with two wake marks (nothing is saved),
+# its times worked out as at 09:00 of today, so the picture does not depend on the hour this runs (issue #458)
 launch --ei tab 0 --ez hand_night true --es card No_night_for_last;  shot today-hand-ask 2
 launch --ez hand_entry true;                                         shot hand-entry 3
 launch --ei tab 1 --ez hand_night true --es day "$(date -d '2 days ago' +%F)"; shot sleep-hand 3
@@ -592,6 +593,12 @@ launch --ei tab 1 --es card YOUR_MONTHS;    shot sleep-trends-card
 launch --ei trends 0;                       shot trends-sleep 4
 if touch_desc "Trends chart" 45; then shot trends-touch 1
 else echo "::warning::issue #374 step: the Trends chart was not on screen to touch it"; shot trends-touch 1; fi
+# Trends, phase 2 (issue #374): did something change. Time asleep by month opened at the month four months ago (the demo's
+# longer nights start then): the dashed line with the average before and after and that month's readout with the step, then
+# scrolled to the card "Did something change?" with its sentence and what it cannot say
+launch --ei trends 0 --es day "$(date -d '4 months ago' +%F)"; shot trends-change 4
+if scroll_to "DID SOMETHING CHANGE?" 4; then shot trends-change-card 1
+else echo "::warning::issue #374 phase 2 step: the card DID SOMETHING CHANGE? was not found"; shot trends-change-card 1; fi
 launch --ei trends 2 --ei trends_measure 10 --ei trends_period 2; shot trends-steps-year 4
 launch --ei trends 0 --ei devices 1;        shot trends-watch-only 4
 launch --es settings top;                   shot settings
@@ -662,13 +669,15 @@ shot settings-period-remind 1
 launch --es settings games;                 shot settings-games
 launch --es settings backups;               shot settings-backups   # automatic backups, the demo's example (issue #242)
 # The Device check (issue #251, phase 1a, once the Watch check; issue #418): the Settings card with its row Check a ring or
-# watch, then in demo mode the made up scan (never Bluetooth, a watch and a QRing ring among it) and the made up report,
+# watch, then in demo mode the made up scan (never Bluetooth, a watch, a QRing ring and an Oura ring among it) and the made up report,
 # built by the same code as a real one (the screen scrolls to it, copy buttons included)
 launch --es settings watch;                 shot settings-watch
 launch --ez watch true;                     shot watch 3
 launch --ez watch true --ez watch_report true; shot watch-report 3   # scrolls to the report itself: copy buttons, Use this watch for syncing (phase 1b)
 # the made up QRing ring checked (issue #418, phase 1): its report without messages and the line of its family
 launch --ez watch true --ez device_ring true; shot device-ring 3
+# the made up Oura ring checked (issue #458): the check leaves the ring Open Ring reads alone, two lines, no report, no Copy
+launch --ez watch true --ez device_oura true; shot device-oura 3
 # The Watch page (issue #251, phase 1b): the demo's made up watch, decoded by the same code as a real one: steps per
 # day, workouts, heart rate, Withings' own sleep and the battery
 # The watch setup (issue #251): every step with its state, what is sent from the profile, then the alarm, then the hand
@@ -794,6 +803,13 @@ else echo "::warning::watch statistics step: Steps, last 7 days was not on scree
 launch --ei tab 3 --ei devices 1 --es card "WORKOUTS,_LAST_30";    shot activity-watch-only-workouts
 launch --ei tab 4 --ei devices 1 --es card "RESTING_HEART_RATE,_30"; shot body-watch-only-stats
 launch --ei tab 3 --ei devices 2 --es card "STEPS,_LAST_7";        shot activity-phone-only-stats
+# Phone steps, phase 2 (issue #329): with only the phone, calories from walking (an estimate, how and how far off under it), the
+# card that lists the last 7 days to hold next to the phone's own health app, and the Badges page whose rules say what counts
+# with the phone (Goal reached by the step goal, the sleep badges need a ring or a watch)
+launch --ei tab 3 --ei devices 2 --es card CALORIES_FROM;           shot activity-phone-calories
+launch --ei tab 3 --ei devices 2 --es card COMPARE_WITH;            shot activity-phone-compare
+launch --ez badges true --ei devices 2;     shot badges-phone-only 4
+swipe_up; swipe_up; swipe_up;               shot badges-phone-only-kinds 1
 # The Screen tab with only the watch (owner's report of 14 November, extra devices 1, demo mode only): the 14 days with the
 # watch's nights in purple and the green first look, and the day's numbers (first look, before bed, in the night) from them
 launch --ei tab 5 --ei devices 1 --es card LAST_14_DAYS;            shot screen-watch-only-days

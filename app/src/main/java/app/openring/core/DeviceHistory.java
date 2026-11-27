@@ -589,6 +589,14 @@ public final class DeviceHistory {
         return day.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, l) + " " + day.getDayOfMonth() + "." + day.getMonthValue() + ".  " + value;
     }
 
+    /**
+     * The line under the 7 day steps chart without a ring: "The line is your goal of 8,000 steps (Settings, Watch). " with the
+     * watch, "(Settings, Phone)" with only the phone, where each sets the goal (review of #467).
+     */
+    public static String goalLine(int goal, int device, Locale l) {
+        return String.format(l, "The line is your goal of %,d steps (Settings, %s). ", goal, device == MainDevice.PHONE ? "Phone" : "Watch");
+    }
+
     /** "8,412 steps", "--" for none. */
     public static String stepsText(double v, Locale l) {
         return Double.isNaN(v) ? "--" : String.format(l, "%,d steps", Math.round(v));
