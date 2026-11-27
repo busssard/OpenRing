@@ -42,6 +42,21 @@ public class BluetoothGatt {
         return started;
     }
 
+    /** The discovered layout, in the order Android would list it (for the JVM test of ble/WatchChannel, issue #469). */
+    public final List<BluetoothGattService> services = new java.util.ArrayList<BluetoothGattService>();
+
+    /** The first service with {@code uuid}, as Android answers it. */
+    public BluetoothGattService getService(java.util.UUID uuid) {
+        calls.add("getService " + uuid);
+        for (BluetoothGattService s : services) if (s.getUuid().equals(uuid)) return s;
+        return null;
+    }
+
+    public List<BluetoothGattService> getServices() {
+        calls.add("getServices");
+        return services;
+    }
+
     public void disconnect() {
         call("disconnect");
     }

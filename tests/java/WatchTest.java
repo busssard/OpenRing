@@ -36,6 +36,7 @@ public class WatchTest {
         assembler();
         requests();
         records();
+        scanWatch469();
         session();
         signIn();
         signInSession();
@@ -61,6 +62,93 @@ public class WatchTest {
         phonePhase2_329();
         System.out.println("watch: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    // ------------------------------------------------------------------- the ScanWatch family, phase 1 (issue #469)
+
+    static void scanWatch469() {
+        // the service and channel by their part
+        check("469: the Steel HR's part", "0037".equals(WatchUuid.STEEL_HR) && "0037".equals(WatchUuid.servicePart("00000020-5749-5448-0037-000000000000"))
+                && "0037".equals(WatchUuid.channelPart("00000024-5749-5448-0037-000000000000")));
+        check("469: another part, upper case read as lower", "005f".equals(WatchUuid.servicePart("00000020-5749-5448-005F-000000000000"))
+                && "00ab".equals(WatchUuid.channelPart("00000024-5749-5448-00AB-000000000000")));
+        check("469: a channel is no service and a service no channel", WatchUuid.servicePart("00000024-5749-5448-0037-000000000000") == null
+                && WatchUuid.channelPart("00000020-5749-5448-0037-000000000000") == null);
+        check("469: other Withings characteristics and other UUIDs have no part", WatchUuid.channelPart("00000021-5749-5448-0037-000000000000") == null
+                && WatchUuid.servicePart("0000180a-0000-1000-8000-00805f9b34fb") == null && WatchUuid.servicePart(null) == null
+                && WatchUuid.servicePart("00000020-5749-5448-0037-000000000001") == null && WatchUuid.servicePart("00000020-5749-5448-00g7-000000000000") == null
+                && WatchUuid.servicePart("00000020-5749-5448-0037-0000000000000") == null);
+        check("469: service and channel of a part", WatchUuid.service("0037").toString().equals("00000020-5749-5448-0037-000000000000")
+                && WatchUuid.channel("005f").toString().equals("00000024-5749-5448-005f-000000000000"));
+        check("469: the sync's constants are the Steel HR's part", WatchUuid.service(WatchUuid.STEEL_HR).toString().equals(app.openring.core.WatchCheck.WITHINGS_SERVICE));
+
+        // the hello's model text
+        byte[] old = WatchDemo.helloReply("Steel HR test", 1971);
+        Proto.Hello h = Proto.hello(old);
+        check("469: a hello with an empty model text, name and firmware as before", "Steel HR test".equals(h.name) && "".equals(h.model) && h.firmware == 1971);
+        check("469: the old builder is the new one with an empty model, byte for byte", Arrays.equals(old, WatchDemo.helloReply("Steel HR test", "", 1971)));
+        h = Proto.hello(WatchDemo.helloReply("ScanWatch test", "HWA09 test", 2345));
+        check("469: a hello with a model text", "ScanWatch test".equals(h.name) && "HWA09 test".equals(h.model) && h.firmware == 2345, h.model);
+        byte[] cut = Frame.message(Proto.HELLO, Frame.part(Proto.HELLO_REPLY, new byte[] {0, 0, 0, 1, 2, 'S', 'H', 0, 0}));
+        h = Proto.hello(cut);
+        check("469: a hello cut before the model: no model, no firmware", "SH".equals(h.name) && h.model == null && h.firmware == -1);
+        check("469: Settings' Model line", Proto.modelLine(null).equals(Proto.MODEL_UNKNOWN) && Proto.modelLine(Proto.hello(old)).equals(Proto.MODEL_NONE)
+                && Proto.modelLine(Proto.hello(cut)).equals(Proto.MODEL_NONE) && "HWA09 test".equals(Proto.modelLine(Proto.hello(WatchDemo.helloReply("x", " HWA09 test ", 1)))));
+        check("469: the Model texts are plain", plain(Proto.MODEL_UNKNOWN) && plain(Proto.MODEL_NONE));
+        Records.Decoded d = new Records.Decoded();
+        Records.decode(WatchDemo.helloReply("ScanWatch test", "HWA09 test", 2345), 1, d);
+        check("469: the decoder still takes the name and firmware from it", "ScanWatch test".equals(d.name) && d.firmware == 2345);
+        List<WatchDemo.Msg> demo = WatchDemo.history(LocalDate.of(2026, 3, 10), 3, ZonedDateTime.of(2026, 3, 10, 12, 0, 0, 0, ZoneId.of("UTC")).toEpochSecond(),
+                ZoneId.of("UTC"), new Random(1));
+        check("469: the made up watch names its made up model", WatchDemo.MODEL.equals(Proto.hello(demo.get(0).body).model));
+
+        // record parts the decoder does not read: types and counts only
+        for (int t : Records.READ_PARTS) check("469: the decoder reads part " + Frame.hexType(t), Records.reads(t));
+        readPartsMatchTheDecoder();
+        check("469: walking level and the version part are not read", !Records.reads(Proto.REC_WALK) && !Records.reads(Proto.REC_VERSION));
+        Map<Integer, Long> skipped = new TreeMap<Integer, Long>();
+        List<byte[][]> recs = new ArrayList<byte[][]>();
+        recs.add(new byte[][] {WatchDemo.time(1000), WatchDemo.duration(900), WatchDemo.steps(100, 7200), WatchDemo.calories(4, 12), WatchDemo.heart(60)});
+        recs.add(new byte[][] {WatchDemo.time(2000), WatchDemo.duration(900), WatchDemo.sleep(1)});
+        recs.add(new byte[][] {WatchDemo.time(3000), WatchDemo.workout(2), Frame.part(Proto.REC_RUN, new byte[0]), Frame.part(Proto.REC_SWIM, new byte[0]),
+            Frame.part(Proto.REC_CALORIES_2, new byte[] {0, 1, 0, 2})});
+        for (byte[] m : WatchDemo.answer(Proto.ACTIVITY, recs, 2)) Records.skippedParts(m, skipped);
+        check("469: an answer of known parts skips none", skipped.isEmpty(), skipped);
+        recs.add(new byte[][] {WatchDemo.time(4000), Frame.part(0x0962, new byte[] {9, 9}), Frame.part(Proto.REC_WALK, new byte[] {1})});
+        recs.add(new byte[][] {WatchDemo.time(5000), Frame.part(0x0962, new byte[] {8})});
+        for (byte[] m : WatchDemo.answer(Proto.MOVEMENT, recs, 2)) Records.skippedParts(m, skipped);
+        check("469: unknown parts counted by type", skipped.size() == 2 && skipped.get(0x0962) == 2L && skipped.get(Proto.REC_WALK) == 1L, skipped);
+        Map<Integer, Long> none = new TreeMap<Integer, Long>();
+        Records.skippedParts(WatchDemo.batteryReply(80, 2, 3900), none);
+        Records.skippedParts(WatchDemo.helloReply("x", "y", 1), none);
+        byte[] damaged = Arrays.copyOf(WatchDemo.answer(Proto.HEART_RATE, recs, 9).get(0), 9);
+        Records.skippedParts(damaged, none);
+        check("469: other messages and damaged bytes count nothing", none.isEmpty(), none);
+        Map<Integer, Long> hr = new TreeMap<Integer, Long>();
+        for (byte[] m : WatchDemo.answer(Proto.HEART_RATE, recs, 9)) Records.skippedParts(m, hr);
+        check("469: heart rate answers are counted too", hr.equals(skipped), hr);
+
+        // the Device check names the channel a sync would use, by the sync's rule
+        app.openring.core.WatchCheck.Report steel = app.openring.core.WatchCheck.demoReport();
+        check("469: the demo Steel HR report: part 0037", "0037".equals(app.openring.core.WatchCheck.syncPart(steel)));
+        check("469: its report says so", app.openring.core.WatchCheck.text(steel, false).contains("\nWithings sync channel: found in service part 0037\n"));
+        app.openring.core.WatchCheck.Report sw = new app.openring.core.WatchCheck.Report();
+        sw.connected = true;
+        sw.add("00000020-5749-5448-0062-000000000000").add("00000021-5749-5448-0062-000000000000", 0x10);
+        sw.add("00000020-5749-5448-005f-000000000000").add("00000024-5749-5448-005f-000000000000", 0x1c);
+        sw.add(app.openring.core.WatchCheck.WITHINGS_SERVICE).add("00000021-5749-5448-0037-000000000000", 0x10);
+        check("469: another part when 0037 and the first part lack the channel", "005f".equals(app.openring.core.WatchCheck.syncPart(sw)));
+        sw.add("00000020-5749-5448-0037-000000000000").add("00000024-5749-5448-0037-000000000000", 0x1c);
+        check("469: 0037 with its channel wins wherever it is listed", "0037".equals(app.openring.core.WatchCheck.syncPart(sw)));
+        app.openring.core.WatchCheck.Report mixed = new app.openring.core.WatchCheck.Report();
+        mixed.connected = true;
+        mixed.add("00000020-5749-5448-005f-000000000000").add("00000024-5749-5448-0062-000000000000", 0x1c);
+        check("469: a channel of another part is not taken", app.openring.core.WatchCheck.syncPart(mixed) == null);
+        check("469: the report says a sync would not start", app.openring.core.WatchCheck.text(mixed, false).contains("\nWithings sync channel: not found, a sync would not start\n"));
+        app.openring.core.WatchCheck.Report ring = app.openring.core.WatchCheck.demoRingReport();
+        check("469: a ring's report has no channel line", !app.openring.core.WatchCheck.text(ring, false).contains("sync channel"));
+        app.openring.core.WatchCheck.Report gone = new app.openring.core.WatchCheck.Report();
+        check("469: no line without a connection", !app.openring.core.WatchCheck.text(gone, false).contains("sync channel"));
     }
 
     // ------------------------------------------------------------------------------------ frame
@@ -1586,6 +1674,65 @@ public class WatchTest {
         st3.failAt = 5;
         r = Session.run(w3, plan(), new Gate(), st3, new Lines());
         check("lost piece: damaged bytes that cannot be stored end the session", Session.NOT_STORED.equals(r.ended) && !r.activityDone, r.ended);
+    }
+
+    /**
+     * Review of 1e2e83a (Should fix): READ_PARTS is kept by hand next to the {@code case} labels of {@code Rec.part}, so the
+     * source is read here and every {@code case Proto.X:} there must be in the list (the time and the end part, read in
+     * {@code decode}, too). A new case without the list fails here instead of showing as "not decoded" in the Data check.
+     */
+    static void readPartsMatchTheDecoder() {
+        String src;
+        try {
+            src = new String(java.nio.file.Files.readAllBytes(new java.io.File("app/src/main/java/app/openring/core/withings/Records.java").toPath()), "UTF-8");
+        } catch (IOException e) {
+            check("469: Records.java read for the READ_PARTS check", false, e);
+            return;
+        }
+        List<String> cases = decoderCases(src);
+        check("469: Rec.part's cases found in Records.java (the check reads them)", cases.size() >= 9, cases);
+        check("469: every case Proto.X of Rec.part is in READ_PARTS", notListed(cases).isEmpty(), notListed(cases));
+        Set<String> all = new HashSet<String>(cases);
+        all.add("REC_TIME");
+        all.add("END");
+        check("469: READ_PARTS is those cases plus the time and the end part, nothing else", Records.READ_PARTS.length == all.size()
+                && notListed(new ArrayList<String>(all)).isEmpty(), Records.READ_PARTS.length + " listed, " + all);
+        check("469: the time and the end part are read in decode",
+                src.contains("p.type == Proto.END") && src.contains("p.type == Proto.REC_TIME"));
+        // the check itself: a new case that is not in the list is named
+        String added = src.replace("                case Proto.REC_HEART_RATE:", "                case Proto.REC_WALK:\n                case Proto.REC_HEART_RATE:");
+        check("469: a new case missing from READ_PARTS is caught", notListed(decoderCases(added)).equals(Collections.singletonList("REC_WALK")),
+                notListed(decoderCases(added)));
+    }
+
+    /** The names X of every {@code case Proto.X:} in Rec.part of the source of Records.java. */
+    static List<String> decoderCases(String src) {
+        List<String> names = new ArrayList<String>();
+        int from = src.indexOf("void part(Frame.Part p)");
+        int to = from < 0 ? -1 : src.indexOf("default:", from);
+        if (from < 0 || to < from) return names;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("case\\s+Proto\\.(\\w+)\\s*:").matcher(src.substring(from, to));
+        while (m.find()) names.add(m.group(1));
+        return names;
+    }
+
+    /** Those of {@code names} that are no Proto constant in READ_PARTS. */
+    static List<String> notListed(List<String> names) {
+        List<String> out = new ArrayList<String>();
+        for (String n : names) {
+            Integer v = protoConstant(n);
+            if (v == null || !Records.reads(v)) out.add(n);
+        }
+        return out;
+    }
+
+    /** The value of a constant of Proto by its name, or null. */
+    static Integer protoConstant(String name) {
+        try {
+            return Proto.class.getField(name).getInt(null);
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
     }
 
     /**

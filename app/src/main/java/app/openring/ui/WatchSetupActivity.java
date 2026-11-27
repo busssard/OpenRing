@@ -944,7 +944,8 @@ public final class WatchSetupActivity extends Activity {
         String name = WatchActivity.advertisedName(r);
         boolean withings = false;
         List<ParcelUuid> uuids = rec == null ? null : rec.getServiceUuids();
-        if (uuids != null) for (ParcelUuid u : uuids) withings |= WatchSync.SERVICE.equals(u.getUuid());
+        // the Withings service of any part: the Steel HR's 0037 as before, a ScanWatch's other part too (issue #469)
+        if (uuids != null) for (ParcelUuid u : uuids) withings |= app.openring.core.withings.WatchUuid.servicePart(u.getUuid().toString()) != null;
         withings |= app.openring.core.WatchCheck.setupName(name);
         synchronized (found) {
             Found f = found.get(addr);

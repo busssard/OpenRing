@@ -9,6 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 
 import app.openring.core.rings.RingFamily;
+import app.openring.core.withings.WatchUuid;
 
 /**
  * The Device check (issue #251, phase 1a, the Watch check; issue #418, phase 1, any ring or watch): what a device shows of
@@ -466,6 +467,7 @@ public final class WatchCheck {
         if (!r.connected) sb.append("Connected: no\n");
         else if (!r.listen) sb.append("Connected in ").append(seconds(r.connectMs)).append(", messages not listened to (no health values)\n");
         else sb.append("Connected in ").append(seconds(r.connectMs)).append(", listened ").append(seconds(r.listenMs)).append('\n');
+        if (r.connected && r.listen && !r.services.isEmpty()) sb.append(syncChannelLine(r)).append('\n');
         if (r.problem != null) sb.append("Ended early: ").append(r.problem).append('\n');
         if (r.detail != null) sb.append("Detail: ").append(r.detail).append('\n');
         for (Service s : r.services) {
@@ -503,6 +505,34 @@ public final class WatchCheck {
         }
         if (r.services.isEmpty() && r.connected) sb.append("\nNo services found\n");
         return cut(sb.toString());
+    }
+
+    /**
+     * The part of the Withings service whose channel a sync would use, by the sync's own rule ({@code ble/WatchChannel},
+     * issue #469): the Steel HR's part {@link WatchUuid#STEEL_HR} when its service holds its channel, else the first service
+     * in the listed order whose part matches a channel in it; null when there is none. UUIDs compare in any case, as the
+     * sync's {@code UUID} comparison does (WatchChannelTest runs layouts through both and compares).
+     */
+    public static String syncPart(Report r) {
+        String steel = WatchUuid.service(WatchUuid.STEEL_HR).toString();
+        for (Service s : r.services) if (s.uuid.equalsIgnoreCase(steel) && holds(s, WatchUuid.STEEL_HR)) return WatchUuid.STEEL_HR;
+        for (Service s : r.services) {
+            String part = WatchUuid.servicePart(s.uuid);
+            if (part != null && holds(s, part)) return part;
+        }
+        return null;
+    }
+
+    private static boolean holds(Service s, String part) {
+        String ch = WatchUuid.channel(part).toString();
+        for (Characteristic c : s.characteristics) if (c.uuid.equalsIgnoreCase(ch)) return true;
+        return false;
+    }
+
+    /** The report's line about the sync channel (issue #469), so one report from a new watch says whether a sync can start. */
+    static String syncChannelLine(Report r) {
+        String part = syncPart(r);
+        return part == null ? "Withings sync channel: not found, a sync would not start" : "Withings sync channel: found in service part " + part;
     }
 
     /**

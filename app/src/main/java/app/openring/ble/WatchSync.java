@@ -7,7 +7,6 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
-import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.os.Build;
@@ -42,6 +41,7 @@ import app.openring.data.WatchStore;
 public final class WatchSync {
     private WatchSync() {}
 
+    /** The Steel HR's service, tried first; another Withings part only when it is missing ({@link WatchChannel}, issue #469). */
     public static final UUID SERVICE = UUID.fromString("00000020-5749-5448-0037-000000000000");
     /** The characteristic the requests go to and the answers come from (public notes; the Watch check showed write and notify). */
     public static final UUID CHANNEL = UUID.fromString("00000024-5749-5448-0037-000000000000");
@@ -337,6 +337,8 @@ public final class WatchSync {
         private volatile boolean connected;
         private BluetoothGatt gatt;
         private BluetoothGattCharacteristic channel;
+        /** The channel whose notifications are answers: {@link #CHANNEL} until {@link #open} found it (issue #469). */
+        private volatile UUID listenOn = CHANNEL;
         private int mtu = 23;
 
         Link(RingManager ring) {
@@ -385,7 +387,7 @@ public final class WatchSync {
         };
 
         private void piece(BluetoothGattCharacteristic c, byte[] v) {
-            if (!CHANNEL.equals(c.getUuid()) || v == null) return;
+            if (!listenOn.equals(c.getUuid()) || v == null) return;
             List<byte[]> out;
             synchronized (assembler) {
                 out = assembler.take(v.clone());
@@ -411,10 +413,14 @@ public final class WatchSync {
             SystemClock.sleep(300);
             if (!gatt.discoverServices()) return NO_SERVICE;
             Integer d = found.poll(STEP_MS * 2, TimeUnit.MILLISECONDS);
-            BluetoothGattService s = d != null && d == BluetoothGatt.GATT_SUCCESS ? gatt.getService(SERVICE) : null;
-            channel = s == null ? null : s.getCharacteristic(CHANNEL);
-            ring.log("watch: " + gatt.getServices().size() + " services, Withings channel " + (channel == null ? "missing" : "found"));
+            // the Steel HR's service and channel first, with the same two calls as always; another part only when they find none (issue #469)
+            channel = d != null && d == BluetoothGatt.GATT_SUCCESS ? WatchChannel.find(gatt, SERVICE, CHANNEL) : null;
+            String part = WatchChannel.otherPart(channel);
+            ring.log("watch: " + gatt.getServices().size() + " services, Withings channel " + (channel == null ? "missing" : "found")
+                    + (part == null ? "" : " in service part " + part));
             if (channel == null) return NO_SERVICE;
+            // its answers come on the channel found: the Steel HR's is CHANNEL, as before
+            listenOn = channel.getUuid();
             if (gatt.requestMtu(MTU)) {
                 Integer m = mtus.poll(STEP_MS, TimeUnit.MILLISECONDS);
                 if (m != null && m > 23) mtu = m;

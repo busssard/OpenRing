@@ -1133,6 +1133,10 @@ public final class SettingsActivity extends Activity implements RingManager.List
             return;
         }
         card.addView(line("Watch", nz(p.watchName())));
+        // the model text of its newest hello (issue #469), read with the battery below
+        final LinearLayout model = Ui.vbox(this);
+        model.addView(line("Model", "reading..."));
+        card.addView(model, Ui.matchWrap());
         card.addView(line("Paired with this phone", watchBonded(address)));
         card.addView(line("Last sync", p.watchLastOk() == 0 ? "never" : ago(p.watchLastOk())));
         final LinearLayout bat = Ui.vbox(this);
@@ -1142,16 +1146,27 @@ public final class SettingsActivity extends Activity implements RingManager.List
         new Thread(new Runnable() {
             @Override
             public void run() {
+                // each value in its own try (review of 1e2e83a): a failed read shows "--" for that value only
                 long[] b = null;
                 try {
                     b = app.openring.data.WatchStore.newestBattery(app.openring.data.Db.get(appCtx));
                 } catch (RuntimeException e) {
                     RingManager.get(appCtx).log("watch battery not read (" + e.getClass().getSimpleName() + ")");
                 }
+                String m;
+                try {
+                    m = app.openring.core.withings.Proto.modelLine(app.openring.data.WatchStore.newestHello(app.openring.data.Db.get(appCtx), address));
+                } catch (RuntimeException e) {
+                    m = "--";
+                    RingManager.get(appCtx).log("watch model not read (" + e.getClass().getSimpleName() + ")");
+                }
                 final long[] got = b;
+                final String modelText = m;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
+                        model.removeAllViews();
+                        model.addView(line("Model", modelText));
                         bat.removeAllViews();
                         bat.addView(line("Battery", got == null ? "--" : got[0] + "%  (" + ago(got[1]) + ")"));
                     }
