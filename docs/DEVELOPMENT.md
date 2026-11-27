@@ -25,6 +25,7 @@ Everything you need to build, test, change and release Open Ring. Read
 | `.github/scripts/screens.sh`, `.github/scripts/badge.sh` | The emulator script that opens every screen with demo data; the README badge publisher |
 | `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` | Templates for issues (bug, idea) and pull requests |
 | `docs/` | This guide and the architecture notes |
+| `tests/java/TrendChangeTest.java` | Trends phase 2, `core/analysis/TrendChange` (issue #374): a known step found within a week of its date, the false alarm rate across all measures without a change, two steps, the events on the time axis; run by `tests/run_tests.sh` after `TrendsTest` |
 | `tools/make_icon.py` | Draws the icon (launcher, themed, notification, `docs/images/icon.svg` and `.png`) from one shape; run it after changing the icon |
 | `changes/` | One note per user visible pull request; they count the version and become the release notes (see `changes/README.md`) |
 | `CHANGELOG.md` | User facing changes up to 1.28 |

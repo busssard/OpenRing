@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import app.openring.core.analysis.TrendChange;
 import app.openring.core.analysis.Trends;
 import app.openring.data.Db;
 import app.openring.data.Prefs;
@@ -26,6 +27,8 @@ import app.openring.data.TrendDays;
  * of its days and every day behind it, read by touch; then "this month against the last". The history is read once per
  * open ({@link TrendDays#read}, in the background) into one small array per day; a chip only groups it again. Opened from the
  * card at the bottom of each tab ({@link TrendsCard}), at that tab's group and the month of the shown day. Reads only.
+ * Phase 2: "Did something change?" ({@link TrendChange}, its shuffles once per measure and read, off the main thread) as a
+ * dashed line with the average before and after, its sentence, and the events as marks under the chart, read by touch.
  */
 public final class TrendsActivity extends Activity {
     /** Extras: the group to open at ({@code Trends.G_SLEEP} and so on), the shown day (yyyy-mm-dd), and for the screen test a measure and period. */
@@ -38,6 +41,10 @@ public final class TrendsActivity extends Activity {
     private LocalDate touched;
     private boolean demo;
     private List<Trends.Day> days;
+    /** The events stored apart from the days (left out times, periods, workouts, phone use as awake; phase 2), with the days. */
+    private List<TrendChange.Event> known;
+    /** "Did something change?" by measure for the days read (the same in Weeks, Months and Years), worked out once per read. */
+    private java.util.Map<Integer, TrendChange.Result> changes = new java.util.concurrent.ConcurrentHashMap<Integer, TrendChange.Result>();
     /** What the days were read from ({@code TrendDays.stamp} with the day and the devices): read again only when it differs. */
     private String stamp;
     private final boolean[] howOpen = {false};
@@ -120,6 +127,7 @@ public final class TrendsActivity extends Activity {
     /** What the background read hands to the screen. */
     static final class Loaded {
         List<Trends.Day> days;
+        List<TrendChange.Event> events;
         LocalDate today;
         String stamp;
         boolean failed, same;
@@ -151,6 +159,10 @@ public final class TrendsActivity extends Activity {
                     l.days = TrendDays.read(db, l.today, System.currentTimeMillis() / 1000.0, p.screenExcluded(), dev, ZoneId.systemDefault(), skipped);
                     // a stored night or day that could not be read is left out; the log says how many, never which or what
                     if (skipped[0] > 0) app.openring.ble.RingManager.get(ctx).log("trends: " + skipped[0] + " stored nights or days could not be read, left out");
+                    // the events on the time axis (phase 2): a kind that cannot be read is left out, the log says how many kinds
+                    int[] noEvents = new int[1];
+                    l.events = TrendDays.events(db, l.today, ZoneId.systemDefault(), dev, noEvents);
+                    if (noEvents[0] > 0) app.openring.ble.RingManager.get(ctx).log("trends: " + noEvents[0] + " kinds of events could not be read, left out");
                 } catch (Throwable e) {
                     l.failed = true;
                     try {
@@ -174,6 +186,9 @@ public final class TrendsActivity extends Activity {
                     return;
                 }
                 days = l.days;
+                known = l.events;
+                // a new map: a result still being worked out for the old days lands in the old one
+                changes = new java.util.concurrent.ConcurrentHashMap<Integer, TrendChange.Result>();
                 today = l.today;
                 stamp = l.stamp;
                 fill();
@@ -240,6 +255,8 @@ public final class TrendsActivity extends Activity {
     void fill() {
         final int mine = ++fills;
         final List<Trends.Day> ds = days;
+        final List<TrendChange.Event> ev = known;
+        final java.util.Map<Integer, TrendChange.Result> found = changes;
         final LocalDate t = today;
         if (!Trends.enough(ds, t)) {
             // no demo note here: the made up year is not in what is shown ("Trends need at least two months")
@@ -260,7 +277,20 @@ public final class TrendsActivity extends Activity {
             @Override
             protected Object[] doInBackground(Void... v) {
                 try {
-                    return new Object[] {Trends.of(ds, m, p, t), Trends.compare(ds, m, t, l)};
+                    // "Did something change?": its 999 shuffles once per measure and read, seeded, so every opening says the same
+                    TrendChange.Result c = found.get(m);
+                    if (c == null) {
+                        long t0 = System.nanoTime();
+                        c = TrendChange.of(ds, m, t, l);
+                        found.put(m, c);
+                        long ms = (System.nanoTime() - t0) / 1000000;
+                        // only the time and how many steps, never a value
+                        if (ms > 300) app.openring.ble.RingManager.get(ctx).log("trends: looking for a change took " + ms + " ms (" + c.steps.size() + " steps)");
+                    }
+                    Trends.View view = Trends.of(ds, m, p, t);
+                    List<TrendChange.Event> marks = TrendChange.events(ds, m, t, ev);
+                    // where the lines and marks go, worked out here once, so drawing and touching only scale them
+                    return new Object[] {view, Trends.compare(ds, m, t, l), c, marks, TrendChange.drawn(view, c, marks)};
                 } catch (Throwable e) {
                     try {
                         // the error's kind only, never a value
@@ -282,13 +312,19 @@ public final class TrendsActivity extends Activity {
                     body.addView(card);
                     return;
                 }
-                show((Trends.View) r[0], (Trends.Compare) r[1]);
+                @SuppressWarnings("unchecked")
+                List<TrendChange.Event> marks = (List<TrendChange.Event>) r[3];
+                show((Trends.View) r[0], (Trends.Compare) r[1], (TrendChange.Result) r[2], marks, (TrendChange.Drawn) r[4]);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
-    /** The page with enough history: the demo note, the chips, the chart of {@code view} and the comparison {@code compared}. */
-    void show(final Trends.View view, Trends.Compare compared) {
+    /**
+     * The page with enough history: the demo note, the chips, the chart of {@code view} with the steps of {@code change} and the
+     * {@code marks}, "Did something change?" and the comparison {@code compared}.
+     */
+    void show(final Trends.View view, Trends.Compare compared, final TrendChange.Result change, final List<TrendChange.Event> marks,
+            TrendChange.Drawn drawn) {
         body.removeAllViews();
         if (demo) {
             LinearLayout banner = Ui.card(this);
@@ -339,12 +375,12 @@ public final class TrendsActivity extends Activity {
         card.addView(Ui.gap(this, 8));
         final TextView readout = Ui.text(this, "", 13, Ui.TEXT, Ui.REGULAR);
         final Locale l = Locale.getDefault();
-        Charts.Months chart = new Charts.Months(this, view, c);
+        Charts.Months chart = new Charts.Months(this, view, c).marks(drawn);
         chart.setContentDescription("Trends chart, " + Trends.NAMES[measure]);
         chart.pick(new Charts.Months.Pick() {
             @Override
             public void picked(int index) {
-                readout.setText(index >= 0 ? Trends.readout(view, index, l) : newest(view, l));
+                readout.setText(index >= 0 ? TrendChange.readout(view, index, change, marks, l) : newest(view, l));
                 // kept by its first day, so another period or a reload touches the period holding it
                 touched = index >= 0 ? view.buckets.get(index).start : null;
             }
@@ -356,9 +392,25 @@ public final class TrendsActivity extends Activity {
         card.addView(readout);
         card.addView(Ui.gap(this, 6));
         card.addView(Ui.text(this, Trends.note(measure, period), 12, Ui.TEXT_3, Ui.REGULAR));
+        String drawnNote = TrendChange.chartNote(change, marks);
+        if (!drawnNote.isEmpty()) card.addView(Ui.text(this, drawnNote, 12, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(this, 4));
         card.addView(Ui.text(this, Trends.explain(measure, view.detail), 12, Ui.TEXT_2, Ui.REGULAR));
         body.addView(card);
+
+        // Did something change? (phase 2): the steps, the events around them, what it cannot say
+        LinearLayout ch = Ui.card(this);
+        ch.addView(Ui.caption(this, TrendChange.CAPTION));
+        ch.addView(Ui.gap(this, 6));
+        ch.addView(Ui.body(this, change.text));
+        String around = TrendChange.around(change, marks);
+        if (!around.isEmpty()) {
+            ch.addView(Ui.gap(this, 4));
+            ch.addView(Ui.text(this, around, 13, Ui.TEXT_2, Ui.REGULAR));
+        }
+        ch.addView(Ui.gap(this, 6));
+        ch.addView(Ui.text(this, Explain.TRENDS_CHANGE, 12, Ui.TEXT_3, Ui.REGULAR));
+        body.addView(ch);
 
         LinearLayout cmp = Ui.card(this);
         cmp.addView(Ui.caption(this, Explain.TRENDS_COMPARE_CAPTION));

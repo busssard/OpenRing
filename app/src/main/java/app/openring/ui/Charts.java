@@ -1809,6 +1809,32 @@ public final class Charts {
             return this;
         }
 
+        private app.openring.core.analysis.TrendChange.Drawn drawn;
+        private final Paint stepLine = new Paint(Paint.ANTI_ALIAS_FLAG), level = new Paint(Paint.ANTI_ALIAS_FLAG), mark = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        /**
+         * Phase 2 of #374: the steps found (a dashed line at each, the average before and after as lines over the days they
+         * come from) and the events as small marks under the chart (a span as a bar), their columns worked out in the
+         * background ({@code TrendChange.drawn}); drawing only scales them. Only drawn, never changes a number.
+         */
+        public Months marks(app.openring.core.analysis.TrendChange.Drawn drawn) {
+            this.drawn = drawn;
+            stepLine.setColor(Ui.TEXT);
+            stepLine.setStrokeWidth(Ui.dp(getContext(), 1.5f));
+            stepLine.setStyle(Paint.Style.STROKE);
+            stepLine.setPathEffect(new DashPathEffect(new float[] {Ui.dp(getContext(), 5), Ui.dp(getContext(), 4)}, 0));
+            level.setColor(Ui.alpha(color, 0.9f));
+            level.setStrokeWidth(Ui.dp(getContext(), 2));
+            mark.setColor(Ui.TEXT_2);
+            mark.setStrokeWidth(Ui.dp(getContext(), 1.5f));
+            return this;
+        }
+
+        /** The x of a place in columns, NaN outside the chart. */
+        private static float xOf(double p, float left, float slot) {
+            return Double.isNaN(p) ? Float.NaN : left + slot * (float) p;
+        }
+
         private String label(double v) {
             return app.openring.core.analysis.Trends.value(view.measure, v, Locale.getDefault());
         }
@@ -1845,6 +1871,20 @@ public final class Charts {
             java.util.List<app.openring.core.analysis.Trends.Bucket> bs = view.buckets;
             // one column of the same width per period, its dot in the middle and its days spread over it (Trends.View.dayOffset)
             float slot = (w - left) / bs.size();
+            // phase 2, behind the dots and bands (as designed; code review of f04a5c5): the average before and after each step
+            // over the days it comes from, and the step as a dashed line
+            if (drawn != null) {
+                for (int i = 0; i < drawn.levelValue.length; i++) {
+                    float a = xOf(drawn.levelFrom[i], left, slot), b = xOf(drawn.levelTo[i], left, slot);
+                    if (Float.isNaN(a) || Float.isNaN(b)) continue;
+                    float yy = y(drawn.levelValue[i], lo, hi, top, bottom);
+                    cv.drawLine(a, yy, Math.max(b, a + 1), yy, level);
+                }
+                for (double p : drawn.steps) {
+                    float x = xOf(p, left, slot);
+                    if (!Float.isNaN(x)) cv.drawLine(x, top - Ui.dp(getContext(), 4), x, bottom, stepLine);
+                }
+            }
             float small = Ui.dp(getContext(), 1.6f);
             for (int i = 0; i < view.dayDates.size(); i++) {
                 float dx = left + slot * (view.dayBucket.get(i) + 0.5f) + (float) (view.dayOffset.get(i) * slot);
@@ -1884,6 +1924,18 @@ public final class Charts {
                 int m = bs.size() / 2;
                 txt.setTextAlign(Paint.Align.CENTER);
                 cv.drawText(app.openring.core.analysis.Trends.axisLabel(bs.get(m).start, view.period), xs[m], base, txt);
+            }
+            // phase 2: the events as marks under the chart (a tick for a day, a bar for a span)
+            if (drawn != null) {
+                float tick = Ui.dp(getContext(), 5);
+                for (int i = 0; i < drawn.eventFrom.length; i++) {
+                    float a = xOf(drawn.eventFrom[i], left, slot), b = xOf(drawn.eventTo[i], left, slot);
+                    if (Float.isNaN(a) && Float.isNaN(b)) continue;
+                    if (Float.isNaN(a)) a = left;
+                    if (Float.isNaN(b)) b = w;
+                    if (drawn.eventDay[i] || b - a < 2) cv.drawLine(a, bottom - tick, a, bottom, mark);
+                    else cv.drawRect(a, bottom - Ui.dp(getContext(), 3), b, bottom, mark);
+                }
             }
             // the touch, or the period it opens at
             if (Float.isNaN(scrubX) && pending >= 0 && pending < bs.size()) scrubX = xs[pending];

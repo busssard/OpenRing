@@ -1196,6 +1196,18 @@ public final class Explain {
             + "is where the real difference most likely lies (9 times in 10), worked out by drawing your weeks again many times at random. "
             + "When it holds no change, the months are about the same. Each month needs three whole weeks.";
 
+    /** Under "Did something change?" (issue #374, phase 2): how a step is found and what it cannot say. */
+    public static final String TRENDS_CHANGE = "It shows when your numbers moved, not why. The app looks for the day where your values "
+            + "before and after differ the most, then shuffles your weeks 999 times. A step is shown only when fewer than 1 in 100 "
+            + "shuffles give one as big. The range in brackets is where the real size of the step most likely lies (about 9 times "
+            + "in 10 on made up data). The date is rough: a step of one usual day to day difference or more is usually found within "
+            + "two weeks, a smaller one can be weeks or even months off, so only the part of the month is named (\"mid June\"). "
+            + "A slow change shows as one step where it moved fastest. A new device, "
+            + "a setting or a trip can move your numbers without your body changing, so they are marked under the chart. If you "
+            + "look at all 12 measures, about one time in seven one of them shows a step that is only chance (a rough figure, "
+            + "your measures move together). The same history always gives the same answer, and nothing here changes your "
+            + "stored numbers.";
+
     /** Demo mode only: the made up year. */
     public static final String TRENDS_DEMO = "Demo mode: the year before the demo's five weeks is made up from the demo's own nights and "
             + "days, with a change in it: about 25 minutes more sleep from four months ago, more steps in summer and one week of illness.";
