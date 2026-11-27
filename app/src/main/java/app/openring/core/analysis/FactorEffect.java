@@ -632,18 +632,23 @@ public final class FactorEffect {
 
     /**
      * The headline's end for a range across zero: "It could be anything from 1 % lower to 2 % higher, so this is not clear yet.",
-     * "... from about the same to 2 % higher ...", or "Its whole range is about the same, so this is not clear yet." when both
-     * ends show as 0.
+     * "... from about the same to 2 % higher ...", or "Your HRV stayed about the same across the whole range, so there is no
+     * clear difference." when both ends show as 0 (review of f8ddbc5: "about the same, yet not clear" read as a contradiction).
      */
     public static String unclear(int k, double lo, double hi, Locale l) {
-        if (none(k, lo) && none(k, hi)) return "Its whole range is about the same, so this is not clear yet.";
+        if (none(k, lo) && none(k, hi)) return "Your " + measureName(k) + " stayed about the same across the whole range, so there is no clear difference.";
         return "It could be anything from " + said(k, lo, l) + " to " + said(k, hi, l) + ", so this is not clear yet.";
     }
 
     /** A detail line's end for a range across zero: ", could be 0.8 lower to 1.2 higher. Not clear yet." (no units, as the line's range). */
     public static String unclearDetail(int k, double lo, double hi, Locale l) {
-        if (none(k, lo) && none(k, hi)) return ", about the same at both ends. Not clear yet.";
+        if (none(k, lo) && none(k, hi)) return ", about the same at both ends, no clear difference.";
         return ", could be " + rangeEnd(k, lo, l) + " to " + rangeEnd(k, hi, l) + ". Not clear yet.";
+    }
+
+    /** The measure's name inside a sentence: "HRV", "lowest heart rate", "temperature", "sleep score". */
+    static String measureName(int k) {
+        return k == HRV ? LABEL[k] : LABEL[k].toLowerCase(Locale.ROOT);
     }
 
     static String rangeEnd(int k, double x, Locale l) {
