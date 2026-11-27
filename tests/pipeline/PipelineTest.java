@@ -14909,9 +14909,20 @@ public class PipelineTest {
         check("routes #251: yesterday's badge readiness is yesterday's dial", bd.get(bd.size() - 1).readiness == dialY.value("readiness"),
                 bd.get(bd.size() - 1).readiness + " " + dialY.value("readiness"));
         List<app.openring.core.analysis.Badges.Badge> got = app.openring.core.analysis.Badges.of(bd, today);
-        boolean noGoal = true;
-        for (app.openring.core.analysis.Badges.Badge b : got) noGoal &= b.kind != app.openring.core.analysis.Badges.GOAL;
-        check("routes #251: Goal reached stays the ring's (its burn against the target)", noGoal, got.size());
+        // without a ring Goal reached goes by the step goal (issue #329, phase 2): each one on a day at or above it, said in steps
+        boolean stepGoals = true, goalSet = true;
+        int goalBadges = 0;
+        for (app.openring.core.analysis.Badges.Day d : bd) goalSet &= d.stepGoal == watchOnly.goal && Double.isNaN(d.targetKcal);
+        for (app.openring.core.analysis.Badges.Badge b : got) {
+            if (b.kind != app.openring.core.analysis.Badges.GOAL) continue;
+            goalBadges++;
+            app.openring.core.analysis.Badges.Day on = null;
+            for (app.openring.core.analysis.Badges.Day d : bd) if (d.date.equals(b.date)) on = d;
+            stepGoals &= on != null && on.steps >= on.stepGoal && b.usual == watchOnly.goal && b.text.startsWith("Step goal reached")
+                    && b.text.contains("steps with your watch") && !b.text.contains("kcal");
+        }
+        check("routes #251, #329 phase 2: without a ring each day carries the step goal, never the ring's target", goalSet, watchOnly.goal);
+        check("routes #251, #329 phase 2: without a ring Goal reached goes by the step goal (each on a day at or above it)", stepGoals, goalBadges);
 
         // ---- the Data check: the watch's nights by day, counts and dates only
         String lines = app.openring.data.ShownNights.checkLines(demo, today, z);
@@ -14945,6 +14956,31 @@ public class PipelineTest {
             if (!Double.isNaN(d.steps)) phoneSteps++;
         }
         check("routes #251: badges with only the phone: its steps and minutes counting, no night", phoneDays && phoneSteps >= 15, phoneSteps);
+        // issue #329, phase 2: the phone's days carry the step goal; Goal reached and the Badges page's count of step days follow it
+        boolean phoneGoal = true;
+        for (app.openring.core.analysis.Badges.Day d : pd) phoneGoal &= d.stepGoal == phoneOnly.goal;
+        check("#329 phase 2: with only the phone each badge day carries the step goal", phoneGoal, phoneOnly.goal);
+        app.openring.data.ShownNights.Devices lowGoal = new app.openring.data.ShownNights.Devices(app.openring.core.MainDevice.PHONE, false, false,
+                app.openring.core.MainDevice.PHONE, 1000, 40);
+        List<app.openring.core.analysis.Badges.Day> pl = app.openring.data.BadgeDays.read(demo, first, y, 0, ex, today, now, z, lowGoal);
+        List<app.openring.core.analysis.Badges.Badge> lowBadges = app.openring.core.analysis.Badges.of(pl, today);
+        int lowGoals = 0;
+        boolean lowOk = true;
+        for (app.openring.core.analysis.Badges.Badge b : lowBadges) {
+            if (b.kind != app.openring.core.analysis.Badges.GOAL) continue;
+            lowGoals++;
+            lowOk &= b.text.startsWith("Step goal reached") && b.text.contains("of 1,000 steps with this phone") && b.usual == 1000;
+        }
+        check("#329 phase 2: the demo's phone days over a goal of 1,000 steps earn Goal reached in steps, at most once in 7 days", lowOk
+                && lowGoals >= 2, lowGoals);
+        int countedDays = app.openring.core.analysis.Badges.stepDays(pd);
+        app.openring.data.BadgeDays.History ph = app.openring.data.BadgeDays.all(demo, 0, ex, today, now, phoneOnly);
+        check("#329 phase 2: the Badges page counts the phone's step days (what it waits for), no nights", ph.stepDays >= countedDays && countedDays >= 15
+                && ph.nights == 0, ph.stepDays + " " + countedDays + " " + ph.nights);
+        app.openring.data.BadgeDays.History rh = app.openring.data.BadgeDays.all(demo, 0, ex, today, now);
+        boolean ringNoStepGoal = true;
+        for (app.openring.core.analysis.Badges.Badge b : rh.badges) ringNoStepGoal &= !b.text.startsWith("Step goal");
+        check("#329 phase 2: with the ring the goal stays its burn against the target (no step goal badge)", ringNoStepGoal, rh.badges.size());
         check("routes #251: only the phone: the first badge date reaches its first interval", !app.openring.data.BadgeDays.first(demo, today, phoneOnly).isAfter(
                 app.openring.data.ShownNights.firstDay(demo, app.openring.core.MainDevice.PHONE, z)), null);
         java.util.TreeMap<String, String> prow = app.openring.data.Exporter.deviceRows(demo, app.openring.core.MainDevice.PHONE, 10000, 40, y, demo.leftOut(), z);

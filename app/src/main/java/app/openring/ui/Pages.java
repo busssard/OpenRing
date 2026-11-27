@@ -1379,6 +1379,8 @@ public final class Pages {
                 String fill = stepsLine(d);
                 if (fill != null) sc.addView(Ui.text(c, fill, 12, Ui.TEXT_3, Ui.REGULAR));
                 if (phoneCounted(d)) sc.addView(Ui.text(c, app.openring.core.PhoneSteps.SPREAD, 12, Ui.TEXT_3, Ui.REGULAR));
+                // only the phone: calories from its steps, an estimate (issue #329, phase 2)
+                PhoneViews.calories(c, sc, d);
                 Tiles.summary(sc, "Steps " + Ui.fmt(m.steps, 0));
                 root.addView(sc);
             }
@@ -1401,6 +1403,9 @@ public final class Pages {
                 DeviceViews.deviceParts(c, root, d, "activity_score", Ui.ACTIVE);
                 root.addView(infoCard(c, "About the activity score", Explain.ACTIVITY_DEVICE));
             }
+            // only the phone: its day totals to hold next to the phone's own health app (issue #329, phase 2)
+            View compare = PhoneViews.compareCard(c, d);
+            if (compare != null) root.addView(compare);
             // steps, the activity score, calories and workouts over 7 and 30 days (owner's report of 13 November)
             HistoryViews.activity(c, root, d);
             return root;
