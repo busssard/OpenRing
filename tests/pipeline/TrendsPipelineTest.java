@@ -19,6 +19,7 @@ import app.openring.core.RingEvent;
 import app.openring.core.analysis.ClockAverage;
 import app.openring.core.analysis.Stats;
 import app.openring.core.analysis.TS;
+import app.openring.core.analysis.TrendChange;
 import app.openring.core.analysis.Trends;
 import app.openring.data.Analyzer;
 import app.openring.data.DaySeries;
@@ -58,6 +59,7 @@ public class TrendsPipelineTest {
         System.out.println("Trends (issue #374)");
         daySeries();
         fields();
+        demoChange();
         demoHistoryPinned();
         screenPerDay();
         demoYear();
@@ -130,6 +132,82 @@ public class TrendsPipelineTest {
                 esc.equals("a\"b\\c\nd\te\rf\bg\fh\u00e9i\\u12") && esc.equals(Json.parse("{\"x\":\"a\\\"b\\\\c\\nd\\te\\rf\\bg\\fh\\u00e9i\\\\u12\"}").optString("x")), esc.length());
         check("#374 fields: a text or object is not a number", Double.isNaN(TrendDays.num("\"5\"")) && Double.isNaN(TrendDays.num("{}")) && Double.isNaN(TrendDays.num("[1]"))
                 && Double.isNaN(TrendDays.num("")) && Double.isNaN(TrendDays.num(null)) && Double.isNaN(TrendDays.num("x1")) && TrendDays.text("5").equals("5"), null);
+    }
+
+    /**
+     * Phase 2 (issue #374) on the demo year: the 25 minutes more sleep from four months ago are found within two weeks of their
+     * date, the same answer on a second read, the events of the demo (its logged periods, the watch's workouts, a time left out)
+     * read where they apply, and a trip from the zones of the nights.
+     */
+    static void demoChange() throws Exception {
+        Context c = freshDb("trends-change");
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate today = LocalDate.parse("2026-10-25");
+        long now = today.atTime(9, 41).atZone(z).toEpochSecond();
+        Demo.enter(c, null, today, now);
+        Db db = Db.get(c);
+        List<Trends.Day> days = TrendDays.read(db, today, now, Prefs.of(c).screenExcluded(), ShownNights.Devices.RING, z);
+        LocalDate longer = today.minusMonths(Demo.LONGER_FROM_MONTHS);
+        long t0 = System.nanoTime();
+        TrendChange.Result r = TrendChange.of(days, Trends.ASLEEP, today, Locale.US);
+        double ms = (System.nanoTime() - t0) / 1e6;
+        List<Double> asleep = new ArrayList<Double>();
+        for (Trends.Day d : days) if (!Double.isNaN(d.v[Trends.ASLEEP])) asleep.add(d.v[Trends.ASLEEP]);
+        System.out.printf(Locale.US, "    #374 phase 2, demo time asleep (%.0f ms, night to night spread %.0f min): %s%n", ms, Stats.sd(Stats.toArray(asleep)), r.text);
+        // the demo's step (about 29 min) is smaller than its night to night spread (about 37 min), so its date is rougher than a clear step's
+        // (TrendChangeTest: within a week for 1.5 spreads): within two weeks
+        TrendChange.Step st = r.in(longer.minusDays(14), longer.plusDays(14));
+        check("#374 phase 2: the demo's longer nights from four months ago found within two weeks of " + longer, st != null && st.after > st.before,
+                r.steps.isEmpty() ? "none" : r.steps.get(0).date);
+        check("#374 phase 2: about 25 min more (15 to 40)", st != null && st.after - st.before > 15 && st.after - st.before < 40, st == null ? null : st.after - st.before);
+        TrendChange.Result again = TrendChange.of(TrendDays.read(db, today, now, Prefs.of(c).screenExcluded(), ShownNights.Devices.RING, z), Trends.ASLEEP, today, Locale.US);
+        check("#374 phase 2: the same sentence on the next opening", again.text.equals(r.text), null);
+        // every measure answers (a step, none, or why not), never an error
+        int answered = 0;
+        for (int m = 0; m < Trends.COUNT; m++) {
+            TrendChange.Result x = TrendChange.of(days, m, today, Locale.US);
+            if (x.text != null && !x.text.isEmpty()) answered++;
+        }
+        check("#374 phase 2: every measure of the demo answers", answered == Trends.COUNT, answered);
+        // the stored events: the demo's logged periods; the watch's workouts only when its rows are read
+        Db.get(c).put("screen_awake", 1);
+        int[] skipped = new int[1];
+        ShownNights.Devices withWatch = new ShownNights.Devices(MainDevice.RING, true, true, -1, 8000, 35);
+        List<TrendChange.Event> ev = TrendDays.events(db, today, z, withWatch, skipped);
+        int periods = 0, workouts = 0, awake = 0;
+        for (TrendChange.Event e : ev) {
+            if (e.kind == TrendChange.PERIOD) periods++;
+            if (e.kind == TrendChange.WORKOUT) workouts++;
+            if (e.kind == TrendChange.PHONE_AWAKE) awake++;
+        }
+        check("#374 phase 2 events: the demo's periods, the watch's workouts, phone use as awake from the first screen day, nothing unreadable",
+                periods >= 1 && workouts >= 1 && awake == 1 && skipped[0] == 0, periods + " " + workouts + " " + awake + " " + skipped[0]);
+        int ringWorkouts = 0;
+        for (TrendChange.Event e : TrendDays.events(db, today, z, ShownNights.Devices.RING, skipped)) if (e.kind == TrendChange.WORKOUT) ringWorkouts++;
+        check("#374 phase 2 events: no workouts when the watch's rows are not read", ringWorkouts == 0, ringWorkouts);
+        Db.get(c).put("screen_awake", 0);
+        for (TrendChange.Event e : TrendDays.events(db, today, z, withWatch, skipped)) if (e.kind == TrendChange.PHONE_AWAKE) awake = -1;
+        check("#374 phase 2 events: no phone use mark when the nights were worked out without it", awake == 1, awake);
+        // a time left out: marked on the days it touches
+        double from = today.minusDays(20).atTime(14, 0).atZone(z).toEpochSecond();
+        String stampBefore = TrendDays.stamp(db);
+        db.getWritableDatabase().execSQL("INSERT INTO excluded (start, stop, made, note) VALUES (" + from + ", " + (from + 30 * 3600) + ", " + now + ", NULL)");
+        TrendChange.Event left = null;
+        for (TrendChange.Event e : TrendDays.events(db, today, z, ShownNights.Devices.RING, skipped)) if (e.kind == TrendChange.LEFT_OUT) left = e;
+        check("#374 phase 2 events: a time left out from 14:00 to 20:00 the next day", left != null && left.from.equals(today.minusDays(20)) && left.to.equals(today.minusDays(19)),
+                left);
+        check("#374 phase 2: Trends reads again after a time left out (its stamp moves)", !stampBefore.equals(TrendDays.stamp(db)), null);
+        // every day has its zone; the demo has no trip
+        int zoned = 0;
+        for (Trends.Day d : days) if (d.zone != null) zoned++;
+        check("#374 phase 2: every day has a zone, the demo no trip", zoned == days.size() && noZoneEvent(TrendChange.events(days, Trends.ASLEEP, today, null)),
+                zoned + " of " + days.size());
+        Demo.leave(c);
+    }
+
+    static boolean noZoneEvent(List<TrendChange.Event> ev) {
+        for (TrendChange.Event e : ev) if (e.kind == TrendChange.ZONE) return false;
+        return true;
     }
 
     /**
@@ -614,6 +692,24 @@ public class TrendsPipelineTest {
         String ro = Trends.readout(month, month.indexOf(free), Locale.US);
         System.out.println("    #427 " + ro);
         check("#427 Trends: the readout names the night by hand", ro.endsWith(", 1 by hand"), ro);
+        // issue #459: the ring's nights at Calm detail with the night by hand in the same month: no "mixed" wake ups note
+        List<Trends.Day> calm = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
+        for (Trends.Day x : calm) if (x.src[Trends.WAKE_UPS] == Trends.RING) x.detail = app.openring.core.analysis.StageFilter.CALM;
+        Trends.Day hb = day(calm, free);
+        check("#459 Trends: Calm ring nights and a night by hand in one month, no mixed wake ups note", hb != null && hb.src[Trends.WAKE_UPS] == Trends.HAND
+                && Trends.of(calm, Trends.WAKE_UPS, Trends.MONTHS, today).detail == app.openring.core.analysis.StageFilter.CALM,
+                Trends.of(calm, Trends.WAKE_UPS, Trends.MONTHS, today).detail);
+        // issue #459: the page's stamp follows every field of the devices, the age (a night by hand's score) and the goal too
+        ShownNights.Devices a40 = new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 40);
+        check("#459 Trends stamp: the devices' key changes with the age and the goal, not without a change",
+                a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 40).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 41).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.RING, true, false, -1, 9000, 40).key())
+                && !a40.key().equals(new ShownNights.Devices(MainDevice.WATCH, true, false, -1, 8000, 40).key()), a40.key());
+        double s40 = day(TrendDays.read(db, today, now, none, a40, z), free).v[Trends.SLEEP_SCORE];
+        double s80 = day(TrendDays.read(db, today, now, none, new ShownNights.Devices(MainDevice.RING, true, false, -1, 8000, 80), z), free).v[Trends.SLEEP_SCORE];
+        check("#459 Trends: the age changes a night by hand's sleep score (so the stamp needs it)", !Double.isNaN(s40) && !Double.isNaN(s80) && s40 != s80,
+                s40 + " " + s80);
         // only the phone: no night at all, as on Sleep
         ShownNights.Devices phoneOnly = new ShownNights.Devices(MainDevice.PHONE, false, false, MainDevice.PHONE, 8000, 40);
         check("#427 Trends with only the phone: no night by hand", from(TrendDays.read(db, today, now, none, phoneOnly, z), Trends.HAND) == 0, null);
@@ -663,6 +759,18 @@ public class TrendsPipelineTest {
         List<Trends.Day> longer = TrendDays.read(db, today, now, none, ShownNights.Devices.RING, z);
         check("#427 Trends starts with a night by hand older than the ring's data", longer.get(0).date.equals(early) && longer.get(0).v[Trends.ASLEEP] == 480
                 && longer.get(0).src[Trends.ASLEEP] == Trends.HAND, longer.get(0).date);
+        // issue #459 (code review of 9295aa0): the ring's nights at Calm, nights by hand before, between none and after them:
+        // Sleep's Further analysis has one level (Calm), no "each night at its own detail level" line, as Trends
+        db.getWritableDatabase().execSQL("UPDATE nights SET json = replace(replace(json, '\"stage_detail\":0', '\"stage_detail\":2'), '\"stage_detail\":1', '\"stage_detail\":2')");
+        long calmNights = db.count("SELECT COUNT(*) FROM nights WHERE main = 1 AND json LIKE '%\"stage_detail\":2%'");
+        SleepHistory all = SleepHistory.load(db, "0000-01-01", today.toString(), z);
+        boolean handFirst = app.openring.data.HandNights.withoutRingNight(db, "0000-01-01", today.toString(), z).size() == 2;
+        check("#459 Sleep: Calm ring nights with nights by hand (the first night by hand), Further analysis at Calm, not mixed",
+                calmNights == ringJs.size() && handFirst && all.nights == ringJs.size() + 2 && all.stageDetail == app.openring.core.analysis.StageFilter.CALM,
+                calmNights + " " + all.nights + " " + all.stageDetail);
+        SleepHistory onlyHand = SleepHistory.load(db, early.toString(), early.toString(), z);
+        check("#459 Sleep: a period with only a night by hand counts as Detailed, as before", onlyHand.nights == 1
+                && onlyHand.stageDetail == app.openring.core.analysis.StageFilter.DETAILED, onlyHand.nights + " " + onlyHand.stageDetail);
     }
 
     /** Three years of nights and days (copies of the demo's) and of screen sessions: read and grouped under 1.5 s. */
@@ -717,6 +825,17 @@ public class TrendsPipelineTest {
             Trends.compare(td, m, today, Locale.US);
         }
         double readMs = (t1 - t0) / 1e6, allMs = (System.nanoTime() - t0) / 1e6;
+        // phase 2: "Did something change?" and the events of every measure, as the page works them out once per measure
+        long t2 = System.nanoTime();
+        int[] none = new int[1];
+        List<TrendChange.Event> known = TrendDays.events(db, today, z, ShownNights.Devices.RING, none);
+        for (int m = 0; m < Trends.COUNT; m++) {
+            TrendChange.of(td, m, today, Locale.US);
+            TrendChange.events(td, m, today, known);
+        }
+        double changeMs = (System.nanoTime() - t2) / 1e6;
+        System.out.printf(Locale.US, "    #374 phase 2, three years: did something change and the events of every measure in %.0f ms%n", changeMs);
+        check("#374 phase 2: three years, every measure's change and events under 1 s", changeMs < 1000, Math.round(changeMs) + " ms");
         System.out.printf(Locale.US, "    #374 three years (%d days, %d screen sessions): read in %.0f ms, every measure and period grouped in %.0f ms in all%n",
                 td.size(), screen.size(), readMs, allMs);
         int asleep = 0, scr = 0;
