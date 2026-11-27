@@ -23,6 +23,35 @@ public final class MonthGrid {
         return (month.atDay(1).getDayOfWeek().getValue() - firstDay.getValue() + 7) % 7;
     }
 
+    /** The column of day {@code dom} of a month whose first day is in column {@code offset}; {@link #dayAt} reads it back. */
+    public static int col(int offset, int dom) {
+        return (offset + dom - 1) % COLS;
+    }
+
+    /** The row of day {@code dom} of a month whose first day is in column {@code offset}; {@link #dayAt} reads it back. */
+    public static int row(int offset, int dom) {
+        return (offset + dom - 1) / COLS;
+    }
+
+    /**
+     * The distance between the centres of {@code n} dots side by side under a day of a cell {@code cw} wide: {@code dot}
+     * radius and {@code gap} between them, closer together when they would not fit in the cell less {@code margin}, so a
+     * day with many dots keeps every one (the Badges and life factors calendars).
+     */
+    public static float dotStep(float dot, float gap, float margin, float cw, int n) {
+        return Math.min(dot * 2 + gap, (cw - margin) / n);
+    }
+
+    /** The centre of the first of {@code n} dots {@code step} apart, centred on {@code cx}. */
+    public static float dotFirst(float cx, float step, int n) {
+        return cx - step * (n - 1) / 2f;
+    }
+
+    /** The radius of each dot: {@code dot}, smaller when they are close together, so they never touch. */
+    public static float dotRadius(float dot, float step) {
+        return Math.min(dot, step * 0.45f);
+    }
+
     /**
      * The day at a point of a grid {@code width} wide whose rows start {@code head} from the top and are {@code cellH}
      * high, or null outside this month's days. A point left or right of the grid counts in the first or last column.
