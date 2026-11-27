@@ -29,10 +29,15 @@ import app.openring.data.TrendDays;
  * card at the bottom of each tab ({@link TrendsCard}), at that tab's group and the month of the shown day. Reads only.
  * Phase 2: "Did something change?" ({@link TrendChange}, its shuffles once per measure and read, off the main thread) as a
  * dashed line with the average before and after, its sentence, and the events as marks under the chart, read by touch.
+ * Phase 3: cycle and period length in the Body group (with the period tracker on and 2 periods logged), a group Life with the
+ * days of each logged factor, and "Mark days with" under the chart, which draws a factor's periods as marks (None when the page
+ * opens; display only, it changes no number and no sentence).
  */
 public final class TrendsActivity extends Activity {
     /** Extras: the group to open at ({@code Trends.G_SLEEP} and so on), the shown day (yyyy-mm-dd), and for the screen test a measure and period. */
     static final String GROUP = "group", DAY = "day", MEASURE = "measure", PERIOD = "period", TOUCHED = "touched";
+    /** Phase 3: a factor's key, in the Life group the factor shown, else the factor marked; and the mark kept through a turn. */
+    static final String FACTOR = "factor", MARK = "mark";
 
     private LinearLayout body;
     private int group, measure = -1, period = Trends.MONTHS, loads, fills;
@@ -48,6 +53,13 @@ public final class TrendsActivity extends Activity {
     /** What the days were read from ({@code TrendDays.stamp} with the day and the devices): read again only when it differs. */
     private String stamp;
     private final boolean[] howOpen = {false};
+    /** Phase 3: the period tracker's cycles (null when off or under 2 periods), the life log, its factors (most days first) and names. */
+    private app.openring.core.analysis.Cycles cycles;
+    private java.util.TreeMap<LocalDate, List<String>> life = new java.util.TreeMap<LocalDate, List<String>>();
+    private List<String> factors = new ArrayList<String>();
+    private java.util.Map<String, String> names = new java.util.HashMap<String, String>();
+    /** The factor the Life group shows, and the one marked on the other measures (null: None, as the page opens; never stored). */
+    private String factor, mark;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -57,7 +69,12 @@ public final class TrendsActivity extends Activity {
         android.content.Intent in = getIntent();
         group = Math.max(0, Math.min(Trends.GROUPS.length - 1, in.getIntExtra(GROUP, Trends.G_SLEEP)));
         int m = in.getIntExtra(MEASURE, -1);
-        if (m >= 0 && m < Trends.COUNT) measure = m;
+        if (m >= 0 && m < Trends.MEASURES) measure = m;
+        String f = in.getStringExtra(FACTOR);
+        if (f != null && !f.isEmpty()) {
+            if (group == Trends.G_LIFE) factor = f;
+            else mark = f;
+        }
         period = Math.max(0, Math.min(2, in.getIntExtra(PERIOD, Trends.MONTHS)));
         try {
             String d = in.getStringExtra(DAY);
@@ -72,6 +89,8 @@ public final class TrendsActivity extends Activity {
             group = b.getInt(GROUP, group);
             measure = b.getInt(MEASURE, measure);
             period = b.getInt(PERIOD, period);
+            factor = b.getString(FACTOR, factor);
+            mark = b.getString(MARK, mark);
             String t = b.getString(TOUCHED);
             try {
                 touched = t == null ? null : LocalDate.parse(t);
@@ -115,6 +134,8 @@ public final class TrendsActivity extends Activity {
         out.putInt(MEASURE, measure);
         out.putInt(PERIOD, period);
         if (touched != null) out.putString(TOUCHED, touched.toString());
+        out.putString(FACTOR, factor);
+        out.putString(MARK, mark);
     }
 
     @Override
@@ -128,6 +149,7 @@ public final class TrendsActivity extends Activity {
     static final class Loaded {
         List<Trends.Day> days;
         List<TrendChange.Event> events;
+        TrendDays.Logs logs;
         LocalDate today;
         String stamp;
         boolean failed, same;
@@ -148,9 +170,11 @@ public final class TrendsActivity extends Activity {
                     Db db = Db.get(ctx);
                     // the devices as the tabs show them: the ring, the watch's nights, without a ring the watch's or the phone's days
                     app.openring.data.ShownNights.Devices dev = DayData.shownNow(ctx);
+                    // phase 3: the cycle measures follow the period tracker's switch
+                    boolean periodShown = app.openring.core.analysis.Cycles.shown(p.periodChoice(), p.sex(), p.demo());
                     // every field of the devices, the profile's age too (the score of a night by hand, issue #459)
                     l.stamp = TrendDays.stamp(db) + "|" + l.today + "|" + p.screenExcluded() + "|" + dev.key()
-                            + "|" + ZoneId.systemDefault().getId();
+                            + "|" + ZoneId.systemDefault().getId() + "|" + periodShown;
                     if (l.stamp.equals(before)) {
                         l.same = true;
                         return l;
@@ -163,6 +187,10 @@ public final class TrendsActivity extends Activity {
                     int[] noEvents = new int[1];
                     l.events = TrendDays.events(db, l.today, ZoneId.systemDefault(), dev, noEvents);
                     if (noEvents[0] > 0) app.openring.ble.RingManager.get(ctx).log("trends: " + noEvents[0] + " kinds of events could not be read, left out");
+                    // phase 3: the cycles and the life log; one that cannot be read is left out, the log says how many
+                    int[] noLogs = new int[1];
+                    l.logs = TrendDays.logs(db, l.today, periodShown, noLogs);
+                    if (noLogs[0] > 0) app.openring.ble.RingManager.get(ctx).log("trends: " + noLogs[0] + " logs could not be read, left out");
                 } catch (Throwable e) {
                     l.failed = true;
                     try {
@@ -187,6 +215,10 @@ public final class TrendsActivity extends Activity {
                 }
                 days = l.days;
                 known = l.events;
+                cycles = l.logs == null ? null : l.logs.cycles;
+                life = l.logs == null ? new java.util.TreeMap<LocalDate, List<String>>() : l.logs.life;
+                factors = l.logs == null ? new ArrayList<String>() : l.logs.factors;
+                names = l.logs == null ? new java.util.HashMap<String, String>() : l.logs.names;
                 // a new map: a result still being worked out for the old days lands in the old one
                 changes = new java.util.concurrent.ConcurrentHashMap<Integer, TrendChange.Result>();
                 today = l.today;
@@ -203,6 +235,7 @@ public final class TrendsActivity extends Activity {
             case Trends.G_ACTIVITY: return Ui.ACTIVE;
             case Trends.G_BODY: return Ui.HEART;
             case Trends.G_SCREEN: return Ui.OXY;
+            case Trends.G_LIFE: return Ui.LIFE;
             default: return Ui.SLEEP;
         }
     }
@@ -268,11 +301,19 @@ public final class TrendsActivity extends Activity {
             body.addView(card);
             return;
         }
-        final int[] measures = Trends.GROUPS[group];
+        // phase 3: the Life group only with a logged factor, the cycle measures only with the tracker's cycles
+        if (group == Trends.G_LIFE && factors.isEmpty()) group = Trends.G_SLEEP;
+        final int[] measures = Trends.measures(group, cycles != null);
         if (measure < 0 || !contains(measures, measure)) measure = measures[0];
+        if (group == Trends.G_LIFE && (factor == null || !factors.contains(factor))) factor = factors.get(0);
+        if (mark != null && !factors.contains(mark)) mark = null;
         final int m = measure, p = period;
         final Locale l = Locale.getDefault();
         final android.content.Context ctx = getApplicationContext();
+        final app.openring.core.analysis.Cycles cy = cycles;
+        final java.util.Map<LocalDate, List<String>> lf = life;
+        final String fk = factor, fName = Trends.inSentence(factor, name(factor)), mk = mark, mName = name(mark);
+        final LocalDate first = ds.isEmpty() ? t : ds.get(0).date;
         new AsyncTask<Void, Void, Object[]>() {
             @Override
             protected Object[] doInBackground(Void... v) {
@@ -287,10 +328,27 @@ public final class TrendsActivity extends Activity {
                         // only the time and how many steps, never a value
                         if (ms > 300) app.openring.ble.RingManager.get(ctx).log("trends: looking for a change took " + ms + " ms (" + c.steps.size() + " steps)");
                     }
-                    Trends.View view = Trends.of(ds, m, p, t);
-                    List<TrendChange.Event> marks = TrendChange.events(ds, m, t, ev);
+                    // phase 3: the picked factor's days as marks on every other measure (display only)
+                    List<TrendChange.Event> withLife = new ArrayList<TrendChange.Event>(ev == null ? new ArrayList<TrendChange.Event>() : ev);
+                    if (mk != null && m != Trends.LIFE) withLife.addAll(TrendChange.life(lf, mk, mName));
+                    Trends.View view;
+                    String compared;
+                    if (m == Trends.LIFE) {
+                        view = Trends.counts(lf, fk, fName, p, t, first);
+                        compared = Trends.lifeCompare(lf, fk, fName, t, first);
+                    } else if (m == Trends.CYCLE) {
+                        view = Trends.cycles(cy.cycles, p);
+                        compared = Trends.cycleLine(cy.cycles);
+                    } else if (m == Trends.PERIOD_DAYS) {
+                        view = Trends.periods(cy.periods, cy.running, p);
+                        compared = Trends.periodLine(cy.periods, cy.running);
+                    } else {
+                        view = Trends.of(ds, m, p, t);
+                        compared = Trends.compare(ds, m, t, l).text;
+                    }
+                    List<TrendChange.Event> marks = m == Trends.LIFE ? new ArrayList<TrendChange.Event>() : TrendChange.events(ds, m, t, withLife);
                     // where the lines and marks go, worked out here once, so drawing and touching only scale them
-                    return new Object[] {view, Trends.compare(ds, m, t, l), c, marks, TrendChange.drawn(view, c, marks)};
+                    return new Object[] {view, compared, c, marks, TrendChange.drawn(view, c, marks)};
                 } catch (Throwable e) {
                     try {
                         // the error's kind only, never a value
@@ -314,7 +372,7 @@ public final class TrendsActivity extends Activity {
                 }
                 @SuppressWarnings("unchecked")
                 List<TrendChange.Event> marks = (List<TrendChange.Event>) r[3];
-                show((Trends.View) r[0], (Trends.Compare) r[1], (TrendChange.Result) r[2], marks, (TrendChange.Drawn) r[4]);
+                show((Trends.View) r[0], (String) r[1], (TrendChange.Result) r[2], marks, (TrendChange.Drawn) r[4]);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
@@ -323,7 +381,7 @@ public final class TrendsActivity extends Activity {
      * The page with enough history: the demo note, the chips, the chart of {@code view} with the steps of {@code change} and the
      * {@code marks}, "Did something change?" and the comparison {@code compared}.
      */
-    void show(final Trends.View view, Trends.Compare compared, final TrendChange.Result change, final List<TrendChange.Event> marks,
+    void show(final Trends.View view, String compared, final TrendChange.Result change, final List<TrendChange.Event> marks,
             TrendChange.Drawn drawn) {
         body.removeAllViews();
         if (demo) {
@@ -332,9 +390,11 @@ public final class TrendsActivity extends Activity {
             banner.addView(Ui.text(this, Explain.TRENDS_DEMO, 12, Ui.TEXT_2, Ui.REGULAR));
             body.addView(banner);
         }
-        final int[] measures = Trends.GROUPS[group];
+        final int[] measures = Trends.measures(group, cycles != null);
         int c = color(group);
-        body.addView(chipRow(Trends.GROUP_NAMES, group, c, new Pick() {
+        // the Life group (phase 3) only with a logged factor; it is the last chip
+        String[] groupNames = factors.isEmpty() ? java.util.Arrays.copyOf(Trends.GROUP_NAMES, Trends.G_LIFE) : Trends.GROUP_NAMES;
+        body.addView(chipRow(groupNames, group, c, new Pick() {
             @Override
             public void picked(int i) {
                 if (i == group) return;
@@ -344,20 +404,34 @@ public final class TrendsActivity extends Activity {
             }
         }));
         body.addView(Ui.gap(this, 6));
-        String[] names = new String[measures.length];
-        int cur = 0;
-        for (int i = 0; i < measures.length; i++) {
-            names[i] = Trends.NAMES[measures[i]];
-            if (measures[i] == measure) cur = i;
-        }
-        body.addView(chipRow(names, cur, c, new Pick() {
-            @Override
-            public void picked(int i) {
-                if (measures[i] == measure) return;
-                measure = measures[i];
-                fill();
+        if (group == Trends.G_LIFE) {
+            // one chip per logged factor, the most days first (phase 3)
+            String[] fn = new String[factors.size()];
+            for (int i = 0; i < fn.length; i++) fn[i] = name(factors.get(i));
+            body.addView(chipRow(fn, Math.max(0, factors.indexOf(factor)), c, new Pick() {
+                @Override
+                public void picked(int i) {
+                    if (factors.get(i).equals(factor)) return;
+                    factor = factors.get(i);
+                    fill();
+                }
+            }));
+        } else {
+            String[] mn = new String[measures.length];
+            int cur = 0;
+            for (int i = 0; i < measures.length; i++) {
+                mn[i] = Trends.NAMES[measures[i]];
+                if (measures[i] == measure) cur = i;
             }
-        }));
+            body.addView(chipRow(mn, cur, c, new Pick() {
+                @Override
+                public void picked(int i) {
+                    if (measures[i] == measure) return;
+                    measure = measures[i];
+                    fill();
+                }
+            }));
+        }
         body.addView(Ui.gap(this, 6));
         body.addView(chipRow(Trends.PERIOD_NAMES, period, c, new Pick() {
             @Override
@@ -371,12 +445,13 @@ public final class TrendsActivity extends Activity {
 
         LinearLayout card = Ui.card(this);
         String each = period == Trends.WEEKS ? "by week" : period == Trends.MONTHS ? "by month" : "by year";
-        card.addView(Ui.caption(this, Trends.NAMES[measure] + ", " + each));
+        // "Alcohol, days by month" for a life factor (phase 3)
+        card.addView(Ui.caption(this, measure == Trends.LIFE ? name(factor) + ", days " + each : Trends.NAMES[measure] + ", " + each));
         card.addView(Ui.gap(this, 8));
         final TextView readout = Ui.text(this, "", 13, Ui.TEXT, Ui.REGULAR);
         final Locale l = Locale.getDefault();
         Charts.Months chart = new Charts.Months(this, view, c).marks(drawn);
-        chart.setContentDescription("Trends chart, " + Trends.NAMES[measure]);
+        chart.setContentDescription("Trends chart, " + (measure == Trends.LIFE ? name(factor) : Trends.NAMES[measure]));
         chart.pick(new Charts.Months.Pick() {
             @Override
             public void picked(int index) {
@@ -396,6 +471,28 @@ public final class TrendsActivity extends Activity {
         if (!drawnNote.isEmpty()) card.addView(Ui.text(this, drawnNote, 12, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(this, 4));
         card.addView(Ui.text(this, Trends.explain(measure, view.detail), 12, Ui.TEXT_2, Ui.REGULAR));
+        // phase 3: Mark days with a factor, None first and picked when the page opens; only draws, changes no number
+        if (group != Trends.G_LIFE && !factors.isEmpty()) {
+            card.addView(Ui.gap(this, 10));
+            card.addView(Ui.text(this, Explain.TRENDS_MARK, 12, Ui.TEXT_2, Ui.MEDIUM));
+            card.addView(Ui.gap(this, 4));
+            String[] mn = new String[factors.size() + 1];
+            mn[0] = Explain.TRENDS_MARK_NONE;
+            for (int i = 0; i < factors.size(); i++) mn[i + 1] = name(factors.get(i));
+            card.addView(chipRow(mn, mark == null ? 0 : factors.indexOf(mark) + 1, Ui.LIFE, new Pick() {
+                @Override
+                public void picked(int i) {
+                    String k = i == 0 ? null : factors.get(i - 1);
+                    if (k == null ? mark == null : k.equals(mark)) return;
+                    mark = k;
+                    fill();
+                }
+            }));
+            if (mark != null) {
+                card.addView(Ui.gap(this, 4));
+                card.addView(Ui.text(this, Trends.markNote(Trends.inSentence(mark, name(mark)), period), 12, Ui.TEXT_3, Ui.REGULAR));
+            }
+        }
         body.addView(card);
 
         // Did something change? (phase 2): the steps, the events around them, what it cannot say
@@ -408,16 +505,22 @@ public final class TrendsActivity extends Activity {
             ch.addView(Ui.gap(this, 4));
             ch.addView(Ui.text(this, around, 13, Ui.TEXT_2, Ui.REGULAR));
         }
-        ch.addView(Ui.gap(this, 6));
-        ch.addView(Ui.text(this, Explain.TRENDS_CHANGE, 12, Ui.TEXT_3, Ui.REGULAR));
+        // how a step is found, only where one is looked for (phase 3's measures say why not)
+        if (Trends.daily(measure)) {
+            ch.addView(Ui.gap(this, 6));
+            ch.addView(Ui.text(this, Explain.TRENDS_CHANGE, 12, Ui.TEXT_3, Ui.REGULAR));
+        }
         body.addView(ch);
 
         LinearLayout cmp = Ui.card(this);
-        cmp.addView(Ui.caption(this, Explain.TRENDS_COMPARE_CAPTION));
+        boolean cyc = measure == Trends.CYCLE || measure == Trends.PERIOD_DAYS;
+        cmp.addView(Ui.caption(this, measure == Trends.CYCLE ? Explain.TRENDS_CYCLES_CAPTION : measure == Trends.PERIOD_DAYS
+                ? Explain.TRENDS_PERIODS_CAPTION : Explain.TRENDS_COMPARE_CAPTION));
         cmp.addView(Ui.gap(this, 6));
-        cmp.addView(Ui.body(this, compared.text));
+        cmp.addView(Ui.body(this, compared));
         cmp.addView(Ui.gap(this, 6));
-        cmp.addView(Ui.text(this, Explain.TRENDS_COMPARE, 12, Ui.TEXT_3, Ui.REGULAR));
+        cmp.addView(Ui.text(this, cyc ? Explain.TRENDS_CYCLES_NOTE : measure == Trends.LIFE ? Explain.TRENDS_LIFE_COMPARE : Explain.TRENDS_COMPARE,
+                12, Ui.TEXT_3, Ui.REGULAR));
         body.addView(cmp);
 
         LinearLayout how = Ui.card(this);
@@ -429,8 +532,18 @@ public final class TrendsActivity extends Activity {
 
     /** The line under the chart before a touch: the newest period with a value, or how to read the chart. */
     static String newest(Trends.View view, Locale l) {
-        for (int i = view.buckets.size() - 1; i >= 0; i--) if (view.buckets.get(i).n > 0) return Trends.readout(view, i, l);
+        for (int i = view.buckets.size() - 1; i >= 0; i--) {
+            Trends.Bucket b = view.buckets.get(i);
+            if (b.n > 0 || b.logged) return Trends.readout(view, i, l);
+        }
         return "No days with a value yet.";
+    }
+
+    /** A factor's name as on Today's row ("Alcohol"), "" for none. */
+    String name(String key) {
+        if (key == null) return "";
+        String n = names.get(key);
+        return n == null ? key : n;
     }
 
     static boolean contains(int[] a, int x) {

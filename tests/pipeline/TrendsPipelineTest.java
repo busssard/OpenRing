@@ -60,6 +60,7 @@ public class TrendsPipelineTest {
         daySeries();
         fields();
         demoChange();
+        demoPhase3();
         demoHistoryPinned();
         screenPerDay();
         demoYear();
@@ -203,6 +204,103 @@ public class TrendsPipelineTest {
         check("#374 phase 2: every day has a zone, the demo no trip", zoned == days.size() && noZoneEvent(TrendChange.events(days, Trends.ASLEEP, today, null)),
                 zoned + " of " + days.size());
         Demo.leave(c);
+    }
+
+    /** Every row of {@code table} as one text, to show a read changed nothing stored. */
+    static String rows(Db db, String table, String cols) {
+        android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT COUNT(*) || ':' || COALESCE(group_concat(r, ';'), '') FROM (SELECT "
+                + cols + " AS r FROM " + table + " ORDER BY r)", null);
+        try {
+            return c.moveToFirst() ? c.getString(0) : "";
+        } finally {
+            c.close();
+        }
+    }
+
+    static String stored(Db db) {
+        return rows(db, "life_days", "day || '|' || tag || '|' || COALESCE(span, '') || '|' || made || '|' || gone") + " / "
+                + rows(db, "life_tags", "key || '|' || COALESCE(name, '') || '|' || COALESCE(shown, '') || '|' || made || '|' || gone") + " / "
+                + rows(db, "period_days", "day || '|' || flow || '|' || made") + " / " + rows(db, "period_ends", "day || '|' || made") + " / "
+                + rows(db, "days", "day || '|' || length(json)") + " / " + rows(db, "nights", "start || '|' || length(json)");
+    }
+
+    /**
+     * Phase 3 (issue #374) on the demo: its periods give cycle and period length, its year of tags the Life group (alcohol on
+     * the weekend evenings, meditation every third day), reading changes nothing stored, a tag set or removed moves the stamp,
+     * the tracker switched off gives no cycles.
+     */
+    static void demoPhase3() throws Exception {
+        Context c = freshDb("trends-phase3");
+        ZoneId z = ZoneId.systemDefault();
+        LocalDate today = LocalDate.parse("2026-10-25");
+        long now = today.atTime(9, 41).atZone(z).toEpochSecond();
+        Demo.enter(c, null, today, now);
+        Db db = Db.get(c);
+        String before = stored(db), stampBefore = TrendDays.stamp(db);
+        List<Trends.Day> days = TrendDays.read(db, today, now, Prefs.of(c).screenExcluded(), ShownNights.Devices.RING, z);
+        int[] skipped = new int[1];
+        long t0 = System.nanoTime();
+        TrendDays.Logs logs = TrendDays.logs(db, today, true, skipped);
+        double ms = (System.nanoTime() - t0) / 1e6;
+        check("#374 phase 3: the demo's logs read without a failure", skipped[0] == 0, skipped[0]);
+        check("#374 phase 3: the demo's period log gives cycles", logs.cycles != null && logs.cycles.cycles.size() >= 10, logs.cycles == null ? null : logs.cycles.cycles.size());
+        Trends.View cy = Trends.cycles(logs.cycles.cycles, Trends.MONTHS);
+        int withCycle = 0;
+        for (Trends.Bucket b : cy.buckets) if (!Double.isNaN(b.value)) withCycle++;
+        check("#374 phase 3: cycle length by month has a dot for most months", withCycle >= 10 && cy.dayDates.size() == logs.cycles.cycles.size(),
+                withCycle + " of " + cy.buckets.size());
+        Trends.View pv = Trends.periods(logs.cycles.periods, logs.cycles.running, Trends.MONTHS);
+        double meanDays = 0;
+        int np = 0;
+        for (Trends.Bucket b : pv.buckets) for (Trends.Item it : b.items) {
+            meanDays += it.days;
+            np++;
+        }
+        check("#374 phase 3: period length of every period but a running one, 2 to 10 days on average", np >= logs.cycles.periods.size() - 1 && meanDays / np >= 2 && meanDays / np <= 10,
+                np + " " + (np == 0 ? 0 : meanDays / np));
+        System.out.println("    #374 phase 3, demo: " + Trends.cycleLine(logs.cycles.cycles) + " " + Trends.periodLine(logs.cycles.periods, logs.cycles.running)
+                + " (logs read in " + Math.round(ms) + " ms)");
+        check("#374 phase 3: the demo's cycle line", Trends.cycleLine(logs.cycles.cycles).startsWith("Your last 6 cycles: "), Trends.cycleLine(logs.cycles.cycles));
+        check("#374 phase 3: the demo's factors, alcohol and meditation among them", logs.factors.contains("alcohol") && logs.factors.contains("meditation")
+                && "Alcohol".equals(logs.names.get("alcohol")), logs.factors);
+        check("#374 phase 3: never Intimacy in the demo", !logs.factors.contains("intimacy"), null);
+        Trends.View al = Trends.counts(logs.life, "alcohol", "alcohol", Trends.MONTHS, today, days.get(0).date);
+        int logged = 0, withAlcohol = 0;
+        for (Trends.Bucket b : al.buckets) {
+            if (b.logged) logged++;
+            if (b.n > 0) withAlcohol++;
+        }
+        check("#374 phase 3: alcohol by month over the demo's year", logged >= 11 && withAlcohol >= 10, logged + " " + withAlcohol + " of " + al.buckets.size());
+        System.out.println("    #374 phase 3, demo: " + Trends.lifeCompare(logs.life, "alcohol", "alcohol", today, days.get(0).date));
+        List<TrendChange.Event> marks = TrendChange.events(days, Trends.ASLEEP, today, TrendChange.life(logs.life, "alcohol", "Alcohol"));
+        int lifeMarks = 0;
+        for (TrendChange.Event e : marks) if (e.kind == TrendChange.LIFE) lifeMarks++;
+        check("#374 phase 3: alcohol's days as marks on time asleep", lifeMarks >= 20 && lifeMarks == TrendChange.life(logs.life, "alcohol", "Alcohol").size(), lifeMarks);
+        TrendChange.Result r1 = TrendChange.of(days, Trends.ASLEEP, today, Locale.US);
+        check("#374 phase 3: the marks change no sentence", TrendChange.around(r1, marks).equals(TrendChange.around(r1, TrendChange.events(days, Trends.ASLEEP, today, null))), null);
+        check("#374 phase 3: reading changes nothing stored", before.equals(stored(db)) && stampBefore.equals(TrendDays.stamp(db)), null);
+        check("#374 phase 3: the tracker switched off gives no cycles", TrendDays.logs(db, today, false, skipped).cycles == null && skipped[0] == 0, null);
+        // a tag set and taken off again: the stamp moves each time, so the page reads again
+        app.openring.data.LifeLog.set(db, today.toString(), "stress", true, now + 1);
+        String s1 = TrendDays.stamp(db);
+        app.openring.data.LifeLog.set(db, today.toString(), "stress", false, now + 2);
+        String s2 = TrendDays.stamp(db);
+        check("#374 phase 3: a tag set and removed moves the stamp each time", !stampBefore.equals(s1) && !s1.equals(s2), null);
+        Demo.leave(c);
+        // a history without a period log or tags: no cycles, no factors
+        Context e = freshDb("trends-phase3-empty");
+        TrendDays.Logs none = TrendDays.logs(Db.get(e), today, true, skipped);
+        check("#374 phase 3: no log, no cycles and no Life group", none.cycles == null && none.factors.isEmpty() && none.life.isEmpty(), null);
+        // one period only: no cycles yet (the rule of Body's cycle cards)
+        Periods.setFlow(Db.get(e), today.minusDays(10).toString(), app.openring.core.analysis.Cycles.MEDIUM, now);
+        check("#374 phase 3: one period, no cycle measures", TrendDays.logs(Db.get(e), today, true, skipped).cycles == null && skipped[0] == 0, null);
+        // logs that cannot be read (a damaged file, here the tables taken away): nothing of their kind, counted for the log
+        Db.get(e).getWritableDatabase().execSQL("DROP TABLE period_days");
+        Db.get(e).getWritableDatabase().execSQL("DROP TABLE life_days");
+        int[] broken = new int[1];
+        TrendDays.Logs bad = TrendDays.logs(Db.get(e), today, true, broken);
+        check("#374 phase 3: unreadable logs give no cycles and no factors, both counted", bad.cycles == null && bad.factors.isEmpty() && bad.life.isEmpty()
+                && bad.names.isEmpty() && broken[0] == 2, broken[0]);
     }
 
     static boolean noZoneEvent(List<TrendChange.Event> ev) {
@@ -814,16 +912,46 @@ public class TrendsPipelineTest {
         });
         db.putScreen(screen);
         db.putScreenRead(first.atStartOfDay(z).toEpochSecond(), now);
+        // phase 3: a tag or two on every day of the three years (alcohol, meditation, stress in turn)
+        final String[] tags = {"alcohol", "meditation", "stress"};
+        final LocalDate tagFrom = first;
+        final LocalDate tagTo = today;
+        db.inTransaction(new Runnable() {
+            @Override
+            public void run() {
+                int k = 0;
+                for (LocalDate d = tagFrom; !d.isAfter(tagTo); d = d.plusDays(1), k++) {
+                    db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, NULL, NULL, NULL, ?, 0)",
+                            new Object[] {d.toString(), tags[k % 3], 1.0e9 + k});
+                    if (k % 2 == 0) db.getWritableDatabase().execSQL("INSERT OR REPLACE INTO life_days(day, tag, time, minutes, span, made, gone) VALUES (?, ?, NULL, NULL, NULL, ?, 0)",
+                            new Object[] {d.toString(), tags[(k + 1) % 3], 1.0e9 + k});
+                }
+            }
+        });
         // a first read warms the code up as a phone that opened the app has it; the second is timed
         TrendDays.read(db, today, now, new TreeSet<String>(), ShownNights.Devices.RING, z);
+        TrendDays.logs(db, today, true, new int[1]);
         long t0 = System.nanoTime();
         List<Trends.Day> td = TrendDays.read(db, today, now, new TreeSet<String>(), ShownNights.Devices.RING, z);
+        TrendDays.Logs logs = TrendDays.logs(db, today, true, new int[1]);
         long t1 = System.nanoTime();
         int periods = 0;
         for (int m = 0; m < Trends.COUNT; m++) {
             for (int p = 0; p < 3; p++) periods += Trends.of(td, m, p, today).buckets.size();
             Trends.compare(td, m, today, Locale.US);
         }
+        // phase 3: every factor in every period, its comparison, and its marks on time asleep
+        int lifePeriods = 0;
+        for (String k : logs.factors) {
+            for (int p = 0; p < 3; p++) lifePeriods += Trends.counts(logs.life, k, k, p, today, td.get(0).date).buckets.size();
+            Trends.lifeCompare(logs.life, k, k, today, td.get(0).date);
+            Trends.View v = Trends.of(td, Trends.ASLEEP, Trends.WEEKS, today);
+            TrendChange.drawn(v, null, TrendChange.events(td, Trends.ASLEEP, today, TrendChange.life(logs.life, k, k)));
+        }
+        check("#374 phase 3, three years: every day's tags read, three factors", logs.factors.size() == 3 && logs.life.size() == 3 * 365 + 1,
+                logs.factors.size() + " " + logs.life.size());
+        check("#374 phase 3, three years: " + lifePeriods + " periods of the factors", lifePeriods == 3 * (Trends.counts(logs.life, "alcohol", Trends.WEEKS, today, td.get(0).date).buckets.size()
+                + Trends.counts(logs.life, "alcohol", Trends.MONTHS, today, td.get(0).date).buckets.size() + Trends.counts(logs.life, "alcohol", Trends.YEARS, today, td.get(0).date).buckets.size()), lifePeriods);
         double readMs = (t1 - t0) / 1e6, allMs = (System.nanoTime() - t0) / 1e6;
         // phase 2: "Did something change?" and the events of every measure, as the page works them out once per measure
         long t2 = System.nanoTime();
@@ -844,7 +972,7 @@ public class TrendsPipelineTest {
             if (!Double.isNaN(d.v[Trends.SCREEN])) scr++;
         }
         check("#374 three years: every night and every day of screen time read", asleep == 3 * 365 && scr >= 3 * 365, asleep + " " + scr);
-        check("#374 three years of nights read and grouped under 1.5 s", allMs < 1500, Math.round(allMs) + " ms");
+        check("#374 three years of nights and daily tags read and grouped under 1.5 s", allMs < 1500, Math.round(allMs) + " ms");
         check("#374 three years: " + periods + " periods", periods > 13 * (156 + 36 + 3), periods);
     }
 

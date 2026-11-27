@@ -1188,13 +1188,26 @@ public final class Explain {
             + "watch (sleep numbers only, no readiness). The middle half leaves out the quarter of days with the lowest and the quarter with "
             + "the highest values, so one odd night does not move the band. Steps and active calories count only days the device was "
             + "worn for an hour or more, screen time only days the phone recorded completely; days without are left out, not zero. "
-            + "Today's steps, calories and screen time count once the day is over. Nothing here changes your stored numbers.";
+            + "Today's steps, calories and screen time count once the day is over. Cycle and period length come from the period "
+            + "tracker, one value for each cycle or period, in the month it started. Life counts the days you logged a factor; a month "
+            + "without any logged factor is left empty, not zero. Marking days with a factor only draws them, it changes no number. "
+            + "Nothing here changes your stored numbers.";
 
     public static final String TRENDS_COMPARE_CAPTION = "This month against the last";
     /** Under the comparison: what the range in brackets means. */
     public static final String TRENDS_COMPARE = "This month so far (without today) against the whole last month. The range in brackets "
             + "is where the real difference most likely lies (9 times in 10), worked out by drawing your weeks again many times at random. "
             + "When it holds no change, the months are about the same. Each month needs three whole weeks.";
+
+    /** Phase 3 (issue #374): the card under the chart for cycle and period length, instead of this month against the last. */
+    public static final String TRENDS_CYCLES_CAPTION = "Your recent cycles", TRENDS_PERIODS_CAPTION = "Your recent periods";
+    public static final String TRENDS_CYCLES_NOTE = "Only cycles and periods the period tracker keeps in its averages, as on Body. "
+            + "One value for each cycle cannot be compared month against month, so the last ones are summed up instead.";
+    /** Under the Life group's this month against the last. */
+    public static final String TRENDS_LIFE_COMPARE = "Days you logged, as a share of the days so far. No range: a log you keep by hand "
+            + "is the evidence itself, and a range would suggest more precision than it has.";
+    /** The chip row under the chart on every measure but the Life group's (phase 3), "None" first and picked when the page opens. */
+    public static final String TRENDS_MARK = "Mark days with", TRENDS_MARK_NONE = "None";
 
     /** Under "Did something change?" (issue #374, phase 2): how a step is found and what it cannot say. */
     public static final String TRENDS_CHANGE = "It shows when your numbers moved, not why. The app looks for the day where your values "

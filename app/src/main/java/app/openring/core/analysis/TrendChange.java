@@ -51,6 +51,11 @@ public final class TrendChange {
     public static final String TOO_FEW = "Too few weeks to look for a change yet.";
     public static final String NOT_SPREAD = "Regularity is a spread over many nights, not a value of each night, so no change is looked for here.";
     public static final String CAPTION = "Did something change?";
+    /** Phase 3: the measures without a value per day get no test, and say why. */
+    public static final String NOT_CYCLE = "Cycle length has one value per cycle, not per day, so no change is looked for here.";
+    public static final String NOT_PERIOD = "Period length has one value per period, not per day, so no change is looked for here.";
+    public static final String NOT_LIFE = "These are days you logged, so no change is looked for here. What a factor goes with in your nights "
+            + "is on Body, card Life factors and your nights.";
 
     // ------------------------------------------------------------------ the result
 
@@ -261,6 +266,11 @@ public final class TrendChange {
     /** Whether something changed in {@code measure} over the whole history, its steps and the sentence. */
     public static Result of(List<Trends.Day> days, int measure, LocalDate today, Locale l) {
         Result out = new Result();
+        if (!Trends.daily(measure)) {
+            // phase 3: one value per cycle or period, or days logged by hand, is no daily series to test
+            out.text = measure == Trends.CYCLE ? NOT_CYCLE : measure == Trends.PERIOD_DAYS ? NOT_PERIOD : NOT_LIFE;
+            return out;
+        }
         if (Trends.KIND[measure] == Trends.SPREAD) {
             out.text = NOT_SPREAD;
             return out;
@@ -495,7 +505,8 @@ public final class TrendChange {
 
     // ------------------------------------------------------------------ events
 
-    public static final int DEVICE = 0, DETAIL = 1, PHONE_AWAKE = 2, ZONE = 3, LEFT_OUT = 4, PERIOD = 5, WORKOUT = 6, NO_DATA = 7;
+    /** {@code LIFE} (phase 3): a day with the life factor picked under "Mark days with", only drawn, never in a sentence or a test. */
+    public static final int DEVICE = 0, DETAIL = 1, PHONE_AWAKE = 2, ZONE = 3, LEFT_OUT = 4, PERIOD = 5, WORKOUT = 6, NO_DATA = 7, LIFE = 8;
 
     /** Something that happened from {@code from} to {@code to} (one day for most), with its short text. */
     public static final class Event {
@@ -534,8 +545,12 @@ public final class TrendChange {
                 // they change how nights are worked out
                 return sleep;
             case PERIOD:
-                // the cycle moves these (the warmer nights after ovulation, a higher heart rate)
+                // the cycle moves these (the warmer nights after ovulation, a higher heart rate); on cycle and period length
+                // every dot is a period's start already
                 return measure == Trends.TEMP || measure == Trends.RHR || measure == Trends.HRV || measure == Trends.READINESS;
+            case LIFE:
+                // the picked factor's days on every measure but the factors' own
+                return measure != Trends.LIFE;
             case WORKOUT:
                 return measure == Trends.STEPS || measure == Trends.KCAL || measure == Trends.READINESS || measure == Trends.RHR || measure == Trends.HRV;
             default:
@@ -549,6 +564,13 @@ public final class TrendChange {
      */
     public static List<Event> events(List<Trends.Day> days, int measure, LocalDate today, List<Event> known) {
         List<Event> out = new ArrayList<Event>();
+        if (!Trends.daily(measure)) {
+            // phase 3's measures have no value per day: the trips and the stored events that apply
+            out.addAll(zones(days));
+            if (known != null) for (Event e : known) if (applies(e.kind, measure)) out.add(e);
+            sort(out);
+            return out;
+        }
         int col = Trends.column(measure);
         boolean night = Trends.night(measure);
         String unit = night ? "nights" : "days";
@@ -586,6 +608,11 @@ public final class TrendChange {
         }
         out.addAll(zones(days));
         if (known != null) for (Event e : known) if (applies(e.kind, measure)) out.add(e);
+        sort(out);
+        return out;
+    }
+
+    static void sort(List<Event> out) {
         Collections.sort(out, new Comparator<Event>() {
             @Override
             public int compare(Event a, Event b) {
@@ -593,6 +620,19 @@ public final class TrendChange {
                 return c != 0 ? c : Integer.compare(a.kind, b.kind);
             }
         });
+    }
+
+    /**
+     * Phase 3: the days with the factor {@code key} as marks ({@link #LIFE}, the text its name as on Today, "Alcohol"), oldest
+     * first; none for no factor ("None", null). Only drawn and read by touch: no sentence and no test uses them.
+     */
+    public static List<Event> life(java.util.Map<LocalDate, List<String>> days, String key, String name) {
+        List<Event> out = new ArrayList<Event>();
+        if (key == null || days == null) return out;
+        for (java.util.Map.Entry<LocalDate, List<String>> e : days.entrySet()) {
+            if (e.getKey() != null && e.getValue() != null && e.getValue().contains(key)) out.add(new Event(LIFE, e.getKey(), e.getKey(), name));
+        }
+        sort(out);
         return out;
     }
 
@@ -631,12 +671,17 @@ public final class TrendChange {
      */
     public static String list(List<Event> events, LocalDate from, LocalDate to) {
         StringBuilder s = new StringBuilder();
-        int workouts = 0, periods = 0;
-        Event period = null;
+        int workouts = 0, periods = 0, life = 0;
+        Event period = null, factor = null;
         for (Event e : events) {
             if (e.to.isBefore(from) || e.from.isAfter(to)) continue;
             if (e.kind == WORKOUT) {
                 workouts++;
+                continue;
+            }
+            if (e.kind == LIFE) {
+                life++;
+                factor = e;
                 continue;
             }
             if (e.kind == PERIOD) {
@@ -650,6 +695,8 @@ public final class TrendChange {
         if (periods == 1) s.append(s.length() > 0 ? ", " : "").append(period.withDate());
         if (periods > 1) s.append(s.length() > 0 ? ", " : "").append(periods).append(" periods started");
         if (workouts > 0) s.append(s.length() > 0 ? ", " : "").append(workouts == 1 ? "1 workout" : workouts + " workouts");
+        // phase 3: the picked factor counted, "Alcohol on 6 days"
+        if (life > 0) s.append(s.length() > 0 ? ", " : "").append(factor.text).append(" on ").append(life == 1 ? "1 day" : life + " days");
         return s.toString();
     }
 
@@ -669,7 +716,10 @@ public final class TrendChange {
 
     /** The line under the chart on what phase 2 draws, "" when it draws nothing. */
     public static String chartNote(Result change, List<Event> events) {
-        boolean steps = change != null && !change.steps.isEmpty(), marks = events != null && !events.isEmpty();
+        // the life factor's marks have their own line under "Mark days with" (phase 3)
+        boolean marks = false;
+        if (events != null) for (Event e : events) marks |= e.kind != LIFE;
+        boolean steps = change != null && !change.steps.isEmpty();
         if (!steps && !marks) return "";
         StringBuilder s = new StringBuilder();
         if (steps) s.append("Dashed line: where your values stepped. Lines: your average before and after. ");
@@ -685,9 +735,10 @@ public final class TrendChange {
         StringBuilder s = new StringBuilder();
         for (Step st : r.steps) {
             int w = st.clear ? AROUND_DAYS : AROUND_ROUGH_DAYS;
-            // workouts are many and everywhere: they stay under the chart, not here
+            // workouts are many and everywhere: they stay under the chart, not here; the marked factor (phase 3) is a display
+            // choice and changes no sentence
             List<Event> some = new ArrayList<Event>();
-            for (Event e : events) if (e.kind != WORKOUT) some.add(e);
+            for (Event e : events) if (e.kind != WORKOUT && e.kind != LIFE) some.add(e);
             String near = list(some, st.date.minusDays(w), st.date.plusDays(w));
             if (near.isEmpty()) continue;
             if (s.length() > 0) s.append(' ');
@@ -756,7 +807,8 @@ public final class TrendChange {
      */
     public static final class Drawn {
         public final double[] levelFrom, levelTo, levelValue, steps, eventFrom, eventTo;
-        public final boolean[] eventDay;
+        /** One day; a mark of the picked life factor (phase 3: one per week, month or year that has it, in its middle). */
+        public final boolean[] eventDay, eventLife;
 
         Drawn(int levels, int stepCount, int events) {
             levelFrom = new double[levels];
@@ -766,6 +818,7 @@ public final class TrendChange {
             eventFrom = new double[events];
             eventTo = new double[events];
             eventDay = new boolean[events];
+            eventLife = new boolean[events];
         }
     }
 
@@ -781,11 +834,25 @@ public final class TrendChange {
             out.levelValue[i] = lv.value;
         }
         for (int i = 0; i < ns; i++) out.steps[i] = c.place(change.steps.get(i).date);
+        java.util.Set<Integer> lifeColumns = new java.util.HashSet<Integer>();
         for (int i = 0; i < ne; i++) {
             Event e = events.get(i);
             out.eventFrom[i] = c.place(e.from);
             out.eventTo[i] = c.place(e.to);
             out.eventDay[i] = e.from.equals(e.to);
+            if (e.kind == LIFE) {
+                // one mark per period with the factor, in the middle of its column (the readout counts its days)
+                out.eventLife[i] = true;
+                double p = out.eventFrom[i];
+                int col = Double.isNaN(p) ? -1 : (int) Math.floor(p);
+                if (col < 0 || !lifeColumns.add(col)) {
+                    out.eventFrom[i] = Double.NaN;
+                    out.eventTo[i] = Double.NaN;
+                } else {
+                    out.eventFrom[i] = col + 0.5;
+                    out.eventTo[i] = col + 0.5;
+                }
+            }
         }
         return out;
     }

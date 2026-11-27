@@ -580,6 +580,15 @@ launch --ei trends 0 --es day "$(date -d '4 months ago' +%F)"; shot trends-chang
 if scroll_to "DID SOMETHING CHANGE?" 4; then shot trends-change-card 1
 else echo "::warning::issue #374 phase 2 step: the card DID SOMETHING CHANGE? was not found"; shot trends-change-card 1; fi
 launch --ei trends 2 --ei trends_measure 10 --ei trends_period 2; shot trends-steps-year 4
+# Trends, phase 3 (issue #374): Body's cycle length by month from the demo's period log (trends_measure 13; hollow dots are
+# cycles the tracker leaves out), the Life group (trends 5) on alcohol by month (trends_factor, a factor's key) touched at
+# 70 % of its width (the bubble and "alcohol on 6 of 31 days"), and Sleep's time asleep with alcohol's months marked under the
+# chart (trends_factor on another group picks the marks; None when opened by hand)
+launch --ei trends 3 --ei trends_measure 13; shot trends-cycle 4
+launch --ei trends 5 --es trends_factor alcohol; sleep 4
+if touch_desc "Trends chart" 70; then shot trends-life-touch 1
+else echo "::warning::issue #374 phase 3 step: the Life chart was not on screen to touch it"; shot trends-life-touch 1; fi
+launch --ei trends 0 --es trends_factor alcohol; shot trends-marks 4
 launch --ei trends 0 --ei devices 1;        shot trends-watch-only 4
 launch --es settings top;                   shot settings
 # The short tour (issue #453): Show the tour again on the demo's card in Settings opens it at its first step (Sync); then

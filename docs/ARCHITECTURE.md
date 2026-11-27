@@ -721,6 +721,19 @@ watch's workouts (not named around a step) and, when the stored nights were work
 works it out once per measure and read, off the main thread, with the places of every line and mark (`TrendChange.drawn`), so
 drawing only scales them (3 years, every measure with a step: about 0.25 s on the JVM). Nothing is stored.
 
+**Cycle and life factors (phase 3):** `TrendDays.logs` reads the period tracker's cycles (`Periods.cycles`; only with the tracker
+on and 2 periods logged, the rule of Body's cycle cards) and the life log (`LifeLog.all`, the factors by days, most first,
+`Trends.factors`) once per read; `TrendDays.stamp` counts `life_days` and `life_tags`, so a tag set or removed reads again. Body
+gets **Cycle length** and **Period length** (`Trends.cycles`, `Trends.periods`: one value per cycle or period, filed under the
+week, month or year it started, the dot the mean of the cycles the tracker keeps, the band from 4 of them, a period with only
+`leftOut` cycles a hollow dot; a running period counts once it ends). Instead of this month against the last, one line on the last
+6 (`Trends.cycleLine`); no change test (one value per cycle is no daily series), and no "Period started" marks there. A sixth
+group **Life** shows the days with each factor (`Trends.counts`): a count per period of the days from the first day up to today,
+no band; a period without any logged factor is a gap, not 0. Its comparison is plain shares ("on 3 of 27 days so far (11 %)"),
+no range, no change test. **Mark days with** under every other chart (None when the page opens, kept only while it is open)
+adds the picked factor's days as `TrendChange.LIFE` events: one dot per period that has it (`TrendChange.drawn`), counted in the
+touch readout ("Alcohol on 6 days"), never in `around`, the chart note or a test. Display only, nothing stored.
+
 ### Today's Your day line (owner's wish of 16 November)
 
 `core/DayLine` goes down a fixed tree and stops at the first branch that fits: data out of date (today only, no sync for
