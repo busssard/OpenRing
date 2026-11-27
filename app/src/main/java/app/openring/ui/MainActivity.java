@@ -1148,16 +1148,18 @@ public final class MainActivity extends Activity implements RingManager.Listener
     void updateStatus() {
         RingManager m = RingManager.get(this);
         // the line about an unreadable key is a button (TalkBack announces it as one, review of #281), a watch sync's line too (below)
-        // a watch sync, by hand or the background job's, with its step and percent (issue #478); a ring task's line wins
+        // a watch sync, by hand or the background job's, with its step and percent (issue #478); a ring task's line wins, then the
+        // unreadable key warning (it asks for something the person can do, review of dbc5c9d), then the watch's progress
         String watch = app.openring.ble.WatchSync.SHOWN.line();
-        boolean tap = !m.busy() && watch == null && keyState == app.openring.core.KeyState.UNREADABLE;
+        boolean busy = m.busy();
+        boolean keyWarn = !busy && keyState == app.openring.core.KeyState.UNREADABLE;
+        boolean tap = keyWarn;
         // a watch sync's line explains its numbers on a tap, as Settings does under its line
-        boolean explain = !m.busy() && watch != null;
+        boolean explain = !busy && !keyWarn && watch != null;
         statusStrip.setOnClickListener(tap ? enterKey : explain ? explainWatch : null);
         statusStrip.setClickable(tap || explain);
-        boolean busy = m.busy();
         String err = Prefs.of(this).lastSyncError();
-        if (busy || watch != null) {
+        if (busy || explain) {
             statusStrip.setVisibility(View.VISIBLE);
             statusText.setText(busy ? m.status() : watch);
             statusText.setTextColor(Ui.TEXT_2);
@@ -1165,7 +1167,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
             statusBar.setVisibility(View.VISIBLE);
             statusBar.setIndeterminate(pr < 0);
             if (pr >= 0) statusBar.setProgress((int) (pr * 1000));
-        } else if (keyState == app.openring.core.KeyState.UNREADABLE) {
+        } else if (keyWarn) {
             statusStrip.setVisibility(View.VISIBLE);
             statusText.setText(app.openring.core.KeyState.STATUS);
             statusText.setTextColor(Ui.WARN);
