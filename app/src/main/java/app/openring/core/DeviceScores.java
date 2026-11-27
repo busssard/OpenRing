@@ -351,9 +351,12 @@ public final class DeviceScores {
         // the step goal stands in for the ring's calorie goal: the detail says which
         Night.Contributor t = r.activity.get("targets");
         if (t != null) replace(r.activity, t, t.detail + String.format(Locale.US, " at %,d steps", r.goal));
-        if (r.device == MainDevice.PHONE) r.activityLeft.add(new Left("volume", "Training volume", "This phone counts no calories."));
+        if (r.device == MainDevice.PHONE) r.activityLeft.add(new Left("volume", "Training volume", STEP_KCAL_LEFT_OUT));
         leftOut(r.activity, ACTIVITY_PARTS, r.activityLeft, dev);
     }
+
+    /** Why Training volume is left out with only the phone, which shows calories from walking as a rough estimate (review of #467). */
+    public static final String STEP_KCAL_LEFT_OUT = "Calories from walking are only a rough estimate, so the score leaves them out.";
 
     private static void readiness(Result r, Day[] days, WatchDays.Night[] nights, double[] lowest, String dev) {
         int last = days.length - 1;
