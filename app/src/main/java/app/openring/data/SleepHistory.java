@@ -29,7 +29,8 @@ public final class SleepHistory {
     /**
      * Stage detail level all nights were analysed with, so the Wake ups line can say what was counted
      * (issue #128); nights stored without one count as Detailed (as on the night), -1 when their wake up
-     * rules differ (Calm and another level; Detailed and Balanced count the same wake ups).
+     * rules differ (Calm and another level; Detailed and Balanced count the same wake ups). Nights by hand
+     * have no level and are left out (issue #459); with only those, Detailed.
      */
     public int stageDetail = StageFilter.DETAILED;
     /**
@@ -95,6 +96,8 @@ public final class SleepHistory {
         private final SleepHistory h = new SleepHistory();
         private double[][] col = new double[COLUMNS][32];
         private int n;
+        /** A night with a detail level was added (nights by hand have none, issue #459). */
+        private boolean levelSeen;
 
         Fold(ZoneId zone) {
             this.zone = zone;
@@ -105,10 +108,14 @@ public final class SleepHistory {
             int i = n++;
             if (i == 0) h.firstDay = o.optString("day");
             h.lastDay = o.optString("day");
-            int lv = StageFilter.clampLevel(o.optInt("stage_detail", StageFilter.DETAILED));
-            // Detailed and Balanced keep the same wake ups (a minute or more): only a different rule is a mix
-            if (i == 0) h.stageDetail = lv;
-            else if (h.stageDetail >= 0 && WakeUps.shortestKeptMin(h.stageDetail) != WakeUps.shortestKeptMin(lv)) h.stageDetail = -1;
+            // a night by hand has no stages, so no detail level: its wake ups count, the note does not ask (issue #459)
+            if (!HandNights.isHand(o)) {
+                int lv = StageFilter.clampLevel(o.optInt("stage_detail", StageFilter.DETAILED));
+                // Detailed and Balanced keep the same wake ups (a minute or more): only a different rule is a mix
+                if (!levelSeen) h.stageDetail = lv;
+                else if (h.stageDetail >= 0 && WakeUps.shortestKeptMin(h.stageDetail) != WakeUps.shortestKeptMin(lv)) h.stageDetail = -1;
+                levelSeen = true;
+            }
             col[ASLEEP][i] = Json.d(o, "asleep_min");
             col[IN_BED][i] = Json.d(o, "in_bed_min");
             col[DEEP][i] = Json.d(o, "deep_min");

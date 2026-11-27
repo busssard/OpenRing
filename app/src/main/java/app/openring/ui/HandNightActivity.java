@@ -31,7 +31,8 @@ import app.openring.data.Prefs;
  * The times start at the person's usual ones (the median of the last 14 shown nights, else 23:00 to 07:00) or, for Change, at
  * the stored night. Nothing is written before Save; Save writes one transaction in the background ({@link HandNights#save}).
  * Extras: {@code day} (yyyy-mm-dd, the day the night belongs to), {@code made} (the night to change), {@code demo_marks}
- * (int, demo mode only, the screen test: this many wake marks added).
+ * (int, demo mode only, the screen test: this many wake marks added), {@code demo_clock} (boolean, demo mode only, the screen
+ * test: the usual times worked out as at {@link HandNight#demoNow}, 09:00 of the day, not at the clock's time; issue #458).
  */
 public final class HandNightActivity extends Activity {
     private LinearLayout body;
@@ -99,6 +100,8 @@ public final class HandNightActivity extends Activity {
         final LocalDate d = day;
         final double want = made;
         final int demoMarks = Prefs.of(this).demo() ? Math.max(0, getIntent().getIntExtra("demo_marks", 0)) : 0;
+        // the screen test's fixed "now" (issue #458, demo mode only): its picture does not depend on the hour it runs
+        final boolean demoClock = Prefs.of(this).demo() && getIntent().getBooleanExtra("demo_clock", false);
         new AsyncTask<Void, Void, Loaded>() {
             @Override
             protected Loaded doInBackground(Void... v) {
@@ -122,7 +125,8 @@ public final class HandNightActivity extends Activity {
                             if (!Double.isNaN(s) && e > s) nights.add(new double[] {s, e});
                         }
                         // a night that has not ended yet (today) ends now at the latest
-                        double[] t = HandNight.defaults(d, l.zone, nights, System.currentTimeMillis() / 1000.0);
+                        double now = demoClock ? HandNight.demoNow(d, l.zone) : System.currentTimeMillis() / 1000.0;
+                        double[] t = HandNight.defaults(d, l.zone, nights, now);
                         l.start = t[0];
                         l.stop = t[1];
                     }

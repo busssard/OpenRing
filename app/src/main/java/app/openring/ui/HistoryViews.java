@@ -217,7 +217,7 @@ final class HistoryViews {
             public String of(double v) {
                 return DeviceHistory.stepsText(v, Locale.getDefault());
             }
-        }, average(d, h.steps, DeviceHistory.WEEK, 1, " steps", 0) + "The line is your goal of " + whole(h.goal) + " steps (Settings, Watch). " + from(d) + "."));
+        }, average(d, h.steps, DeviceHistory.WEEK, 1, " steps", 0) + DeviceHistory.goalLine(h.goal, h.device, Locale.getDefault()) + from(d) + "."));
         double[] steps30 = h.last(h.steps, d.end(DeviceHistory.MONTH), DeviceHistory.MONTH);
         root.addView(month(c, d, "Steps, last 30 days", steps30, Ui.ACTIVE, " steps", Explain.NO_STEPS_YET,
                 average(d, h.steps, DeviceHistory.MONTH, 1, " steps", 0) + from(d) + "."));
