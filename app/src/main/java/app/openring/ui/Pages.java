@@ -469,7 +469,7 @@ public final class Pages {
         card.addView(Ui.caption(c, "Night timeline"));
         String note = n.has("stage_detail") ? WakeUps.levelNote(n.optInt("stage_detail")) : null;
         // sleep sounds (issue #380, phase 1c): their rows in yellow
-        boolean sounds = app.openring.core.SoundMarks.anySound(extra);
+        boolean sounds = app.openring.core.SoundMarks.anyYellow(extra);
         card.addView(Ui.text(c, "Every wake up of a minute or more, as counted in Wake ups." + (note == null ? "" : " " + note)
                 + (sounds ? " " + app.openring.core.SoundMarks.TIMELINE_NOTE : ""), 11, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(c, 6));
