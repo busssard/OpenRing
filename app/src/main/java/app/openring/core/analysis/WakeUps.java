@@ -123,10 +123,7 @@ public final class WakeUps {
     }
 
     /**
-     * The rows of the Sleep page's night timeline, each {clock, text}: left out times before the night (issue #254), the
-     * start of the sleep window, falling asleep, every wake up {@link #list} counts (issue #70) with the lowest heart rate
-     * between them where it happened, waking up, the end of the window and left out times after it. Times are rounded to
-     * whole minutes ({@link #clock}), so clock times and the minutes between them agree.
+     * The rows of the Sleep page's night timeline, each {clock, text}: the texts of {@link #rows}, which holds every rule.
      *
      * @param st the night's stages, one per step
      * @param s the window's start, unix seconds
@@ -139,43 +136,60 @@ public final class WakeUps {
      */
     public static List<String[]> timeline(int[] st, double s, double e, double lowAt, double lowHr,
                                           List<double[]> leftOut, java.time.ZoneId z, java.util.Locale loc) {
+        return TimelineRow.pairs(rows(st, s, e, lowAt, lowHr, leftOut, z, loc));
+    }
+
+    /**
+     * The rows of the Sleep page's night timeline with their moments and kinds ({@link TimelineRow}, code health of issue
+     * #380): left out times before the night (issue #254), the start of the sleep window, falling asleep, every wake up
+     * {@link #list} counts (issue #70) with the lowest heart rate between them where it happened, waking up, the end of the
+     * window and left out times after it. Times are rounded to whole minutes ({@link #clock}), so clock times and the
+     * minutes between them agree. Rows of other kinds (sleep sounds) are sorted in with {@link TimelineRow#merge}.
+     * Parameters as {@link #timeline}.
+     */
+    public static List<TimelineRow> rows(int[] st, double s, double e, double lowAt, double lowHr,
+                                         List<double[]> leftOut, java.time.ZoneId z, java.util.Locale loc) {
         double ep = step(st, s, e);
         java.time.ZoneId lz = z == null ? java.time.ZoneId.systemDefault() : z; // LeftOut needs a zone
-        List<String[]> rows = new ArrayList<String[]>();
-        List<String[]> leftBefore = new ArrayList<String[]>(), leftAfter = new ArrayList<String[]>();
+        List<TimelineRow> rows = new ArrayList<TimelineRow>();
+        List<TimelineRow> leftBefore = new ArrayList<TimelineRow>(), leftAfter = new ArrayList<TimelineRow>();
         for (double[] r : leftOut) {
             if (r[1] < s - TIMELINE_LEFT_OUT_REACH_S || r[0] > e + TIMELINE_LEFT_OUT_REACH_S) continue;
-            String[] row = {clock(r[0], z), LeftOut.timelineRow(r[0], r[1], lz)};
+            TimelineRow row = new TimelineRow(r[0], TimelineRow.LEFT_OUT, clock(r[0], z), LeftOut.timelineRow(r[0], r[1], lz));
             if (r[1] <= s + TIMELINE_BEFORE_SLACK_S) leftBefore.add(row);
             else leftAfter.add(row);
         }
         rows.addAll(leftBefore);
-        rows.add(new String[] {clock(s, z), "Start of the sleep window"});
+        rows.add(night(s, z, "Start of the sleep window"));
         int first = -1, last = -1;
         for (int i = 0; i < st.length; i++) if (st[i] >= 1 && st[i] <= 3) {
             if (first < 0) first = i;
             last = i;
         }
         boolean lowDone = Double.isNaN(lowAt);
-        String[] lowRow = {clock(lowAt, z), "Lowest heart rate, "
-                + (Double.isNaN(lowHr) ? "--" : String.format(loc, "%.0f", lowHr)) + " bpm"};
+        TimelineRow lowRow = night(lowAt, z, "Lowest heart rate, "
+                + (Double.isNaN(lowHr) ? "--" : String.format(loc, "%.0f", lowHr)) + " bpm");
         if (first >= 0) {
             double asleep = s + first * ep;
-            rows.add(new String[] {clock(asleep, z), "Fell asleep" + (first > 0 ? " after " + shownMinutes(s, asleep) + " min" : "")});
+            rows.add(night(asleep, z, "Fell asleep" + (first > 0 ? " after " + shownMinutes(s, asleep) + " min" : "")));
             for (int[] w : list(st, ep)) {
                 double a = s + w[0] * ep, b = s + w[1] * ep;
                 if (!lowDone && lowAt < a) {
                     rows.add(lowRow);
                     lowDone = true;
                 }
-                rows.add(new String[] {clock(a, z), "Awake for " + shownMinutes(a, b) + " min, back asleep " + clock(b, z)});
+                rows.add(night(a, z, "Awake for " + shownMinutes(a, b) + " min, back asleep " + clock(b, z)));
             }
             if (!lowDone) rows.add(lowRow);
-            rows.add(new String[] {clock(s + (last + 1) * ep, z), "Woke up"});
+            rows.add(night(s + (last + 1) * ep, z, "Woke up"));
         }
-        rows.add(new String[] {clock(e, z), "End of the sleep window"});
+        rows.add(night(e, z, "End of the sleep window"));
         rows.addAll(leftAfter);
         return rows;
+    }
+
+    private static TimelineRow night(double at, java.time.ZoneId z, String text) {
+        return new TimelineRow(at, TimelineRow.NIGHT, clock(at, z), text);
     }
 
     static List<int[]> runs(int[] st, double stepS, boolean wakeUps) {

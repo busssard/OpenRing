@@ -460,27 +460,32 @@ public final class Pages {
 
     /**
      * The night as a list of moments: bedtime, falling asleep, every wake up of a minute or more (the
-     * ones Wake ups counts, issue #70), lowest HR, waking. The rows come from {@link WakeUps#timeline}.
+     * ones Wake ups counts, issue #70), lowest HR, waking. The rows come from {@link WakeUps#rows}; {@code extra} rows
+     * (null for none) are sorted in by time ({@link app.openring.core.analysis.TimelineRow#merge}).
      */
-    static View timeline(Context c, JSONObject n, java.time.ZoneId z, List<double[]> leftOut) {
+    static LinearLayout timeline(Context c, JSONObject n, java.time.ZoneId z, List<double[]> leftOut,
+            List<app.openring.core.analysis.TimelineRow> extra) {
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, "Night timeline"));
         String note = n.has("stage_detail") ? WakeUps.levelNote(n.optInt("stage_detail")) : null;
-        card.addView(Ui.text(c, "Every wake up of a minute or more, as counted in Wake ups." + (note == null ? "" : " " + note),
-                11, Ui.TEXT_3, Ui.REGULAR));
+        // sleep sounds (issue #380, phase 1c): their rows in yellow
+        boolean sounds = app.openring.core.SoundMarks.anyYellow(extra);
+        card.addView(Ui.text(c, "Every wake up of a minute or more, as counted in Wake ups." + (note == null ? "" : " " + note)
+                + (sounds ? " " + app.openring.core.SoundMarks.TIMELINE_NOTE : ""), 11, Ui.TEXT_3, Ui.REGULAR));
         card.addView(Ui.gap(c, 6));
         int[] st = Json.stages(n);
         double s = Json.d(n, "start"), e = Json.d(n, "end");
         double ep = WakeUps.step(st, s, e);
         // the rows, with left out times next to the night (issue #254), in core so they are tested
-        List<String[]> rows = WakeUps.timeline(st, s, e, Json.d(n, "lowest_hr_time"), Json.d(n, "lowest_hr"), leftOut, z,
-                Locale.getDefault());
-        for (String[] r : rows) {
+        List<app.openring.core.analysis.TimelineRow> rows = app.openring.core.analysis.TimelineRow.merge(
+                WakeUps.rows(st, s, e, Json.d(n, "lowest_hr_time"), Json.d(n, "lowest_hr"), leftOut, z, Locale.getDefault()), extra);
+        for (app.openring.core.analysis.TimelineRow r : rows) {
             LinearLayout row = Ui.hbox(c);
             row.setPadding(0, Ui.dp(c, 3), 0, Ui.dp(c, 3));
-            TextView t = Ui.text(c, r[0], 14, Ui.SLEEP, Ui.MEDIUM);
+            boolean sound = app.openring.core.analysis.TimelineRow.SOUND.equals(r.kind) || app.openring.core.analysis.TimelineRow.LISTEN.equals(r.kind);
+            TextView t = Ui.text(c, r.clock, 14, sound ? Ui.TEMP : Ui.SLEEP, Ui.MEDIUM);
             row.addView(t, new LinearLayout.LayoutParams(Ui.dp(c, 58), -2));
-            row.addView(Ui.text(c, r[1], 14, Ui.TEXT, Ui.REGULAR), Ui.weight(1));
+            row.addView(Ui.text(c, r.text, 14, sound ? Ui.TEXT_2 : Ui.TEXT, Ui.REGULAR), Ui.weight(1));
             card.addView(row);
         }
         int brief = WakeUps.shortOnes(st, ep);
@@ -603,13 +608,19 @@ public final class Pages {
         List<app.openring.core.LifeTimes.Band> nightLife = LifeCard.bands(d, Json.d(n, "start"), Json.d(n, "end"), nz);
         hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, Json.stages(n), Json.d(n, "start"), Json.d(n, "end")).clockChange(clockAt).zone(nz).life(nightLife), app.openring.core.Tour.CHART), Ui.sized(c, -1, 170));
         JSONArray mv = n.optJSONArray("motion_series");
-        if (mv != null && mv.length() > 0) {
+        boolean moves = mv != null && mv.length() > 0;
+        if (moves) {
             hyp.addView(Ui.gap(c, 6));
             hyp.addView(Ui.text(c, "Movement", 11, Ui.TEXT_3, Ui.MEDIUM));
-            hyp.addView(new Charts.Strip(c, Json.series(mv), Json.d(n, "start"), Json.d(n, "end"), Ui.ACTIVE), Ui.sized(c, -1, 26));
+            // readable by touch, the readout above its bars (code health of #380)
+            hyp.addView(new Charts.Strip(c, Json.series(mv), Json.d(n, "start"), Json.d(n, "end"), Ui.ACTIVE).zone(nz), Ui.sized(c, -1, 48));
+            hyp.addView(Ui.text(c, app.openring.core.NightStrip.MOVEMENT_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));
         }
+        // sleep sounds of the night on the same axis (issue #380, phase 1c), read by touch, each mark playable
+        SoundViews.strip(c, d, hyp, Json.d(n, "start"), Json.d(n, "end"), nz, true);
         hyp.addView(Ui.gap(c, 4));
-        hyp.addView(Ui.text(c, "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
+        hyp.addView(Ui.text(c, moves ? "Touch or slide along the charts to see the time, the stage and the movement."
+                : "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 8));
         hyp.addView(Ui.text(c, Explain.STAGES, 12, Ui.TEXT_2, Ui.REGULAR));
         hyp.addView(Ui.gap(c, 10));
@@ -665,7 +676,9 @@ public final class Pages {
         }
         root.addView(hyp);
 
-        root.addView(timeline(c, n, nz, d.leftOut));
+        LinearLayout tl = timeline(c, n, nz, d.leftOut, SoundViews.timelineRows(d, nz));
+        SoundViews.timelineNote(c, tl, d);
+        root.addView(tl);
         // sleep sounds of this night (issue #380): the night's marks with their clips, Listen tonight
         root.addView(SoundViews.card(c, d, nav));
         root.addView(contributors(c, d.scoreObj("sleep"), Ui.SLEEP, "Contributors", null, n));
@@ -772,6 +785,9 @@ public final class Pages {
         hyp.addView(TourOverlay.mark(new Charts.Hypnogram(c, wn.stages, wn.start, wn.end), app.openring.core.Tour.CHART).zone(nz).heart(withHr ? hr.points : null).lightRem(lightRem)
                         .life(LifeCard.bands(d, wn.start, wn.end, nz)),
                 Ui.sized(c, -1, withHr ? 250 : 170));
+        // sleep sounds of the night on the same axis (issue #380, phase 1c); the night timeline below only without a ring
+        app.openring.core.DeviceHistory.NightRow row = watchOnly ? d.deviceHistory.night(d.date) : null;
+        SoundViews.strip(c, d, hyp, wn.start, wn.end, nz, row != null);
         hyp.addView(Ui.gap(c, 4));
         hyp.addView(Ui.text(c, withHr ? "Touch or slide along the chart to see the time, the stage and the nearest heart rate."
                 : "Touch or slide along the chart to see the time and stage.", 11, Ui.TEXT_3, Ui.REGULAR));
@@ -811,8 +827,11 @@ public final class Pages {
         }
         root.addView(hyp);
         // the night's timeline from the watch's stages, as the ring's (each wake up of a minute or more)
-        app.openring.core.DeviceHistory.NightRow row = watchOnly ? d.deviceHistory.night(d.date) : null;
-        if (row != null) root.addView(timeline(c, app.openring.data.WatchHistory.nightJson(row), nz, new ArrayList<double[]>()));
+        if (row != null) {
+            LinearLayout tl = timeline(c, app.openring.data.WatchHistory.nightJson(row), nz, new ArrayList<double[]>(), SoundViews.timelineRows(d, nz));
+            SoundViews.timelineNote(c, tl, d);
+            root.addView(tl);
+        }
         root.addView(SoundViews.card(c, d, nav));
         if (scored) {
             DeviceViews.deviceParts(c, root, d, "sleep", Ui.SLEEP);

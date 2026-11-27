@@ -537,6 +537,7 @@ public final class SoundsActivity extends Activity {
                 Sounds.Night n = null;
                 File folder = null;
                 boolean ok = true;
+                ZoneId zone = ZoneId.systemDefault();
                 try {
                     Db db = Db.get(ctx);
                     folder = Sounds.folder(ctx, db);
@@ -554,23 +555,33 @@ public final class SoundsActivity extends Activity {
                         start = newest == null ? Double.NaN : newest.start;
                     }
                     n = Double.isNaN(start) ? null : Sounds.night(db, start);
+                    // the zone of the night, as the Sleep tab shows it (phase 1c), not the phone's now
+                    if (n != null) {
+                        // a zone that cannot be read only changes the clock shown: the list still opens, in the phone's zone
+                        try {
+                            zone = Sounds.zone(db, n.start, ZoneId.systemDefault());
+                        } catch (RuntimeException e) {
+                            zone = ZoneId.systemDefault();
+                        }
+                    }
                 } catch (RuntimeException e) {
                     ok = false;
                 }
                 final Sounds.Night night = n;
                 final File f = folder;
                 final boolean read = ok;
+                final ZoneId z = zone;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        if (!isFinishing() && !isDestroyed()) showList(night, f, read);
+                        if (!isFinishing() && !isDestroyed()) showList(night, f, read, z);
                     }
                 });
             }
         }, "sound-list").start();
     }
 
-    void showList(final Sounds.Night n, final File folder, boolean read) {
+    void showList(final Sounds.Night n, final File folder, boolean read, ZoneId zone) {
         body.removeAllViews();
         if (!read) {
             body.addView(Ui.body(this, "Sleep sounds could not be read. Nothing was changed."));
@@ -580,7 +591,6 @@ public final class SoundsActivity extends Activity {
             body.addView(Ui.body(this, SleepSounds.NOTHING));
             return;
         }
-        ZoneId zone = ZoneId.systemDefault();
         LinearLayout card = Ui.card(this);
         java.time.LocalDate day = SleepSounds.nightDay(n.start, zone);
         card.addView(Ui.caption(this, "Night before " + day.getDayOfMonth() + " " + day.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH)));
