@@ -40,6 +40,11 @@ public final class WatchPageActivity extends Activity {
     /** The per day answers, worked out once on the loading thread (the taps on another day only look them up). */
     private WatchDays.Index index;
     private LocalDate day;
+    /**
+     * Today as the shown page counts it, taken once each time a day is shown (as {@code DayData.today} for the main screen), so
+     * the day's name and both 30 day windows agree even when the page stays open past midnight (issue #479).
+     */
+    private LocalDate today = LocalDate.now();
     private ScrollView scroll;
 
     @Override
@@ -163,7 +168,8 @@ public final class WatchPageActivity extends Activity {
 
     void show(LocalDate d) {
         day = d;
-        dayLabel.setText(d.equals(LocalDate.now()) ? "Today" : d.equals(LocalDate.now().minusDays(1)) ? "Yesterday"
+        today = LocalDate.now();
+        dayLabel.setText(d.equals(today) ? "Today" : d.equals(today.minusDays(1)) ? "Yesterday"
                 : d.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault()) + " " + d.getDayOfMonth() + "." + d.getMonthValue() + ".");
         final int y = scroll.getScrollY();
         content.removeAllViews();
@@ -210,7 +216,7 @@ public final class WatchPageActivity extends Activity {
                 "Burned by moving, as the watch counted it"), Ui.stat(c, "Climbed", Double.isNaN(up) ? "--" : String.valueOf((int) up), "m", Ui.ACTIVE,
                 "Metres up, the watch's own estimate")));
         // the 30 days keep ending today while the shown day is in them (owner, 23 November)
-        LocalDate end30 = app.openring.core.DayWindow.end(d, LocalDate.now(), 30);
+        LocalDate end30 = app.openring.core.DayWindow.end(d, today, 30);
         TS ts = new TS();
         for (java.util.Map.Entry<LocalDate, Integer> e : per.entrySet()) {
             if (e.getKey().isAfter(end30) || e.getKey().isBefore(end30.minusDays(29))) continue;
@@ -311,7 +317,7 @@ public final class WatchPageActivity extends Activity {
         card.addView(Ui.statRow(c, Ui.stat(c, "Now", now == null ? "--" : String.valueOf(now.pct), "%", Ui.READY, "At the last sync"),
                 Ui.stat(c, "Per day", Double.isNaN(drop) ? "--" : Ui.fmt(drop, 1), "%", Ui.READY, "How much it fell per day in the last 7 days")));
         // the 30 days keep ending today while the shown day is in them (owner, 23 November)
-        LocalDate end30 = app.openring.core.DayWindow.end(d, LocalDate.now(), 30);
+        LocalDate end30 = app.openring.core.DayWindow.end(d, today, 30);
         TS ts = new TS();
         for (java.util.Map.Entry<LocalDate, Integer> e : index.battery.entrySet()) {
             if (e.getKey().isAfter(end30) || e.getKey().isBefore(end30.minusDays(29))) continue;

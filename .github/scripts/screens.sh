@@ -243,9 +243,11 @@ launch --es settings sounds;                shot settings-sounds 3
 # an older date with nights before and after it in the strip (issue #180 made it faster, #229)
 launch --ei tab 1 --es day "$(date -d '20 days ago' +%F)"; shot sleep-older
 # An older day keeps the newer days in the charts (owner, 23 November): 3 days back, the 7 day bars still end today with the
-# picked day's bar highlighted, and Ready's 30 day HRV still ends today with a line on the picked day
-launch --ei tab 1 --es day "$(date -d '3 days ago' +%F)" --es card TOTAL_SLEEP;   shot sleep-week-picked 2
-launch --ei tab 2 --es day "$(date -d '3 days ago' +%F)" --es card HRV;           shot ready-month-picked 2
+# picked day's bar highlighted, and Ready's 30 day HRV still ends today with a line on the picked day. The card extra stops at
+# the first text that starts with it, so it names the chart captions ("Total sleep, last 7 days", "HRV, last 30 days"): plain
+# TOTAL_SLEEP and HRV stopped at the Details stat and the HRV balance part above the charts (issue #479)
+launch --ei tab 1 --es day "$(date -d '3 days ago' +%F)" --es card TOTAL_SLEEP,_LAST; shot sleep-week-picked 2
+launch --ei tab 2 --es day "$(date -d '3 days ago' +%F)" --es card HRV,_LAST;     shot ready-month-picked 2
 launch --ei tab 1 --ez analysis true --ei period 1
 for i in $(seq 1 12); do swipe_up; done;  shot sleep-analysis 2
 launch --ei tab 2;                          shot readiness
@@ -452,15 +454,16 @@ scroll_to "LIFE FACTORS" 3 || echo "::warning::issue #292 step: the Life factors
 shot body-life-touch 1
 # how the nights went after each factor (issue #292, phase 2): the card with every row folded, then Alcohol's row opened (the
 # demo's made up clear effect: the sentence, the range bar, the chart of the nights touched on its newest night after Alcohol)
-# and Meditation's (a number that is not clear yet); extra life_effect is a factor's key, demo mode only
+# and Meditation's (a number that is not clear yet); extra life_effect is a factor's key, demo mode only. The open row's sentence
+# starts with FactorEffect.lead, "After a day with Alcohol" (issue #473; EffectPipelineTest pins it for the demo)
 launch --ei tab 4 --es card LIFE_FACTORS_AND; sleep 3
 scroll_to "LIFE FACTORS AND YOUR NIGHTS" 3 || echo "::warning::issue #292 step: the card Life factors and your nights was not found on Body"
 shot body-life-effect 1
 launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect alcohol; sleep 3
-scroll_to "After alcohol" 4 || echo "::warning::issue #292 step: Alcohol's row was not open on Body"
+scroll_to "After a day with Alcohol" 4 || echo "::warning::issue #292 step: Alcohol's row was not open on Body"
 shot body-life-effect-clear 1
 launch --ei tab 4 --es card LIFE_FACTORS_AND --es life_effect meditation; sleep 3
-scroll_to "After meditation" 4 || echo "::warning::issue #292 step: Meditation's row was not open on Body"
+scroll_to "After a day with Meditation" 4 || echo "::warning::issue #292 step: Meditation's row was not open on Body"
 shot body-life-effect-unclear 1
 # the demo's sauna yesterday at 19:00 for 45 minutes as a band on yesterday's heart rate (issue #435), touched in the band (82 % of
 # the chart's width is about 19:20), and the line under the chart: what the ring measured during it next to the day's average
