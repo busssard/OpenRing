@@ -175,9 +175,10 @@ final class SoundViews {
     /**
      * The Sounds strip under the stages in {@code parent} (the card "Sleep depth through the night"), on the stages' axis from
      * {@code from} to {@code to} in {@code zone}: the strip, the rows with Play of the marks a touch reads, the note and how
-     * many marks lie outside the window. Nothing when the day has no night listened.
+     * many marks lie outside the window, and where they are: the night timeline, or the Sleep sounds card when the page shows
+     * no timeline ({@code timeline} false). Nothing when the day has no night listened.
      */
-    static void strip(final Context c, final DayData d, LinearLayout parent, double from, double to, final java.time.ZoneId zone) {
+    static void strip(final Context c, final DayData d, LinearLayout parent, double from, double to, final java.time.ZoneId zone, boolean timeline) {
         final Sounds.Night n = d.soundsOk ? d.soundNight : null;
         if (n == null || !(to > from)) return;
         final List<SleepSounds.Mark> marks = new ArrayList<SleepSounds.Mark>();
@@ -201,7 +202,7 @@ final class SoundViews {
         parent.addView(strip, Ui.sized(c, -1, 62));
         parent.addView(picked);
         parent.addView(Ui.text(c, SoundMarks.STRIP_NOTE, 11, Ui.TEXT_3, Ui.REGULAR));
-        String outside = SoundMarks.outsideLine(SoundMarks.before(marks, from), SoundMarks.after(marks, to));
+        String outside = SoundMarks.outsideLine(SoundMarks.before(marks, from), SoundMarks.after(marks, to), timeline);
         if (outside != null) parent.addView(Ui.text(c, outside, 11, Ui.TEXT_3, Ui.REGULAR));
     }
 

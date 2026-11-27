@@ -496,7 +496,9 @@ a longer readout shows, so the readout never covers the marks or bars, review of
 a tick with a dot, a gone sound faded, the listening line along the bottom, gaps shaded in `Ui.WARN`) under the stages and Movement on
 the ring's and the watch's night pages (`SoundViews.strip`, in the stages' zone), with the rows (and Play) of the marks a touch reads
 under it; the night timeline gets the rows through `TimelineRow.merge` (sound rows with a yellow clock; its note about the yellow
-rows only on a night with sounds kept, `SoundMarks.anySound`). Code health first: the
+rows only on a night with sounds kept, `SoundMarks.anySound`; the line under the strip about marks
+outside the sleep window names the night timeline, or the Sleep sounds card on the watch's night with a ring also paired, which
+has no timeline). Code health first: the
 timeline's rows carry their moment and kind (`core/analysis/TimelineRow`, `WakeUps.rows`; `WakeUps.timeline` gives the same pairs as
 before), and `Charts.Strip` (Movement, 48 dp, its note right under it) is a `Scrub` read by touch ("02:05 to 02:10, on average 4.0 s
 of motion per ring report": each motion event reports seconds of motion, how often the ring sends them is not known, so no rate is

@@ -202,15 +202,19 @@ public final class SoundMarks {
         return n;
     }
 
-    /** "2 sounds before the sleep window and 1 after it are in the night timeline.", null when every mark is in the window. */
-    public static String outsideLine(int before, int after) {
+    /**
+     * "2 sounds before the sleep window and 1 after it are in the night timeline.", null when every mark is in the window.
+     * A page without a night timeline ({@code timeline} false, the watch's night with a ring also paired) says "are on the
+     * Sleep sounds card." instead (review of e1b6be6).
+     */
+    public static String outsideLine(int before, int after, boolean timeline) {
         if (before <= 0 && after <= 0) return null;
         String verb = before + after == 1 ? " is" : " are";
         String where;
         if (before > 0 && after > 0) where = Texts.count(before, "sound", "sounds") + " before the sleep window and " + after + " after it";
         else if (before > 0) where = Texts.count(before, "sound", "sounds") + " before the sleep window";
         else where = Texts.count(after, "sound", "sounds") + " after the sleep window";
-        return where + verb + " in the night timeline.";
+        return where + verb + (timeline ? " in the night timeline." : " on the Sleep sounds card.");
     }
 
     /**
