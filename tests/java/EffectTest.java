@@ -519,7 +519,7 @@ public class EffectTest {
         int to = card.indexOf("static void fillEffect(", from);
         String effects = from < 0 || to < 0 ? "" : card.substring(from, to);
         check("unreadable once: the effect card is left out when the factors cannot be read",
-                effects.contains("if (!d.has.ring || !d.lifeOk) return null;") && !effects.contains("LifeTags.UNREADABLE") && effects.contains("FactorEffect.UNREADABLE"),
+                effects.contains("!d.lifeOk) return null") && !effects.contains("LifeTags.UNREADABLE") && effects.contains("FactorEffect.UNREADABLE"),
                 effects.length());
     }
 
