@@ -17,6 +17,7 @@ import java.util.Locale;
 import java.util.TreeMap;
 
 import app.openring.core.Texts;
+import app.openring.core.analysis.CycleFactors;
 import app.openring.core.analysis.Cycles;
 
 /**
@@ -151,7 +152,6 @@ final class PeriodAnalysis {
      */
     static View accuracy(Context c, DayData d) {
         Cycles cy = d.periods;
-        Locale loc = Locale.getDefault();
         LinearLayout card = Ui.card(c);
         card.addView(Ui.caption(c, ACC_CAPTION));
         app.openring.core.analysis.cycleforecast.Backtest bt = cy.backtest();
@@ -175,17 +175,11 @@ final class PeriodAnalysis {
         app.openring.core.analysis.cycleforecast.Backtest.Score use = bt.of(cy.methodId);
         card.addView(Ui.gap(c, 14));
         card.addView(Ui.text(c, "Each period, " + app.openring.core.analysis.cycleforecast.Methods.name(cy.methodId), 15, Ui.TEXT, Ui.MEDIUM));
-        int n = use.n;
-        double[] x = new double[n], y = new double[n];
-        String[] tips = new String[n];
-        for (int i = 0; i < n; i++) {
-            Cycles.Cycle k = cy.cycles.get(use.index[i]);
-            x[i] = k.next.toEpochDay();
-            y[i] = use.late(i);
-            tips[i] = errorTip(cy, k, use.expected[i], use.range[i], loc);
-        }
-        card.addView(new Dots(c, x, y, new boolean[n], tips, 0, use.avgRange, " days", "Days each period came after the expected day, touch a dot to read it"), Ui.sized(c, -1, 130));
-        card.addView(PeriodCard.note(c, Explain.PERIOD_ACC_DOTS));
+        // the life factors of each cycle (phase 2 of #383): only when worked out for these very periods
+        CycleFactors cf = d.periodFactors != null && d.periodFactors.periods.size() == use.n ? d.periodFactors : null;
+        LinearLayout evidence = Ui.vbox(c);
+        card.addView(evidence, Ui.matchWrap());
+        fillEvidence(c, evidence, cy, use, cf, false);
 
         // the temperature on top
         app.openring.core.analysis.RiseBacktest rb = cy.riseBacktest();
@@ -206,6 +200,89 @@ final class PeriodAnalysis {
         card.addView(Ui.gap(c, 6));
         card.addView(Ui.howItWorks(c, accHowOpen, Explain.periodAccuracyHow()), Ui.matchWrap());
         return card;
+    }
+
+    /** The life factor marked on the chart of each period's error (issue #383, phase 2), kept while the app runs, never stored. */
+    static String factorMarked;
+
+    /**
+     * The chart of each period's error with the method in use, touch readable; with logged life factors (issue #383, phase 2)
+     * each readout names the factors of that cycle, and the chips "Mark a life factor" ring the periods whose cycle had the one
+     * picked (the cycles before it could be logged faded), with one line that only describes. {@code touch}: after a chip tap,
+     * the newest marked period opens touched.
+     */
+    static void fillEvidence(final Context c, final LinearLayout box, final Cycles cy, final app.openring.core.analysis.cycleforecast.Backtest.Score use,
+            final CycleFactors cf, boolean touch) {
+        box.removeAllViews();
+        Locale loc = Locale.getDefault();
+        final String chosen = cf != null && cf.offered(factorMarked) ? factorMarked : null;
+        int n = use.n;
+        double[] x = new double[n], y = new double[n];
+        boolean[] faded = new boolean[n], ring = new boolean[n];
+        String[] tips = new String[n];
+        for (int i = 0; i < n; i++) {
+            Cycles.Cycle k = cy.cycles.get(use.index[i]);
+            x[i] = k.next.toEpochDay();
+            y[i] = use.late(i);
+            tips[i] = errorTip(cy, k, use.expected[i], use.range[i], loc);
+            if (cf == null) continue;
+            String more = cf.tip(i, chosen, loc);
+            if (!more.isEmpty()) tips[i] += "\n" + more;
+            if (chosen != null) {
+                int s = cf.state(i, chosen);
+                ring[i] = s == CycleFactors.WITH;
+                faded[i] = s == CycleFactors.UNKNOWN;
+            }
+        }
+        boolean factors = cf != null && !cf.chips.isEmpty();
+        String name = chosen == null ? null : cf.factor(chosen).name;
+        // the start of the description stays the same: the screen test touches the chart by it
+        Dots dots = new Dots(c, x, y, faded, tips, 0, use.avgRange, " days", "Days each period came after the expected day, touch a dot to read it"
+                + (name == null ? "" : ", periods with " + name + " ringed"));
+        if (chosen != null) {
+            dots.marks(ring, Ui.LIFE);
+            if (touch) dots.touch(cf.newest(chosen));
+        }
+        // a readout with the factors has more lines: room for the longest above the dots, so it never covers them (review of #488)
+        int lines = 1;
+        for (String tip : tips) lines = Math.max(lines, tip.split("\n").length);
+        dots.lines(lines);
+        box.addView(dots, Ui.sized(c, -1, 130 + 17 * (lines - 1)));
+        if (chosen != null) {
+            android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+            key(sb, "\u25CB", Ui.LIFE, CycleFactors.legendRing(name));
+            if (cf.anyUnknown(chosen)) key(sb, "\u25CF", Ui.alpha(Ui.PERIOD, 0.35f), CycleFactors.LEGEND_FADED);
+            TextView t = Ui.text(c, "", 12, Ui.TEXT_2, Ui.REGULAR);
+            t.setText(sb);
+            t.setContentDescription("Legend of the chart of each period");
+            box.addView(t, legendParams(c));
+        }
+        box.addView(PeriodCard.note(c, Explain.PERIOD_ACC_DOTS));
+        if (!factors) return;
+        if (chosen != null) {
+            String line = cf.line(chosen, loc);
+            if (line != null) box.addView(Ui.text(c, line, 14, Ui.TEXT, Ui.REGULAR));
+            box.addView(PeriodCard.note(c, CycleFactors.CHANCE));
+        }
+        box.addView(Ui.gap(c, 8));
+        box.addView(Ui.text(c, CycleFactors.MARK, 13, Ui.TEXT_2, Ui.MEDIUM));
+        EqualGrid grid = new EqualGrid(c, 3, 6);
+        for (final app.openring.core.analysis.FactorEffect.Factor f : cf.chips) {
+            final boolean on = f.key.equals(chosen);
+            TextView chip = LifeCard.chipView(c, f.name, on);
+            chip.setContentDescription(f.name + (on ? ", marked, tap to take the mark off" : ", tap to mark the periods whose cycle had it"));
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    factorMarked = on ? null : f.key;
+                    fillEvidence(c, box, cy, use, cf, !on);
+                }
+            });
+            grid.addView(chip);
+        }
+        LinearLayout.LayoutParams gl = Ui.matchWrap();
+        gl.setMargins(0, Ui.dp(c, 6), 0, 0);
+        box.addView(grid, gl);
     }
 
     /** One method: its name (the one in use marked), a bar as long as its error, the error and how often it was in range. */
@@ -393,7 +470,19 @@ final class PeriodAnalysis {
         private final double line, band;
         private final String unit;
         private final Paint dot = new Paint(Paint.ANTI_ALIAS_FLAG), txt = new Paint(Paint.ANTI_ALIAS_FLAG), grid = new Paint(Paint.ANTI_ALIAS_FLAG),
-                ref = new Paint(Paint.ANTI_ALIAS_FLAG), fill = new Paint();
+                ref = new Paint(Paint.ANTI_ALIAS_FLAG), fill = new Paint(), ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        /** Dots ringed in their own colour (the cycles with the life factor marked, issue #383 phase 2), null for none. */
+        private boolean[] ring;
+        /** A dot to show touched once drawn (after a chip tap), -1 for none. */
+        private int touchAt = -1;
+        /** The longest readout's lines: the dots start below it (review of #488), 1 for a readout of one line. */
+        private int lines = 1;
+
+        /** Room above the dots for a readout of {@code n} lines. */
+        Dots lines(int n) {
+            lines = Math.max(1, n);
+            return this;
+        }
 
         Dots(Context c, double[] x, double[] y, boolean[] faded, String[] tips, double line, double band, String unit, String description) {
             super(c);
@@ -417,11 +506,27 @@ final class PeriodAnalysis {
             setContentDescription(description);
         }
 
+        /** Rings the dots of {@code ring} in {@code color}. */
+        Dots marks(boolean[] ring, int color) {
+            this.ring = ring;
+            ringPaint.setColor(color);
+            ringPaint.setStyle(Paint.Style.STROKE);
+            ringPaint.setStrokeWidth(Ui.dp(getContext(), 2));
+            return this;
+        }
+
+        /** Shows dot {@code i} touched once the chart is drawn (nothing for -1). */
+        void touch(int i) {
+            touchAt = i;
+            invalidate();
+        }
+
         @Override
         protected void onDraw(Canvas cv) {
             Context c = getContext();
             float w = getWidth(), h = getHeight();
-            float left = Ui.dp(c, 30), right = w - Ui.dp(c, 8), top = Ui.dp(c, 26), bottom = h - Ui.dp(c, 18);
+            // each line past the first adds one line of the readout (11.5 dp text, 1.25 line height) above the dots
+            float left = Ui.dp(c, 30), right = w - Ui.dp(c, 8), top = Ui.dp(c, 26 + 14.375f * (lines - 1)), bottom = h - Ui.dp(c, 18);
             double lo = Double.POSITIVE_INFINITY, hi = Double.NEGATIVE_INFINITY;
             for (double v : y) {
                 lo = Math.min(lo, v);
@@ -472,6 +577,11 @@ final class PeriodAnalysis {
                 ys[i] = py(y[i], lo, hi, top, bottom);
                 dot.setColor(faded[i] ? Ui.alpha(Ui.PERIOD, 0.35f) : Ui.PERIOD);
                 cv.drawCircle(xs[i], ys[i], r, dot);
+                if (ring != null && i < ring.length && ring[i]) cv.drawCircle(xs[i], ys[i], r + Ui.dp(c, 3), ringPaint);
+            }
+            if (touchAt >= 0 && touchAt < x.length) {
+                scrubX = xs[touchAt];
+                touchAt = -1;
             }
             // the first and last start on the time axis, with the year once it spans most of one
             boolean year = x1 - x0 > 300;
