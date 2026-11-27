@@ -813,6 +813,9 @@ public class SoundTest {
         int demo = l.indexOf("if (demo) {"), refuse = l.indexOf("say(app.openring.core.SleepSounds.DEMO_NO_RECORD);"), ret = l.indexOf("return;"),
                 save = l.indexOf("p.setSoundRemind(on);"), plan = l.indexOf("SoundReminder.planLater("), refill = l.lastIndexOf("fillSoundsCard();");
         check("#481 demo mode refuses before the setting or the alarm is touched", demo >= 0 && demo < refuse && refuse < ret && ret < save && ret < plan, l);
+        // the demo branch puts the switch back by refilling the card before it returns (review of 4045d67)
+        int back = l.indexOf("fillSoundsCard();");
+        check("#481 demo mode refills the card before it returns, so the switch goes back", refuse >= 0 && refuse < back && back < ret, l);
         check("#481 the card is rebuilt after saving, so the bedtime line follows the switch", save >= 0 && save < plan && plan < refill, l);
         check("#481 no setChecked inside the listener (it would call itself again)", !l.isEmpty() && !l.contains("setChecked("), l);
     }
