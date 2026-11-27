@@ -380,8 +380,9 @@ public class CoreTest {
         eq("step: equals the old rule on random nights", stepDiffers, 0);
         try {
             String root = "app/src/main/java/app/openring/ui/";
-            for (String f : new String[] {"Pages.java", "SettingsActivity.java"}) {
-                String src = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + f).toPath()), "UTF-8");
+            for (String f : new String[] {"the tabs", "SettingsActivity.java"}) {
+                String src = f.equals("the tabs") ? tabSources()
+                        : new String(java.nio.file.Files.readAllBytes(new java.io.File(root + f).toPath()), "UTF-8");
                 check("step: " + f + " uses WakeUps.step, no copy of the rule", src.contains("WakeUps.step(")
                         && !src.contains("st.length == 0 ? 30 :"));
             }
@@ -419,6 +420,112 @@ public class CoreTest {
             if (!same) differs++;
         }
         eq("timeline: random nights give the rows of the code before the move", differs, 0);
+        timelineRows380(st, s, e, left, utc);
+    }
+
+    /**
+     * Timeline rows with their time and kind (code health of issue #380): the same texts as before with each row's moment,
+     * and other rows sorted in by time without moving the night's own rows.
+     */
+    static void timelineRows380(int[] st, double s, double e, List<double[]> left, java.time.ZoneId utc) {
+        List<TimelineRow> rows = WakeUps.rows(st, s, e, s + 600, 48.4, left, utc, Locale.US);
+        List<String[]> pairs = WakeUps.timeline(st, s, e, s + 600, 48.4, left, utc, Locale.US);
+        boolean same = rows.size() == pairs.size();
+        for (int i = 0; same && i < rows.size(); i++) same = Arrays.equals(rows.get(i).pair(), pairs.get(i));
+        check("timeline rows: the same clocks and texts as the timeline", same && rows.size() == 9);
+        eq("timeline rows: a left out time is its own kind", rows.get(0).kind, TimelineRow.LEFT_OUT);
+        eq("timeline rows: its moment is its start", rows.get(0).at, s - 1800);
+        eq("timeline rows: the window's start is a night row", rows.get(1).kind, TimelineRow.NIGHT);
+        eq("timeline rows: the window's start at its moment", rows.get(1).at, s);
+        eq("timeline rows: the lowest heart rate at its moment", rows.get(3).at, s + 600);
+        eq("timeline rows: the window's end at its moment", rows.get(7).at, e);
+        eq("timeline rows: the left out time after it", rows.get(8).kind, TimelineRow.LEFT_OUT);
+
+        // merge: nothing to add gives the rows unchanged (a copy)
+        List<TimelineRow> none = TimelineRow.merge(rows, null);
+        check("merge: null adds nothing", none.equals(rows) && none != rows);
+        check("merge: an empty list adds nothing", TimelineRow.merge(rows, new ArrayList<TimelineRow>()).equals(rows));
+        // sound rows: before the window, inside (between wake ups, the same moment as a row), after it; given out of order
+        List<TimelineRow> extra = new ArrayList<TimelineRow>();
+        extra.add(new TimelineRow(e + 120, TimelineRow.LISTEN, "x", "after the end"));
+        extra.add(new TimelineRow(s - 300, TimelineRow.LISTEN, "x", "before the start"));
+        extra.add(new TimelineRow(s + 600, TimelineRow.SOUND, "x", "with the lowest heart rate"));
+        extra.add(new TimelineRow(s + 1000, TimelineRow.SOUND, "x", "between wake ups"));
+        extra.add(new TimelineRow(s + 1000, TimelineRow.SOUND, "x", "the same moment, given later"));
+        List<TimelineRow> m = TimelineRow.merge(rows, extra);
+        StringBuilder got = new StringBuilder();
+        for (TimelineRow r : m) got.append(r.text).append('\n');
+        eq("merge: sorted in by time, the night's rows in their order", got.toString(),
+                "Left out from 21:30 to 21:50 (someone else wore the ring)\n"
+                + "before the start\n"
+                + "Start of the sleep window\n"
+                + "Fell asleep after 5 min\n"
+                + "Lowest heart rate, 48 bpm\n"
+                + "with the lowest heart rate\n"
+                + "Awake for 2 min, back asleep 22:17\n"
+                + "between wake ups\n"
+                + "the same moment, given later\n"
+                + "Awake for 3 min, back asleep 22:41\n"
+                + "Woke up\n"
+                + "End of the sleep window\n"
+                + "after the end\n"
+                + "Left out from 22:50 to 23:00 (someone else wore the ring)\n");
+        eq("merge: the rows given are not changed", extra.get(0).text, "after the end");
+        // taking the extra rows out again gives the night's rows exactly, on random nights
+        Random rnd = new Random(380);
+        int moved = 0;
+        for (int t = 0; t < 500; t++) {
+            int[] g = new int[1 + rnd.nextInt(300)];
+            for (int i = 0; i < g.length; i++) g[i] = 1 + rnd.nextInt(4);
+            double a = 1_700_000_000 + rnd.nextInt(400 * 86400), b = a + g.length * 30;
+            List<TimelineRow> base = WakeUps.rows(g, a, b, a + rnd.nextDouble() * (b - a), 50, new ArrayList<double[]>(), utc, Locale.US);
+            List<TimelineRow> more = new ArrayList<TimelineRow>();
+            for (int k = rnd.nextInt(8); k > 0; k--) more.add(new TimelineRow(a - 3600 + rnd.nextDouble() * (b - a + 7200), TimelineRow.SOUND, "x", "s"));
+            List<TimelineRow> back = new ArrayList<TimelineRow>();
+            for (TimelineRow r : TimelineRow.merge(base, more)) if (!TimelineRow.SOUND.equals(r.kind)) back.add(r);
+            if (!back.equals(base)) moved++;
+        }
+        eq("merge: random nights keep their own rows in order", moved, 0);
+        nightStrip380(s, utc);
+    }
+
+    /** The Movement strip read by touch and the axis the night's strips share (code health of issue #380). */
+    static void nightStrip380(double s, java.time.ZoneId utc) {
+        eq("strip step: the 5 minute bins", NightStrip.step(new double[] {s + 150, s + 450, s + 750}), 300.0);
+        eq("strip step: a missing bin leaves the smallest step", NightStrip.step(new double[] {s + 150, s + 750, s + 1050}), 300.0);
+        eq("strip step: one point, 300 s", NightStrip.step(new double[] {s}), 300.0);
+        eq("strip step: none, 300 s", NightStrip.step(new double[0]), 300.0);
+        eq("strip step: the same time twice is not a step", NightStrip.step(new double[] {s, s, s + 60}), 60.0);
+        eq("strip step: other bins", NightStrip.step(new double[] {s, s + 120, s + 240}), 120.0);
+        double[] t = {s + 150, s + 450, s + 750};
+        eq("strip nearest: inside a bar", NightStrip.nearest(t, s + 500, 300), 1);
+        eq("strip nearest: at a bar's edge", NightStrip.nearest(t, s + 300, 300), 0);
+        eq("strip nearest: beyond the last bar", NightStrip.nearest(t, s + 950, 300), -1);
+        eq("strip nearest: no points", NightStrip.nearest(new double[0], s, 300), -1);
+        eq("strip frac: start", NightStrip.frac(s, s, s + 100), 0.0);
+        eq("strip frac: end", NightStrip.frac(s + 100, s, s + 100), 1.0);
+        eq("strip frac: an empty axis", NightStrip.frac(s + 5, s, s), 0.0);
+        // s is 22:00 UTC: the bar of 22:05 to 22:10 around 22:07:30
+        eq("movement tip", NightStrip.movementTip(s + 450, 300, 4, utc, Locale.US), "22:05 to 22:10, on average 4.0 s of motion per ring report");
+        eq("movement tip: 10 s and more whole", NightStrip.movementTip(s + 450, 300, 12.4, utc, Locale.US), "22:05 to 22:10, on average 12 s of motion per ring report");
+        eq("movement tip: none", NightStrip.movementTip(s + 450, 300, 0, utc, Locale.US), "22:05 to 22:10, no movement");
+        eq("movement tip: unknown", NightStrip.movementTip(s + 450, 300, Double.NaN, utc, Locale.US), "22:05 to 22:10, no movement reading");
+        eq("movement tip: in the night's zone", NightStrip.movementTip(s + 450, 300, 4, java.time.ZoneId.of("Asia/Tokyo"), Locale.US),
+                "07:05 to 07:10, on average 4.0 s of motion per ring report");
+        eq("movement: no reading", NightStrip.noReading(s + 30, utc), "22:01, no movement reading");
+        for (String x : new String[] {NightStrip.MOVEMENT_NOTE, NightStrip.movementTip(s, 300, 3, utc, Locale.US)}) {
+            check("movement texts: no dashes as punctuation: " + x, !x.contains(" - ") && !x.contains("–") && !x.contains("—"));
+        }
+        try {
+            String src = new String(java.nio.file.Files.readAllBytes(new java.io.File("app/src/main/java/app/openring/ui/Charts.java").toPath()), "UTF-8");
+            check("Strip is a Scrub (readable by touch)", src.contains("class Strip extends Scrub"));
+            check("Strip takes its step from the series, no 300 s built in", src.contains("NightStrip.step(") && !src.contains("* 300 /"));
+            // review of #482: the readouts of both strips only above their marks, a longer one makes the strip taller
+            check("Movement readout only where it fits", src.contains("if (roomFor(tip, h - barsH)) drawTip(cv, x, h - barsH, h, tip);"));
+            check("Sounds readout only where it fits", src.contains("if (roomFor(tip, top)) drawTip(cv, sx, top, h, tip);"));
+            check("the readout room grows the view", src.contains("getMeasuredHeight() + (int) Math.ceil(grown)"));        } catch (java.io.IOException ex) {
+            check("read Charts.java " + ex, false);
+        }
     }
 
     /** The night timeline rows exactly as ui/Pages.timeline built them before the move to WakeUps.timeline. */
@@ -10331,13 +10438,33 @@ public class CoreTest {
         eq("#373 Today's cards follow the same order for the demo's watch preview", app.openring.core.Start.cards(T, demoWatch), app.openring.core.Start.cards(T, watch));
     }
 
+    /**
+     * The sources of the six tabs joined: ui/Pages.java, every ui/*Page.java and ui/PageParts.java (issue #293, phase 0), so
+     * a "no copy left" check finds a copy in any of them.
+     */
+    static String tabSources() throws java.io.IOException {
+        java.io.File ui = new java.io.File("app/src/main/java/app/openring/ui/");
+        String[] names = ui.list();
+        java.util.Arrays.sort(names);
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (String f : names) {
+            if (!f.equals("Pages.java") && !f.endsWith("Page.java") && !f.equals("PageParts.java")) continue;
+            sb.append(new String(java.nio.file.Files.readAllBytes(new java.io.File(ui, f).toPath()), "UTF-8")).append('\n');
+            n++;
+        }
+        // Pages, the six tabs and PageParts: fewer means a file was renamed and the checks would look in too little
+        if (n < 8) throw new java.io.IOException("only " + n + " tab sources found");
+        return sb.toString();
+    }
+
     /** The screens ask core/Start (read from the sources, which the JVM cannot run). */
     static void startScreens373() {
         try {
             String root = "app/src/main/java/app/openring/";
             String main = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/MainActivity.java").toPath()), "UTF-8");
             String setup = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/SetupActivity.java").toPath()), "UTF-8");
-            String pages = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ui/Pages.java").toPath()), "UTF-8");
+            String pages = tabSources();
             String prefs = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "data/Prefs.java").toPath()), "UTF-8");
             check("#373 the main screen decides with Start.opensSetup and the watch", main.contains("app.openring.core.Start.opensSetup(prefs.demo(), prefs.setupDone(), keyState, prefs.pairUnseen() != null, prefs.watchAddress() != null)")
                     && !main.contains("app.openring.core.KeyState.opensSetup("));

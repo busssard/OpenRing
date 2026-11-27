@@ -299,7 +299,7 @@ public class LayoutTest {
     /** The screens use it: every tab is arranged, the tile header is the shared fold, demo keeps its own, the backup holds it. */
     static void sources() throws Exception {
         String main = src("ui/MainActivity.java"), tiles = src("ui/Tiles.java"), prefs = src("data/Prefs.java"), backup = src("data/Backup.java");
-        String settings = src("ui/SettingsActivity.java"), pages = src("ui/Pages.java");
+        String settings = src("ui/SettingsActivity.java"), sleep = src("ui/SleepPage.java"), parts = src("ui/PageParts.java"), activity = src("ui/ActivityPage.java");
         check("every tab is arranged after it is built", main.contains("Tiles.arrange(this, scroll, tab, (LinearLayout) content"));
         check("a page is not replaced under a held tile", main.contains("Tiles.waitForDrop("));
         check("the tile header is the shared fold", tiles.contains("Fold.inline(c, headContent,"));
@@ -316,11 +316,11 @@ public class LayoutTest {
         check("Settings has Reset layout with a question", settings.contains("\"Reset layout\"") && settings.contains("Tiles.confirmReset(SettingsActivity.this, new Runnable()"));
         check("Settings' Layout section is a fold", settings.contains("fold(app.openring.core.SettingsBlocks.LAYOUT,"));
         check("the screen test can start from the standard layout", main.contains("\"layout_reset\"") && main.contains("resetTiles(null)"));
-        check("Further analysis folds as a tile", pages.contains("s.standardOpen = false;") && pages.contains("Tiles.open(c, SLEEP, ANALYSIS_KEY, false)"));
-        check("a score dial is a tile", pages.contains("Tiles.name(card, \"score\", label + \" score\""));
-        check("a folded dial says its big line (#411's time asleep)", pages.contains("Layout.dialSummary(score, big, sub)"));
-        check("a folded Goal progress leaves out missing values", pages.contains("Tiles.summary(goal, app.openring.core.Layout.parts("));
-        check("Activity's note with a count of days has its own name", pages.contains("Tiles.name(note, ACTIVITY_DAYS_KEY, null, null)"));
+        check("Further analysis folds as a tile", sleep.contains("s.standardOpen = false;") && sleep.contains("Tiles.open(c, Pages.SLEEP, ANALYSIS_KEY, false)"));
+        check("a score dial is a tile", parts.contains("Tiles.name(card, \"score\", label + \" score\""));
+        check("a folded dial says its big line (#411's time asleep)", parts.contains("Layout.dialSummary(score, big, sub)"));
+        check("a folded Goal progress leaves out missing values", activity.contains("Tiles.summary(goal, app.openring.core.Layout.parts("));
+        check("Activity's note with a count of days has its own name", activity.contains("Tiles.name(note, ACTIVITY_DAYS_KEY, null, null)"));
         check("a tile in its standard state saves nothing", tiles.contains("Layout.fold(foldsOf(c, tabName), t.key, open, t.standardOpen)")
                 && tiles.contains("Layout.orderToSave(Layout.parse(orderOf(c, tabName)), keys, standard)"));
         check("a note's key leaves out numbers", tiles.contains("k = Layout.noteKey(firstText)"));
@@ -328,7 +328,7 @@ public class LayoutTest {
                 && !tiles.contains("SPECS.get(card);\n            t.spec") && tiles.contains("new CardSpecs<View, Spec>()"));
         check("a page that is not arranged leaves no spec behind", tiles.contains("SPECS.take(root.getChildAt(i));"));
         check("Further analysis' listener holds its body (the reason a spec must be taken)",
-                pages.contains("s.listener = new Tiles.Listener()") && pages.contains("fillAnalysis(c, d, body);"));
+                sleep.contains("s.listener = new Tiles.Listener()") && sleep.contains("fillAnalysis(c, d, body);"));
         String screens = new String(Files.readAllBytes(Paths.get(".github/scripts/screens.sh")), "UTF-8");
         check("screens.sh starts its steps in the standard layout", screens.contains("--ez layout_reset true"));
     }

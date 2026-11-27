@@ -57,7 +57,7 @@ public final class Sounds {
     public static final String ENDED_HAND = SleepSounds.ENDED_HAND, ENDED_TIME = SleepSounds.ENDED_TIME, ENDED_LIMIT = SleepSounds.ENDED_LIMIT,
             ENDED_SYSTEM = SleepSounds.ENDED_SYSTEM;
     /** Why the phone was not listening ({@code sound_gaps.why}). */
-    public static final String GAP_SILENCE = "silence", GAP_SYSTEM = "system";
+    public static final String GAP_SILENCE = app.openring.core.SoundMarks.GAP_SILENCE, GAP_SYSTEM = app.openring.core.SoundMarks.GAP_SYSTEM;
     /** The sweep leaves files younger than this alone: a clip being written has no row yet. */
     static final long SWEEP_GRACE_MS = 10 * 60 * 1000L;
 
@@ -404,6 +404,8 @@ public final class Sounds {
         public final List<Clip> clips = new ArrayList<Clip>();
         /** Seconds the microphone gave only silence (another app held it). */
         public double silent;
+        /** Every time the phone was not listening, by start (phase 1c: shaded on the Sounds strip, rows in the timeline). */
+        public final List<app.openring.core.SoundMarks.Gap> gaps = new ArrayList<app.openring.core.SoundMarks.Gap>();
 
         Night(double start, double stop, String ended) {
             this.start = start;
@@ -455,7 +457,25 @@ public final class Sounds {
         } finally {
             c.close();
         }
+        // phase 1c: each gap, of every kind, in the same range as the marks (reading only)
+        c = db.getReadableDatabase().rawQuery("SELECT start, stop, why FROM sound_gaps WHERE start >= ? AND start < ? ORDER BY start", range);
+        try {
+            while (c.moveToNext()) n.gaps.add(new app.openring.core.SoundMarks.Gap(c.getDouble(0), c.getDouble(1), c.isNull(2) ? null : c.getString(2)));
+        } finally {
+            c.close();
+        }
         return n;
+    }
+
+    /**
+     * The zone a night listened is shown in (phase 1c): the zone of the day whose Sleep tab shows it, by the rule every screen
+     * uses ({@link Exporter#dayZone}: its main night's, else the zone noted then, else the phone's), so the clip list shows the
+     * same times as the Sleep tab, also after a trip. The day is found with the zone noted at the night's start. Reads only.
+     */
+    public static java.time.ZoneId zone(Db db, double start, java.time.ZoneId phone) {
+        // an unknown zone id gives the phone's, as everywhere (ClockChange.zone never throws)
+        java.time.ZoneId noted = app.openring.core.analysis.ClockChange.zone(db.zoneAt(start));
+        return Exporter.dayZone(db, SleepSounds.nightDay(start, noted == null ? phone : noted).toString(), phone);
     }
 
     /** The newest night shown on {@code day}'s Sleep tab (started from 12:00 the day before to 12:00 that day), null for none. */

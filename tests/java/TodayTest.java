@@ -137,7 +137,7 @@ public class TodayTest {
 
     /** The screens use the one shared fold (read from the sources, which the JVM cannot run). */
     static void sources() throws Exception {
-        String ui = src("ui/Ui.java"), settings = src("ui/SettingsActivity.java"), battery = src("ui/BatteryViews.java"), pages = src("ui/Pages.java");
+        String ui = src("ui/Ui.java"), settings = src("ui/SettingsActivity.java"), battery = src("ui/BatteryViews.java"), pages = src("ui/TodayPage.java");
         String devices = src("ui/DeviceViews.java"), badges = src("ui/BadgeViews.java"), badgesPage = src("ui/BadgesActivity.java");
         check("How it works is the shared fold", ui.contains("Fold f = Fold.inline(c, title, null, open, true);"));
         check("Why this line is the shared fold", pages.contains("Ui.howFold(c, dayWhyOpen, why, \"Why this line\")"));
@@ -187,7 +187,7 @@ public class TodayTest {
         long ws = (long) start + 20 * 60, we = (long) end - 5 * 60;
         eq("watch night: big line", SleepHero.asleep(401, slept), "6h 41m asleep");
         eq("watch night: times and time in bed", SleepHero.window(ws, we, 450, z), "23:30 to 07:00, 7h 30m in bed");
-        // no time in bed (Pages.shownInBed gives -1 for a night without an end): only the times
+        // no time in bed (SleepPage.shownInBed gives -1 for a night without an end): only the times
         eq("no time in bed: only the times", SleepHero.window(start, end, -1, z), "23:10 to 07:05");
         eq("time in bed unknown: only the times", SleepHero.window(start, end, Double.NaN, z), "23:10 to 07:05");
         eq("a night without an end: as the old line, no time in bed", SleepHero.window(start, Double.NaN, -1, z), "23:10 to --");
@@ -217,7 +217,7 @@ public class TodayTest {
         check("daylight saving night lasts 9 hours", de - ds == 9 * 3600);
         eq("daylight saving night: clock times and 9h 0m in bed", SleepHero.window(ds, de, (de - ds) / 60, z), "23:00 to 07:00, 9h 0m in bed");
 
-        String ui = src("ui/Ui.java"), pages = src("ui/Pages.java"), history = src("ui/HistoryViews.java");
+        String ui = src("ui/Ui.java"), pages = src("ui/SleepPage.java"), history = src("ui/HistoryViews.java");
         check("Ui.hm is Texts.hm", ui.contains("return app.openring.core.Texts.hm(minutes);"));
         check("the ring's and the watch's hero use the helper", pages.contains("app.openring.core.SleepHero.asleep(Json.d(n, \"asleep_min\"), Json.stages(n))")
                 && pages.contains("app.openring.core.SleepHero.window(Json.d(n, \"start\"), Json.d(n, \"end\"), shownInBed(n), nz)")

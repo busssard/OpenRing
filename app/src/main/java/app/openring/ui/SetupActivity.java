@@ -710,6 +710,8 @@ public final class SetupActivity extends Activity {
         Prefs p = Prefs.of(this);
         p.setStartChoice(choice);
         p.setNoRing(true);
+        // the short tour after the watch's first sync, which the watch setup does before the main screen exists (issue #476)
+        if (app.openring.core.Tour.waitsForFirstSync(MainActivity.synced(p))) p.setTourAfterSetup(true);
         Intent main = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         if (choice == app.openring.core.Start.WATCH) startActivities(new Intent[] {main, new Intent(this, WatchSetupActivity.class)});
         else startActivity(main);
@@ -980,6 +982,8 @@ public final class SetupActivity extends Activity {
         final Prefs p = Prefs.of(this);
         // the key is saved; never send the user back through setup for this ring
         p.setSetupDone(true);
+        // the short tour starts after the first sync, also when the main screen is created again first (issue #476)
+        if (app.openring.core.Tour.waitsForFirstSync(MainActivity.synced(p))) p.setTourAfterSetup(true);
         final String hex = Hex.encode(p.loadKey());
         LinearLayout l = page("You're connected", Pairing.sentence(message) + " Back up your key somewhere safe. It cannot be read back from the ring, "
                 + "and without it you would need to factory reset the ring to connect again.");

@@ -340,6 +340,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
      * period_ask (boolean, demo mode only) shows the question "Have your periods stopped?" on the period cards until answered,
      * period_rise (boolean, demo mode only) opens Body's night temperature line touched on the first high night of the newest
      * rise it marks (phase 2),
+     * sounds_mark (boolean, demo mode only) opens the Sleep tab's Sounds strip touched on the demo's snoring stretch, with its
+     * row and Play (issue #380, phase 1c),
      * period_how (boolean, demo mode only) opens How it works on the Period card, in Your cycles and on the night
      * temperature card (issue #363),
      * drip (boolean, demo mode only) opens Import from drip with a made up drip file (the preview only, nothing is imported in
@@ -376,7 +378,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         if (i.getBooleanExtra("layout_reset", false) && Prefs.of(this).demo()) Prefs.of(this).resetTiles(null);
         // Further analysis shown open once (its tile is folded in the standard layout); nothing is saved
         if (i.getBooleanExtra("analysis", false)) Tiles.openOnce.add(app.openring.core.Layout.tab(Pages.SLEEP) + ":" + Pages.ANALYSIS_KEY);
-        if (i.hasExtra("period")) Pages.analysisPeriod = i.getIntExtra("period", 1);
+        if (i.hasExtra("period")) SleepPage.analysisPeriod = i.getIntExtra("period", 1);
         String card = i.getStringExtra("card");
         cardPending = card != null && Prefs.of(this).demo() ? card.replace('_', ' ') : null;
         String day = i.getStringExtra("day");
@@ -410,6 +412,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
         PeriodCard.askPending = i.getBooleanExtra("period_ask", false) && Prefs.of(this).demo();
         // screen test: the marked temperature rise of phase 2, read by touch on its first high night, demo mode only
         PeriodAnalysis.risePending = i.getBooleanExtra("period_rise", false) && Prefs.of(this).demo();
+        // screen test: the Sounds strip under the night's stages touched on the demo's snoring stretch (issue #380, phase 1c)
+        SoundViews.markPending = i.getBooleanExtra("sounds_mark", false) && Prefs.of(this).demo();
         // screen test: How it works opened on the Period card, in Your cycles and on the night temperature card (owner's feedback
         // of 3 November, issue #363), demo mode only
         if (i.getBooleanExtra("period_how", false) && Prefs.of(this).demo()) {
@@ -964,7 +968,10 @@ public final class MainActivity extends Activity implements RingManager.Listener
     private int tourPending = -1;
     /** The tour started after the first sync; the tour does not start by itself on this start (screen test, extra tour -1). */
     private boolean tourFirst, tourQuiet;
-    /** The newest good sync (ring or watch) this screen knew at its last look, 0 for none: the first sync starts the tour. */
+    /**
+     * The newest good sync (ring or watch) this screen knew at its last look, 0 for none: the first sync starts the tour. Only
+     * in memory; setup's saved mark ({@code Prefs.tourAfterSetup}, issue #476) covers a screen created again after that sync.
+     */
     private long syncedBefore;
 
     static long synced(Prefs p) {
@@ -988,7 +995,7 @@ public final class MainActivity extends Activity implements RingManager.Listener
         int pending = tourPending;
         tourPending = -1;
         int why = pending >= 0 ? app.openring.core.Tour.NONE
-                : app.openring.core.Tour.autoStart(p.demo(), p.tourSeen(), Tiles.editing() || tourQuiet, syncedBefore, now);
+                : app.openring.core.Tour.autoStart(p.demo(), p.tourSeen(), Tiles.editing() || tourQuiet, p.tourAfterSetup(), syncedBefore, now);
         boolean first = pending >= 0 ? tourFirst : why == app.openring.core.Tour.FIRST_SYNC;
         syncedBefore = now;
         if (pending < 0 && why == app.openring.core.Tour.NONE) return;
@@ -996,6 +1003,8 @@ public final class MainActivity extends Activity implements RingManager.Listener
             android.widget.Toast.makeText(this, "Save or leave Rearrange tiles first.", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
+        // started by itself once (issue #476): setup's mark is used up, it never starts again by itself
+        if (why == app.openring.core.Tour.FIRST_SYNC) p.setTourAfterSetup(false);
         if (why != app.openring.core.Tour.NONE) {
             android.util.Log.i("OpenRing", "tour: started by itself (" + (why == app.openring.core.Tour.DEMO ? "demo" : "first sync") + ")");
         }
