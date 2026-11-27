@@ -693,6 +693,34 @@ change that was not there) and needs 3 whole weeks and 7 days on each side. Befo
 days there are. Nothing is stored. Demo mode has a made up year of results before its five weeks (`Demo.olderYear`, see
 DEVELOPMENT.md), which Re analyse all keeps (`Db.clearResults(keepUntil)`, demo file only).
 
+**Did something change (phase 2):** `core/analysis/TrendChange` looks for a step in a measure's daily values over the whole
+history (the same in Weeks, Months and Years; not for regularity, a spread): the split with the largest
+`sqrt(k (n - k) / n) |mean before - mean after|`, 21 values or more on each side, then 999 shuffles of whole calendar weeks
+(at least 8 with values). What is shuffled is each day's distance from the mean with the part carried over from the day
+before taken out (estimated between days that follow each other, 0 to 0.9) and put back after the shuffle: plain week
+shuffles lose that carry at every week's edge and gave 2 false alarms in 100 instead of 1 with a carry of 0.3. A step is
+shown when at most 9 shuffles give one as big (1 in 100) and its range is on one side of zero; a second only when the same
+test finds one on one side and the first still holds between it and the far end. When one of two steps has a range holding
+zero it is dropped, its two parts merge and the step kept is worked out again from them, so its sentence and the drawn levels
+use the same days (`TrendChange.at` places steps by hand for tests). Periods started are counted once more than one falls in
+the span touched ("13 periods started" in a year), like workouts. The shuffles are seeded by the measure and
+the test, not by the values, so every opening gives the same answer and one more day changes only the data; a shuffle run
+stops once 10 are as big. Levels are means, medians for screen time (its typical day, "on a typical day"). The size's 90 %
+range draws whole weeks of each side again (1000 times), Student's t for the fewer weeks, widened by 1.1 (`WIDER`: 88 % of
+made up steps held without it, 91 % with it). A step of at least one day to day spread (pooled around the two levels) is
+clear and named by its day ("From about 12 June 2026"); a smaller one only by the part of its month ("From around mid June
+2026"), and "Around ..." looks six weeks around it instead of two. Measured on made up year long histories
+(`TrendChangeTest`): 1.2 false alarms in 100 measures (22 of 150 histories with one somewhere among the 12 measures), 0.4
+with no carry, 1.9 with a carry of 0.7; a step of 1.5 spreads found 48 of 48, within a week in 44 and then alone; 0.75 spreads
+found 42 of 48, within six weeks in 40, named by its day in 6. Events on the time axis, only what is stored: a lasting
+switch of the device a measure comes from (7 values in a row), a change of the stage detail level between stored nights, a
+week or more without values, a trip that moved the clock ("Clock moved to New York time", from `Trends.Day.zone`, the ring
+night's zone, else the one noted), and from `TrendDays.events` the left out times, the first day of each logged period, the
+watch's workouts (not named around a step) and, when the stored nights were worked out with "Count phone use as awake"
+(`kv screen_awake`), the first day with screen data. When a setting was switched is not stored, so it is not marked. The page
+works it out once per measure and read, off the main thread, with the places of every line and mark (`TrendChange.drawn`), so
+drawing only scales them (3 years, every measure with a step: about 0.25 s on the JVM). Nothing is stored.
+
 ### Today's Your day line (owner's wish of 16 November)
 
 `core/DayLine` goes down a fixed tree and stops at the first branch that fits: data out of date (today only, no sync for
@@ -1302,6 +1330,27 @@ app) keeps it on. Neither can be checked on the JVM; the log names each reading'
   (`Demo.phone`); a reading that arrives meanwhile goes to the real file.
 * **What it cannot do**: no steps from before the first reading, none while the phone is not carried, and the steps since the last
   reading are lost when the phone dies without shutting down. Phone and ring count differently; phase 2 compares them.
+
+### Phase 2: calories, the comparison, badges without a ring
+
+Nothing new is stored: everything is worked out on each load from the stored intervals and settings.
+* **Calories from walking** (`core/StepCalories`, only with neither a ring nor a watch): 0.5 kcal per kg of body weight and km
+  walked on level ground (ACSM walking equation: 0.1 ml O2 per kg and metre, about 5 kcal per litre), from the distance the
+  Activity tab shows (0.762 m a step) and the profile's weight; shown to the nearest 10 kcal on Activity (with the rule, its
+  source and an error of about a quarter for walking) and on Today. Not used in the activity score (Training volume stays left
+  out for the phone: brisk steps already count in Training frequency).
+* **Compare with the phone's health app**: Android 13 has no way to read another app's step totals without Health Connect, whose
+  framework API needs Android 14 and otherwise an androidx library (not allowed here). So Activity lists the phone's steps of
+  the 7 days up to the shown day (the same numbers as the chart and the dial) to hold next to the health app by hand; the Data
+  check keeps its 14 day totals.
+* **Badges without a ring**: `Badges.Day.stepGoal` (the step goal, `BadgeDays.read` sets it on the watch's or the phone's days)
+  stands in for the ring's calorie target in Goal reached, with the same 4 of 7 and "after 7 days without" rules, on worn days
+  only; a day with the ring's target always goes by its burn, and a count takes only days of the kind of the day judged (old ring
+  days next to the phone's days after a ring was removed). The step goal is today's setting for every day, so a new goal also
+  counts for earlier days (stated in the rule's text; per day goals would be new stored data). The calorie average takes the 7
+  full days (`StepCalories.weekEnd`). The Badges page's rules (`Explain.badge(kind, device)`) and its
+  wait line (`badgesWait(nights, device, stepDays)`) follow the device; with the ring they are unchanged. Settings, Phone
+  offers the step goal (the watch setup's four chips, the same `watch_goal` setting) when no watch is added.
 
 ## Other rings (issue #418, phase 1)
 

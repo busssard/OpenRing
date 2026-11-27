@@ -137,6 +137,15 @@ public class HandTest {
         eq("still the evening before at 23:14: Up 23:10, In bed 22:40", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "22:40 23:10");
         t = HandNight.defaults(DAY, Z, new ArrayList<double[]>(), at(DAY, 9, 0));
         eq("after the usual Up (09:00): 23:00 to 07:00 unchanged", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "23:00 07:00");
+        // issue #458: the screen test's fixed now, 09:00 of the day in its zone, so its picture does not depend on the hour
+        eq("demo now: 09:00 of the day", HandNight.demoNow(DAY, Z), at(DAY, 9, 0));
+        ZoneId tokyo = ZoneId.of("Asia/Tokyo");
+        eq("demo now: in the day's own zone (09:00 in Tokyo, 2026-11-19T00:00Z)", HandNight.demoNow(DAY, tokyo), 1795046400.0);
+        check("demo now: 09:00 by the day's zone, not by Zurich's", HandNight.clock(HandNight.demoNow(DAY, tokyo), tokyo).equals("09:00")
+                && !HandNight.clock(HandNight.demoNow(DAY, tokyo), Z).equals("09:00"));
+        eq("demo now: 09:00 also on the clock change day", HandNight.clock(HandNight.demoNow(LocalDate.of(2026, 3, 29), Z), Z), "09:00");
+        t = HandNight.defaults(DAY, Z, n, HandNight.demoNow(DAY, Z));
+        eq("demo now: the usual 23:55 to 07:10 stay, not capped", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "23:55 07:10");
         t = HandNight.defaults(DAY, Z, new ArrayList<double[]>(), Double.NaN);
         eq("without a time: unchanged", HandNight.clock(t[0], Z) + " " + HandNight.clock(t[1], Z), "23:00 07:00");
         double[] capped = HandNight.defaults(DAY, Z, n, at(DAY, 3, 1));

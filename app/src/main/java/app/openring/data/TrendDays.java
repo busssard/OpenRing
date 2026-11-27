@@ -102,6 +102,9 @@ public final class TrendDays {
         Set<String> deviceDays = new HashSet<String>();
         List<double[]> deviceSpans = new ArrayList<double[]>();
         for (Trends.Day x : out) {
+            // the day's zone for the trips marked on the chart (phase 2): its ring night's, else the one noted then
+            String rz = ringZone.get(x.date);
+            x.zone = rz != null ? rz : noted.of(x.date).getId();
             double[] r = ring.get(x.date);
             JSONObject w = watch.get(x.date);
             boolean useWatch = w != null && MainDevice.nightFrom(dev.main, r != null, true) == MainDevice.WATCH;
@@ -178,6 +181,68 @@ public final class TrendDays {
     }
 
     /**
+     * The events Trends marks on its time axis (issue #374, phase 2) that are stored apart from the values of each day: every
+     * left out time (the days it touches), the first day of each logged period (the period tracker's own rule,
+     * {@link Periods#cycles}), the watch's workouts (when its rows are read), and when the stored nights were worked out with
+     * "Count phone use as awake" ({@code kv screen_awake}, written by the analysis) the first day with screen data (a switch of
+     * that setting works out every night with screen data again, so the stored nights all follow one rule; only from that
+     * day on can phone use move a night). Nothing is guessed: when a
+     * setting was switched is not stored, so it is not marked. A table that cannot be read gives no events of its kind
+     * ({@code skipped[0]} counts them, for the log).
+     */
+    public static List<app.openring.core.analysis.TrendChange.Event> events(Db db, LocalDate today, ZoneId phone, ShownNights.Devices dev,
+            int[] skipped) {
+        List<app.openring.core.analysis.TrendChange.Event> out = new ArrayList<app.openring.core.analysis.TrendChange.Event>();
+        DeviceHistory.DayZones zones = WatchHistory.dayZones(db, phone);
+        try {
+            for (double[] r : db.excluded()) {
+                out.add(new app.openring.core.analysis.TrendChange.Event(app.openring.core.analysis.TrendChange.LEFT_OUT, day(r[0], zones, phone),
+                        day(Math.max(r[0], r[1] - 1), zones, phone), "Time left out"));
+            }
+        } catch (RuntimeException e) {
+            skipped[0]++;
+        }
+        try {
+            for (app.openring.core.analysis.Cycles.Period p : Periods.cycles(db, today).periods) {
+                out.add(new app.openring.core.analysis.TrendChange.Event(app.openring.core.analysis.TrendChange.PERIOD, p.start, p.start, "Period started"));
+            }
+        } catch (RuntimeException e) {
+            skipped[0]++;
+        }
+        if (dev.watch) {
+            try {
+                android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT start FROM watch_workouts ORDER BY start", null);
+                try {
+                    while (c.moveToNext()) {
+                        LocalDate d = day(c.getLong(0), zones, phone);
+                        out.add(new app.openring.core.analysis.TrendChange.Event(app.openring.core.analysis.TrendChange.WORKOUT, d, d, "Workout"));
+                    }
+                } finally {
+                    c.close();
+                }
+            } catch (RuntimeException e) {
+                skipped[0]++;
+            }
+        }
+        if (dev.ring && db.kvLong("screen_awake", 0) == 1) {
+            double first = db.screenStart(true);
+            if (first > 0) {
+                LocalDate d = day(first, zones, phone);
+                out.add(new app.openring.core.analysis.TrendChange.Event(app.openring.core.analysis.TrendChange.PHONE_AWAKE, d, d,
+                        "Phone use counted as awake from here"));
+            }
+        }
+        return out;
+    }
+
+    /** The local date of {@code unix} in the zone noted for that day. */
+    static LocalDate day(double unix, DeviceHistory.DayZones zones, ZoneId phone) {
+        java.time.Instant t = java.time.Instant.ofEpochSecond((long) Math.floor(unix));
+        LocalDate guess = t.atZone(phone).toLocalDate();
+        return t.atZone(zones.of(guess)).toLocalDate();
+    }
+
+    /**
      * A short text that changes whenever what {@link #read} reads may have changed: the last analysis, the stored nights and days,
      * the screen sessions and reads, the apps, the zones, the watch's and the phone's rows, the nights by hand. Trends reads the history again only
      * when it differs from the last read (code review of #413), so coming back to the page keeps the period touched. A table
@@ -190,7 +255,10 @@ public final class TrendDays {
             "SELECT COUNT(*) FROM watch_sleep", "SELECT COUNT(*) FROM watch_steps", "SELECT COUNT(*) FROM watch_hr", "SELECT COUNT(*) FROM phone_steps",
             // the nights by hand: a save adds a row, a delete or Undo moves a removal mark, and the keys in force tell which
             "SELECT COUNT(*) FROM sleep_manual", "SELECT COUNT(*) FROM sleep_manual WHERE COALESCE(gone, 0) <> 0",
-            "SELECT COALESCE(SUM(made), 0) FROM sleep_manual WHERE COALESCE(gone, 0) = 0"};
+            "SELECT COALESCE(SUM(made), 0) FROM sleep_manual WHERE COALESCE(gone, 0) = 0",
+            // the events of phase 2: left out times, the period log (an edit notes when it was made), the watch's workouts
+            "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM excluded", "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM period_days",
+            "SELECT COUNT(*) + COALESCE(MAX(made), 0) FROM period_ends", "SELECT COUNT(*) FROM watch_workouts"};
         for (String x : q) {
             try {
                 b.append('|').append(db.count(x));
