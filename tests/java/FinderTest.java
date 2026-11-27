@@ -2641,7 +2641,11 @@ public class FinderTest {
         }
     }
 
-    /** What the old FinderActivity.signalState set: band text, issue (text, button, action) or line. */
+    /**
+     * What the old FinderActivity.signalState set: band text, issue (text, button, action) or line. With
+     * {@link #oldSignalState} it may be removed once FinderSignal's texts or steps change on purpose (the copy
+     * then no longer describes the wanted behaviour); until then it proves the move to core changed nothing.
+     */
     static final class OldState {
         String band, line = "", issueText, button;
         String action = "NONE";
@@ -2658,7 +2662,7 @@ public class FinderTest {
     /**
      * FinderActivity.signalState as it was before the move to core (dev at 07821b9), with only the Android
      * calls replaced by the inputs and the fake answers, asked at the same places. The reference the new
-     * code is compared with.
+     * code is compared with. It may go together with {@link OldState} once FinderSignal changes on purpose.
      */
     static OldState oldSignalState(FinderSignal.Input in, FinderSignal.Ask ask, long now, long listenSince, long unusableAt, long otherAt) {
         OldState o = new OldState();
@@ -2844,6 +2848,17 @@ public class FinderTest {
         in.sdk = 33;
         FinderSignal.of(in, new12);
         eq("signal: Android 12 never asks for Location", new12.log.toString(), "g");
+        // the limit itself: Android 12 (sdk 31) is the first that does not need Location, Android 11 (30) the last that does
+        FakeAsk at31 = new FakeAsk(true, false, false), at30 = new FakeAsk(true, false, false);
+        in.sdk = 31;
+        s = FinderSignal.of(in, at31);
+        eq("signal: sdk 31 with Location off does not ask for Location", at31.log.toString(), "g");
+        check("signal: sdk 31 with Location off shows no Location box", s.action != FinderSignal.Action.LOCATION_SETTINGS);
+        in.sdk = 30;
+        s = FinderSignal.of(in, at30);
+        eq("signal: sdk 30 with Location off asks for Location", at30.log.toString(), "gl");
+        check("signal: sdk 30 with Location off shows the Location box", s.action == FinderSignal.Action.LOCATION_SETTINGS);
+        in.sdk = 33;
         s = FinderSignal.of(in, new FakeAsk(false, true, false));
         eq("signal: permission missing", s.text, "To hear the ring, this app needs the Nearby devices permission.");
         check("signal: permission missing, Allow", "Allow".equals(s.button) && s.action == FinderSignal.Action.ALLOW && s.label.equals("Not listening"));
