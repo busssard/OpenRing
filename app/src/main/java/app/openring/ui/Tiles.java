@@ -22,8 +22,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.WeakHashMap;
 
+import app.openring.core.CardSpecs;
 import app.openring.core.Layout;
 import app.openring.core.LayoutDraft;
 import app.openring.data.Prefs;
@@ -61,7 +61,8 @@ final class Tiles {
         void folded(boolean open);
     }
 
-    private static final Map<View, Spec> SPECS = new WeakHashMap<View, Spec>();
+    /** Taken by {@link Page#wrap}, never only read there: a value can reach its own card and would keep the page (core/CardSpecs). */
+    private static final CardSpecs<View, Spec> SPECS = new CardSpecs<View, Spec>();
     /** Tiles opened by a screen test extra ("tab:key"), shown open once without being saved. */
     static final Set<String> openOnce = new HashSet<String>();
     /** The page being dragged on, null when none: a load waits for the drop instead of replacing the page under the finger. */
@@ -250,7 +251,11 @@ final class Tiles {
      */
     static void arrange(Context c, ScrollView scroll, int tab, LinearLayout root, Runnable reload) {
         String tabName = Layout.tab(tab);
-        if (tabName == null || root.getBackground() != null) return;
+        if (tabName == null || root.getBackground() != null) {
+            // not arranged: what the page said about its cards is not needed
+            for (int i = 0; i < root.getChildCount(); i++) SPECS.take(root.getChildAt(i));
+            return;
+        }
         Page page = new Page(c, scroll, tab, tabName, root, reload);
         List<Integer> slots = new ArrayList<Integer>();
         List<View> cards = new ArrayList<View>();
@@ -314,7 +319,7 @@ final class Tiles {
         /** The card as a tile: its caption (or the page's title for it) becomes the header of a shared Fold, the rest its body. */
         Tile wrap(LinearLayout card) {
             final Tile t = new Tile();
-            Spec s = SPECS.get(card);
+            Spec s = SPECS.take(card);
             t.spec = s;
             t.standardOpen = s == null || s.standardOpen;
             View first = card.getChildCount() > 0 ? card.getChildAt(0) : null;

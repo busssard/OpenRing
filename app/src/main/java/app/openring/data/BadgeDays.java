@@ -65,10 +65,13 @@ public final class BadgeDays {
     public static final class History {
         public final List<Badges.Badge> badges;
         public final int nights;
+        /** Days that count for the step badges ({@link Badges#stepDays}): what the page waits for with only the phone (issue #329). */
+        public final int stepDays;
 
-        History(List<Badges.Badge> badges, int nights) {
+        History(List<Badges.Badge> badges, int nights, int stepDays) {
             this.badges = badges;
             this.nights = nights;
+            this.stepDays = stepDays;
         }
     }
 
@@ -80,7 +83,7 @@ public final class BadgeDays {
     /** As above with the devices of {@link #badges(Db, LocalDate, LocalDate, int, Set, LocalDate, double, ShownNights.Devices)}. */
     public static History all(Db db, int ownTarget, Set<String> excluded, LocalDate today, double now, ShownNights.Devices dev) {
         List<Badges.Day> days = read(db, first(db, today, dev), today, ownTarget, excluded, today, now, ZoneId.systemDefault(), dev);
-        return new History(Badges.of(days, today), nights(days));
+        return new History(Badges.of(days, today), nights(days), Badges.stepDays(days));
     }
 
     /**
@@ -123,7 +126,7 @@ public final class BadgeDays {
      * ({@link ShownNights}), so the phone free evening counts the watch's night too. Without a ring ({@code dev.history} not
      * -1) a day without the ring's summary takes the device's day as its dial has it ({@link app.openring.core.DeviceHistory}):
      * readiness, the sleep score of its night, steps and the minutes worn. Burn against the activity target stays the ring's
-     * (its movement analysis), so Goal reached needs a ring.
+     * (its movement analysis); without a ring the step goal stands in for it (issue #329, phase 2), as in the activity score.
      */
     public static List<Badges.Day> read(Db db, LocalDate from, LocalDate to, int ownTarget, Set<String> excluded, LocalDate today,
             double now, ZoneId phone, ShownNights.Devices dev) {
@@ -177,6 +180,7 @@ public final class BadgeDays {
                 b.coveredMin = h.wornMin[i];
                 b.restMin = 0;
                 b.with = h.device == app.openring.core.MainDevice.WATCH ? "your watch" : "this phone";
+                b.stepGoal = h.goal;
             }
             // a day analysed while it ran keeps its numbers "so far" (total_until) until it is analysed again
             b.running = !d.isBefore(today) || day != null && day.has("total_until");

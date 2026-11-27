@@ -269,7 +269,7 @@ public class RingsTest {
 
     static void demo() {
         List<WatchCheck.Found> found = WatchCheck.demoFound();
-        eq("demo: four made up devices", found.size(), 4);
+        eq("demo: five made up devices", found.size(), 5);
         WatchCheck.Found ring = found.get(3);
         check("demo: the fourth is the made up QRing ring", ring.address.equals(WatchCheck.DEMO_RING) && ring.name.startsWith("R09_ABCD")
                 && WatchCheck.family(ring) == RingFamily.QRING && ring.name.contains("example"));
@@ -285,6 +285,18 @@ public class RingsTest {
         WatchCheck.Report hw = WatchCheck.demoReport(found.get(0));
         check("demo: the headphones are an unknown device, only looked at", hw.family == RingFamily.UNKNOWN && !hw.listen
                 && WatchCheck.sendBack(hw).equals(RingFamily.UNKNOWN.line()) && WatchCheck.text(hw, false).contains("Looks like: not known"));
+        // issue #458: the fifth is a made up Oura ring, the one Open Ring reads, which the check leaves alone (the screen's device_oura)
+        WatchCheck.Found oura = found.get(4);
+        check("demo: the fifth is the made up Oura ring", oura.address.equals(WatchCheck.DEMO_OURA) && oura.name.contains("example")
+                && WatchCheck.family(oura) == RingFamily.OURA && WatchCheck.shown(found).contains(oura));
+        WatchCheck.Report ora = WatchCheck.ouraReport(oura);
+        check("demo: the Oura ring is left alone, two lines, no report", !ora.connected && !ora.listen && !WatchCheck.showsReport(ora)
+                && WatchCheck.outcome(ora).equals(WatchCheck.OURA_LEFT) && WatchCheck.sendBack(ora).equals(RingFamily.OURA_LINE));
+        check("demo: the screen finds the made up rings by address", WatchCheck.demoDevice(WatchCheck.DEMO_RING).address.equals(ring.address)
+                && WatchCheck.family(WatchCheck.demoDevice(WatchCheck.DEMO_RING)) == RingFamily.QRING
+                && WatchCheck.family(WatchCheck.demoDevice(WatchCheck.DEMO_OURA)) == RingFamily.OURA && WatchCheck.demoDevice("x") == null);
+        check("demo: the made up devices have different addresses", new java.util.HashSet<String>(java.util.Arrays.asList(found.get(0).address,
+                found.get(1).address, found.get(2).address, found.get(3).address, oura.address)).size() == 5);
         WatchCheck.Report wr = WatchCheck.demoReport(found.get(1));
         check("demo: the watch's report as before", wr.family == RingFamily.WITHINGS && wr.listen
                 && WatchCheck.text(wr, false).equals(WatchCheck.text(WatchCheck.demoReport(), false)));
