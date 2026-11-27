@@ -433,7 +433,7 @@ week, Illness on the year's ill week. `Demo.history` and the year's nights are u
 
 **Phase 3, beside the number (issue #292, option A).** The cards beside readiness (`LifeCard.morning`) and beside the night on Sleep
 (`LifeCard.night`) add one line under the logged line for each tag of the day before (`LifeTags.Known.keys`, in the order of that line)
-whose phase 2 result in `DayData.lifeEffects` is clear and does not show as 0 (`FactorEffect.beside`): "After a day with Alcohol, your HRV is usually
+whose phase 2 result in `DayData.lifeEffects` is clear and does not show as 0 (`FactorEffect.beside`): "After a day with Alcohol, your HRV is on average
 12 % lower that night (clear, from 26 nights after it). Last night: 9 % lower than your usual." ("That night" for an earlier day; the second sentence
 only when that night's point has a value and a usual). Not clear tags, cycle factors and days without a ring get no line. Display only:
 nothing stored, readiness and every score unchanged (option B, a factor moving the number, is still open). Tested in `EffectTest` (its `beside` checks) and `EffectPipelineTest`.

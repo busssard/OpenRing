@@ -752,13 +752,13 @@ public final class FactorEffect {
     }
 
     /**
-     * One line beside the number: "After a day with Alcohol, your HRV is usually 12 % lower that night (clear, from 26 nights after it). Last night: 9 %
+     * One line beside the number: "After a day with Alcohol, your HRV is on average 12 % lower that night (clear, from 26 nights after it). Last night: 9 %
      * lower than your usual." The second sentence only for a {@code last} difference (NaN for none); "That night" for an earlier
      * day shown. Null when {@code diff} shows as 0 (nothing to say beside the number).
      */
     public static String besideLine(String name, int k, double diff, int nights, double last, boolean shownIsToday, Locale l) {
         if (Double.isNaN(diff) || none(k, diff)) return null;
-        StringBuilder b = new StringBuilder("After a day with ").append(name).append(", ").append(SUBJECT[k]).append(" is usually ")
+        StringBuilder b = new StringBuilder("After a day with ").append(name).append(", ").append(SUBJECT[k]).append(" is on average ")
                 .append(amount(k, diff, l)).append(' ').append(word(k, diff)).append(" that night (clear, from ").append(nights)
                 .append(nights == 1 ? " night after it)." : " nights after it).");
         if (!Double.isNaN(last) && !Double.isInfinite(last)) {

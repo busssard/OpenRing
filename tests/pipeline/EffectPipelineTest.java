@@ -106,7 +106,7 @@ public class EffectPipelineTest {
         for (String s : lines) System.out.println("    beside: " + s);
         check("#292 phase 3 demo: yesterday's tags in the order of the logged line", keys.contains(LifeTags.ALCOHOL)
                 && known.names(days.get(y)).size() == keys.size() && known.names(days.get(y)).indexOf("Alcohol") == keys.indexOf(LifeTags.ALCOHOL), keys);
-        check("#292 phase 3 demo: Alcohol's line beside today's readiness, with last night", lines.size() >= 1 && lines.get(0).startsWith("After a day with Alcohol, your HRV is usually ")
+        check("#292 phase 3 demo: Alcohol's line beside today's readiness, with last night", lines.size() >= 1 && lines.get(0).startsWith("After a day with Alcohol, your HRV is on average ")
                 && lines.get(0).contains(" lower that night (clear, from " + alc.m[FactorEffect.HRV].nWith + " nights after it). Last night: "), lines);
         check("#292 phase 3 demo: no line for Meditation (not clear yet)", keys.contains(LifeTags.MEDITATION) && lines.size() == FactorEffect.beside(l,
                 java.util.Arrays.asList(LifeTags.ALCOHOL), y, true, Locale.US).size() + FactorEffect.beside(l, java.util.Arrays.asList(LifeTags.SAUNA), y, true, Locale.US).size(), lines);
