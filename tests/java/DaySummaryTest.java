@@ -360,6 +360,13 @@ public class DaySummaryTest {
             String today = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "TodayPage.java").toPath()), "UTF-8");
             String ready = new String(java.nio.file.Files.readAllBytes(new java.io.File(root + "ReadinessPage.java").toPath()), "UTF-8");
             check("Today's digest comes from core", today.contains("return DaySummary.digest(") && !today.contains("of sleep debt"));
+            // the wrapper's inputs, verbatim (review of db73119): the watch condition and the debtMin arguments
+            check("Today's digest: the watch's sleep debt only without the ring's", today.contains(
+                    "double[] watch = !noDebt && debt == null && HistoryViews.watch(d) ? d.deviceHistory.debt(d.date) : null;"));
+            check("Today's digest: the debtMin arguments", today.contains("double debtMin = DaySummary.debtMin(debt != null, debt != null && debt.optBoolean(\"valid\"),")
+                    && today.contains("debt == null ? Double.NaN : debt.optDouble(\"debt_min\", 0), watch);"));
+            check("Today's digest: the call with them", today.contains(
+                    "return DaySummary.digest(labels, scores, rd != null && rd.optBoolean(\"provisional\"), debtMin, noDebt, forLine, Locale.getDefault());"));
             check("Readiness's headline comes from core", ready.contains("return DaySummary.headline(d.score(\"readiness\"), d.score(\"sleep\"));")
                     && !ready.contains("A good day to push a little"));
             check("the body signals' line and colour come from core", ready.contains("DaySummary.signalLine(value, usual, dp, Locale.getDefault())")
