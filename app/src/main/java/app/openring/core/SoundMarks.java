@@ -33,7 +33,7 @@ public final class SoundMarks {
 
     public static final String LABEL = "Sounds";
     public static final String STRIP_NOTE = "Sounds the phone kept: touch a mark to read it and play it. Shaded: the phone was not listening.";
-    public static final String TIMELINE_NOTE = "Sounds the phone kept are in yellow; play them on the strip or the Sleep sounds card.";
+    public static final String TIMELINE_NOTE = "Sounds and the times the phone listened are in yellow; play the sounds on the strip or the Sleep sounds card.";
     public static final String STARTED = "Started listening for sleep sounds", STOPPED = "Stopped listening";
 
     /** A time the phone was not listening. */
@@ -134,10 +134,13 @@ public final class SoundMarks {
         return tip(drawn(marks, from, to), gaps, start, stop, ended, t, reachS, zone);
     }
 
-    /** Whether the night timeline's {@code rows} hold a sound the phone kept (only then its note explains the yellow rows). */
-    public static boolean anySound(List<TimelineRow> rows) {
+    /**
+     * Whether the night timeline's {@code rows} hold a yellow row: a sound the phone kept or a listening row ("Started
+     * listening", "Not listening for 12 min"); only then its note explains the yellow (review of e1b6be6).
+     */
+    public static boolean anyYellow(List<TimelineRow> rows) {
         if (rows == null) return false;
-        for (TimelineRow r : rows) if (TimelineRow.SOUND.equals(r.kind)) return true;
+        for (TimelineRow r : rows) if (TimelineRow.SOUND.equals(r.kind) || TimelineRow.LISTEN.equals(r.kind)) return true;
         return false;
     }
 
@@ -202,15 +205,19 @@ public final class SoundMarks {
         return n;
     }
 
-    /** "2 sounds before the sleep window and 1 after it are in the night timeline.", null when every mark is in the window. */
-    public static String outsideLine(int before, int after) {
+    /**
+     * "2 sounds before the sleep window and 1 after it are in the night timeline.", null when every mark is in the window.
+     * A page without a night timeline ({@code timeline} false, the watch's night with a ring also paired) says "are on the
+     * Sleep sounds card." instead (review of e1b6be6).
+     */
+    public static String outsideLine(int before, int after, boolean timeline) {
         if (before <= 0 && after <= 0) return null;
         String verb = before + after == 1 ? " is" : " are";
         String where;
         if (before > 0 && after > 0) where = Texts.count(before, "sound", "sounds") + " before the sleep window and " + after + " after it";
         else if (before > 0) where = Texts.count(before, "sound", "sounds") + " before the sleep window";
         else where = Texts.count(after, "sound", "sounds") + " after the sleep window";
-        return where + verb + " in the night timeline.";
+        return where + verb + (timeline ? " in the night timeline." : " on the Sleep sounds card.");
     }
 
     /**

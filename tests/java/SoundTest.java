@@ -951,12 +951,15 @@ public class SoundTest {
         eq("1c drawn: a mark at the window's very end is drawn", app.openring.core.SoundMarks.drawn(Arrays.asList(
                 new app.openring.core.SleepSounds.Mark(win1, win1 + 1, SoundDetector.COUGH, true, false)), win0, win1).size(), 1);
 
-        // review of #482: the timeline's note only on a night with sounds kept
-        check("1c timeline note: no rows, no note", !app.openring.core.SoundMarks.anySound(null));
-        check("1c timeline note: only started and stopped listening, no note", !app.openring.core.SoundMarks.anySound(app.openring.core.SoundMarks.rows(
+        // review of #482 and of e1b6be6: the timeline's note whenever it has yellow rows, sounds or listening rows
+        check("1c timeline note: no rows, no note", !app.openring.core.SoundMarks.anyYellow(null));
+        check("1c timeline note: empty rows, no note", !app.openring.core.SoundMarks.anyYellow(new ArrayList<app.openring.core.analysis.TimelineRow>()));
+        check("1c timeline note: only the listening rows, the note", app.openring.core.SoundMarks.anyYellow(app.openring.core.SoundMarks.rows(
                 new ArrayList<app.openring.core.SleepSounds.Mark>(), gaps, start, stop, app.openring.core.SleepSounds.ENDED_TIME, ZURICH)));
-        check("1c timeline note: a sound kept, the note", app.openring.core.SoundMarks.anySound(app.openring.core.SoundMarks.rows(
+        check("1c timeline note: a sound kept, the note", app.openring.core.SoundMarks.anyYellow(app.openring.core.SoundMarks.rows(
                 marks, gaps, start, stop, app.openring.core.SleepSounds.ENDED_TIME, ZURICH)));
+        eq("1c timeline note: names sounds and the times listened", app.openring.core.SoundMarks.TIMELINE_NOTE,
+                "Sounds and the times the phone listened are in yellow; play the sounds on the strip or the Sleep sounds card.");
 
         // the readout where there is no mark
         String ended = app.openring.core.SleepSounds.ENDED_TIME;
@@ -990,10 +993,14 @@ public class SoundTest {
         eq("1c outside: before", app.openring.core.SoundMarks.before(marks, s), 1);
         eq("1c outside: after", app.openring.core.SoundMarks.after(marks, e), 1);
         eq("1c outside: a stretch that reaches into the window is drawn", app.openring.core.SoundMarks.before(marks, snore + 60), 1);
-        eq("1c outside: both", app.openring.core.SoundMarks.outsideLine(2, 1), "2 sounds before the sleep window and 1 after it are in the night timeline.");
-        eq("1c outside: one before", app.openring.core.SoundMarks.outsideLine(1, 0), "1 sound before the sleep window is in the night timeline.");
-        eq("1c outside: after only", app.openring.core.SoundMarks.outsideLine(0, 3), "3 sounds after the sleep window are in the night timeline.");
-        check("1c outside: none, no line", app.openring.core.SoundMarks.outsideLine(0, 0) == null);
+        eq("1c outside: both", app.openring.core.SoundMarks.outsideLine(2, 1, true), "2 sounds before the sleep window and 1 after it are in the night timeline.");
+        eq("1c outside: one before", app.openring.core.SoundMarks.outsideLine(1, 0, true), "1 sound before the sleep window is in the night timeline.");
+        eq("1c outside: after only", app.openring.core.SoundMarks.outsideLine(0, 3, true), "3 sounds after the sleep window are in the night timeline.");
+        check("1c outside: none, no line", app.openring.core.SoundMarks.outsideLine(0, 0, true) == null);
+        // review of e1b6be6: the watch's night with a ring also paired has no night timeline, so the card is named
+        eq("1c outside: no timeline, the card", app.openring.core.SoundMarks.outsideLine(2, 1, false), "2 sounds before the sleep window and 1 after it are on the Sleep sounds card.");
+        eq("1c outside: no timeline, one", app.openring.core.SoundMarks.outsideLine(0, 1, false), "1 sound after the sleep window is on the Sleep sounds card.");
+        check("1c outside: no timeline, none, no line", app.openring.core.SoundMarks.outsideLine(0, 0, false) == null);
 
         // the timeline's rows
         List<app.openring.core.analysis.TimelineRow> rows = app.openring.core.SoundMarks.rows(marks, gaps, start, stop, ended, ZURICH);
@@ -1026,7 +1033,7 @@ public class SoundTest {
         check("1c: the gap values are the stored ones", app.openring.core.SoundMarks.GAP_SILENCE.equals("silence") && app.openring.core.SoundMarks.GAP_SYSTEM.equals("system"));
 
         String[] all = {app.openring.core.SoundMarks.STRIP_NOTE, app.openring.core.SoundMarks.TIMELINE_NOTE, app.openring.core.SoundMarks.STARTED,
-            app.openring.core.SoundMarks.outsideLine(2, 1), app.openring.core.SoundMarks.shortGapsLine(3), got.toString(), app.openring.core.SoundMarks.moreLine(2),
+            app.openring.core.SoundMarks.outsideLine(2, 1, true), app.openring.core.SoundMarks.outsideLine(2, 1, false), app.openring.core.SoundMarks.shortGapsLine(3), got.toString(), app.openring.core.SoundMarks.moreLine(2),
             app.openring.core.SoundMarks.tip(marks, gaps, start, stop, ended, gapAt + 300, reach, ZURICH),
             app.openring.core.SoundMarks.tip(marks, gaps, start, stop, app.openring.core.SleepSounds.ENDED_SYSTEM, stop + 600, reach, ZURICH)};
         boolean plain = true;
