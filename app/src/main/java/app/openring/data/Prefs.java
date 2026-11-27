@@ -36,6 +36,8 @@ public final class Prefs {
     public int age() { return sp.getInt("age", InputLimit.AGE.def); }
     public int sex() { return sp.getInt("sex", 2); } // 0 male, 1 female, 2 unspecified
     public int weightKg() { return sp.getInt("weight", InputLimit.WEIGHT_KG.def); }
+    /** Whether a weight was ever saved (Setup's About you, Settings, a restored backup); false: {@link #weightKg} is the default. */
+    public boolean weightStored() { return sp.contains("weight"); }
     public int heightCm() { return sp.getInt("height", InputLimit.HEIGHT_CM.def); }
     /** Whether a height was ever entered (the finder's step length says so when it uses the default height). */
     public boolean hasHeight() { return sp.contains("height"); }

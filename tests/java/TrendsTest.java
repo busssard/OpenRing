@@ -58,6 +58,7 @@ public class TrendsTest {
         compareKinds();
         compareMore();
         demoNote();
+        stampDevices();
         enough();
         speed();
         plain();
@@ -290,6 +291,30 @@ public class TrendsTest {
         u.add(unknown);
         eq("a night without a level counts as Detailed", Trends.of(u, Trends.WAKE_UPS, Trends.MONTHS, LocalDate.parse("2026-06-01")).detail, StageFilter.DETAILED);
         check("wake ups line in the explanation", Trends.explain(Trends.WAKE_UPS, -1).contains(WakeUps.averageLine(-1)));
+        // issue #459: a night by hand has no stages, so no detail level; Calm ring nights (2 min, Detailed keeps 1 min) with
+        // one are not "mixed"
+        List<Trends.Day> withHand = new ArrayList<Trends.Day>();
+        for (int i = 0; i < 4; i++) {
+            Trends.Day x = day("2026-05-0" + (i + 1), Trends.WAKE_UPS, i);
+            x.detail = StageFilter.CALM;
+            withHand.add(x);
+        }
+        withHand.add(1, new Trends.Day(LocalDate.parse("2026-05-07")).set(Trends.WAKE_UPS, 2, Trends.HAND));
+        Trends.View wh = Trends.of(withHand, Trends.WAKE_UPS, Trends.MONTHS, LocalDate.parse("2026-06-01"));
+        eq("#459 Calm ring nights and a night by hand: Calm, not mixed", wh.detail, StageFilter.CALM);
+        eq("#459 the night by hand's wake ups still count", wh.buckets.get(0).n, 5);
+        List<Trends.Day> firstHand = new ArrayList<Trends.Day>(withHand);
+        firstHand.add(0, new Trends.Day(LocalDate.parse("2026-04-30")).set(Trends.WAKE_UPS, 1, Trends.HAND));
+        eq("#459 a night by hand first: still the ring nights' level", Trends.of(firstHand, Trends.WAKE_UPS, Trends.MONTHS, LocalDate.parse("2026-06-01")).detail,
+                StageFilter.CALM);
+        for (Trends.Day x : withHand) if (x.src[Trends.WAKE_UPS] == Trends.RING) x.detail = StageFilter.BALANCED;
+        firstHand.add(0, new Trends.Day(LocalDate.parse("2026-04-29")).set(Trends.WAKE_UPS, 1, Trends.HAND));
+        eq("#459 Balanced ring nights after nights by hand: named Balanced, not Detailed", Trends.of(firstHand, Trends.WAKE_UPS, Trends.MONTHS,
+                LocalDate.parse("2026-06-01")).detail, StageFilter.BALANCED);
+        List<Trends.Day> onlyHand = new ArrayList<Trends.Day>();
+        onlyHand.add(new Trends.Day(LocalDate.parse("2026-05-07")).set(Trends.WAKE_UPS, 2, Trends.HAND));
+        eq("#459 only nights by hand: the standard Detailed", Trends.of(onlyHand, Trends.WAKE_UPS, Trends.MONTHS, LocalDate.parse("2026-06-01")).detail,
+                StageFilter.DETAILED);
     }
 
     /** Days of a month with {@code base} plus noise (each day of [from, to]). */
@@ -427,6 +452,16 @@ public class TrendsTest {
         check("wake ups at two detail levels: no numbers", !mixed.enough && Double.isNaN(mixed.diff));
         for (Trends.Day y : w) y.detail = StageFilter.CALM;
         check("wake ups at one level: compared", Trends.compare(w, Trends.WAKE_UPS, today, L).enough);
+        // issue #459: a few nights by hand (no detail level) among the Calm ring nights do not stop the comparison (a copy, w
+        // stays as it is for the checks below)
+        List<Trends.Day> wHand = new ArrayList<Trends.Day>();
+        for (Trends.Day y : w) {
+            boolean hand = y.date.getDayOfMonth() % 9 == 0;
+            Trends.Day c = new Trends.Day(y.date).set(Trends.WAKE_UPS, hand ? 2 : y.v[Trends.WAKE_UPS], hand ? Trends.HAND : Trends.RING);
+            c.detail = hand ? -1 : y.detail;
+            wHand.add(c);
+        }
+        check("#459 wake ups at one level with nights by hand: compared", Trends.compare(wHand, Trends.WAKE_UPS, today, L).enough);
         for (Trends.Day y : w) y.detail = -1;
         check("wake ups without a level (as Detailed): compared", Trends.compare(w, Trends.WAKE_UPS, today, L).enough);
     }
@@ -444,6 +479,20 @@ public class TrendsTest {
         int show = src.indexOf("void show(");
         check("the demo note is built only in show(), after the too short page", tooShort > 0 && show > tooShort && note > show
                 && src.indexOf("Explain.TRENDS_DEMO", note + 1) < 0);
+    }
+
+    /** Issue #459: the page's stamp holds every field of the devices (the age goes into a night by hand's score). */
+    static void stampDevices() {
+        String src;
+        try {
+            src = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("app/src/main/java/app/openring/ui/TrendsActivity.java")), "UTF-8");
+        } catch (java.io.IOException e) {
+            check("TrendsActivity.java readable: " + e, false);
+            return;
+        }
+        int at = src.indexOf("l.stamp = TrendDays.stamp(db)"), end = at < 0 ? -1 : src.indexOf(';', at);
+        String stamp = end < 0 ? "" : src.substring(at, end);
+        check("#459 the Trends stamp holds every field of the devices (dev.key(), the age too): " + stamp, stamp.contains("dev.key()") && !stamp.contains("dev.main"));
     }
 
     /** The comparison sentence of {@link #compareMore}'s history, word for word. */
