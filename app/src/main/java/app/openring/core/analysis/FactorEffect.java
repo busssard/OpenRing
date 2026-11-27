@@ -714,8 +714,11 @@ public final class FactorEffect {
 
     // ------------------------------------------------------------------ beside the number (phase 3)
 
-    /** Under the lines beside readiness when at least one effect shows (phase 3, option A: display only). */
-    public static final String BESIDE_NOTE_READY = "A pattern in your own nights, not a rule. Readiness does not change because of it: last night's readings already show the effect.";
+    /**
+     * Under the lines beside readiness when at least one effect shows (phase 3, option A: display only). "the night's", not
+     * "last night's": an earlier day shown says "That night" (review of 9cfb9c4), as {@link #BESIDE_NOTE_SLEEP} does.
+     */
+    public static final String BESIDE_NOTE_READY = "A pattern in your own nights, not a rule. Readiness does not change because of it: the night's readings already show the effect.";
     /** The same under Sleep's "Before this night" line. */
     public static final String BESIDE_NOTE_SLEEP = "A pattern in your own nights, not a rule. The sleep score itself does not change: it comes from the night's own readings.";
     /** The hint of the card with at least one effect line (it opens Body, where the card Life factors and your nights is). */

@@ -514,6 +514,8 @@ public class EffectTest {
     static void beside() {
         int H = FactorEffect.HRV, R = FactorEffect.RHR, T = FactorEffect.TEMP, S = FactorEffect.SCORE;
         String a = FactorEffect.besideLine("Alcohol", H, -12.4, 26, -9.2, true, L);
+        check("beside: the readiness note fits today and an earlier day", FactorEffect.BESIDE_NOTE_READY.contains("the night's readings")
+                && !FactorEffect.BESIDE_NOTE_READY.contains("last night"), FactorEffect.BESIDE_NOTE_READY);
         check("beside: HRV", "After a day with Alcohol, your HRV is usually 12 % lower that night (clear, from 26 nights after it). Last night: 9 % lower than your usual.".equals(a), a);
         String b = FactorEffect.besideLine("Hard workout", R, 2.06, 14, 1.04, true, L);
         check("beside: lowest heart rate", "After a day with Hard workout, your lowest heart rate is usually 2.1 bpm higher that night (clear, from 14 nights after it). Last night: 1.0 bpm higher than your usual.".equals(b), b);
