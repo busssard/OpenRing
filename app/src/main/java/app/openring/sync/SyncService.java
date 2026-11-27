@@ -22,6 +22,8 @@ public final class SyncService extends Service implements RingManager.Listener {
     /** The notice after a failed sync; stays after the sync notification is gone (issue #91). */
     static final int FAILED_ID = 8;
     private volatile boolean running;
+    /** The text the sync notification shows now; an unchanged text is not sent again (review of dbc5c9d). */
+    private String shownText;
 
     public static void start(Context c) {
         Intent i = new Intent(c, SyncService.class);
@@ -42,7 +44,7 @@ public final class SyncService extends Service implements RingManager.Listener {
         PendingIntent pi = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_ring)
-                .setContentTitle("Syncing your ring")
+                .setContentTitle(app.openring.core.SyncProgress.NOTIFICATION_TITLE)
                 .setContentText(text)
                 // the plain sentences after a failed sync are longer than one line (issue #91)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
@@ -80,6 +82,9 @@ public final class SyncService extends Service implements RingManager.Listener {
     public int onStartCommand(Intent intent, int flags, int startId) {
         ensureChannel(this);
         Notification n = build("Starting");
+        synchronized (this) {
+            shownText = null; // the notice shows "Starting" now, so the next status is sent whatever it says
+        }
         try {
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
@@ -134,8 +139,15 @@ public final class SyncService extends Service implements RingManager.Listener {
     @Override
     public void onRingStatus() {
         if (!running) return;
+        // the ring's line without the words of the title ("About 40 % (1234 events so far)", review of 2fc3d99)
+        String text = app.openring.core.SyncProgress.notificationText(RingManager.get(this).status());
+        synchronized (this) {
+            // a watch update comes up to 4 times a second and leaves the ring's line as it was: nothing new to show
+            if (text == null ? shownText == null : text.equals(shownText)) return;
+            shownText = text;
+        }
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.notify(ID, build(RingManager.get(this).status()));
+        nm.notify(ID, build(text));
     }
 
     @Override

@@ -21,6 +21,8 @@ import java.util.concurrent.TimeUnit;
 
 import app.openring.core.Protocol;
 import app.openring.core.RingGate;
+import app.openring.core.SyncProgress;
+import app.openring.core.SyncProgress.Show;
 import app.openring.core.withings.Frame;
 import app.openring.core.withings.Records;
 import app.openring.core.withings.Session;
@@ -67,6 +69,41 @@ public final class WatchSync {
     /** True while a watch sync runs. */
     public static boolean running() {
         return RingGate.RING.watch.isLocked();
+    }
+
+    /**
+     * What the main screen and Settings show of the sync running now (issue #478): step n of N, the data steps' percent.
+     * Display only: it hears what the session already reports, every call to it is guarded ({@link #shown}), and nothing it
+     * holds is ever sent to the watch.
+     */
+    public static final SyncProgress.Watch SHOWN = new SyncProgress.Watch();
+
+    /**
+     * Applies {@code s} to {@link #SHOWN} and tells the screens when due, through {@link SyncProgress#show}, which swallows
+     * any error, so a sync never notices it (the guard lives in core so the JVM tests run it, review of 2fc3d99).
+     */
+    private static void shown(final RingManager ring, Show s) {
+        SyncProgress.show(s, new Runnable() {
+            @Override
+            public void run() {
+                ring.showChanged();
+            }
+        });
+    }
+
+    /** The session's step reports for a sync: handed on to {@code also} (may be null) as before, then shown, guarded ({@link SyncProgress#guard}). */
+    private static Session.Progress shownSteps(final RingManager ring, final Session.Progress also) {
+        return SyncProgress.guard(also, new Session.Progress() {
+            @Override
+            public void step(final String key, final int state) {
+                shown(ring, new Show() {
+                    @Override
+                    public boolean apply() {
+                        return SHOWN.step(key, state, SystemClock.elapsedRealtime());
+                    }
+                });
+            }
+        });
     }
 
     /**
@@ -138,6 +175,13 @@ public final class WatchSync {
         // stopped before it began: no attempt, the job tries again at its next run
         if (stop != null && stop.stopped()) return Session.STOPPED;
         if (!RingGate.RING.watch.tryLock()) return ALREADY;
+        // the job's sync carries its ticket, a sync by hand none: the line says "in the background" for the job's
+        if (mode == SYNC) shown(ring, new Show() {
+            @Override
+            public boolean apply() {
+                return SHOWN.start(stop != null);
+            }
+        });
         try {
             // before the ring lock: a full re decode after a new decoder can take long, and a ring sync waits at most 15 s
             String early = decodeStored(ctx, ring, mode);
@@ -147,6 +191,13 @@ public final class WatchSync {
             boolean ran = ring.whileRingFree(new Runnable() {
                 @Override
                 public void run() {
+                    // the ring is free and the stored messages are decoded: the line says "connecting" from here (display only)
+                    if (mode == SYNC) shown(ring, new Show() {
+                        @Override
+                        public boolean apply() {
+                            return SHOWN.connecting();
+                        }
+                    });
                     try {
                         out[0] = locked(ctx, a, address, ring, mode, progress, more, stop);
                     } catch (RuntimeException e) {
@@ -168,7 +219,21 @@ public final class WatchSync {
             if ((mode == SYNC || mode == SETUP) && !DEMO.equals(out[0]) && !LONG_RUN.equals(out[0])) p.setWatchResult(attempt, ok, out[0]);
             return out[0];
         } finally {
+            if (mode == SYNC) shown(ring, new Show() {
+                @Override
+                public boolean apply() {
+                    return SHOWN.end();
+                }
+            });
             RingGate.RING.watch.unlock();
+            // once more after the unlock: the update end() posted can run before it, and Settings keeps its line until
+            // running() is false (review of 2fc3d99); display only, after everything the sync does
+            if (mode == SYNC) shown(ring, new Show() {
+                @Override
+                public boolean apply() {
+                    return true;
+                }
+            });
         }
     }
 
@@ -219,7 +284,8 @@ public final class WatchSync {
             final Prefs prefs = Prefs.of(ctx);
             // the hands: from the moment calibration mode is asked for until it is switched off, the watch may be in it
             final boolean[] handsStarted = {false};
-            plan.progress = mode != HANDS ? progress : new Session.Progress() {
+            // a sync's steps are also shown on the screens (issue #478); the setup, alarm and hands keep theirs as before
+            plan.progress = mode == SYNC ? shownSteps(ring, progress) : mode != HANDS ? progress : new Session.Progress() {
                 @Override
                 public void step(String key, int state) {
                     if (WatchSetup.HANDS_START.equals(key) && state == Session.STARTED) {
@@ -251,6 +317,17 @@ public final class WatchSync {
             if (closing) plan.steps = WatchSetup.closeCalibrationFirst(plan.steps, plan);
             ring.log("watch: " + (mode == SETUP ? "setup" : mode == ALARM ? "alarm" : mode == HANDS ? "hand calibration" : "sync") + ", " + plan.steps.size() + " steps"
                     + (who.complete() ? "" : ", the user is not sent (sex not given)") + (closing ? ", hand setting left open last time is ended first" : ""));
+            if (mode == SYNC) {
+                final int steps = plan.steps.size();
+                final long activityFrom = plan.activitySince, heartFrom = plan.heartSince;
+                shown(ring, new Show() {
+                    @Override
+                    public boolean apply() {
+                        SHOWN.plan(steps, now, activityFrom, movementSince, heartFrom);
+                        return false;
+                    }
+                });
+            }
             final int[] seq = {0};
             Session.Result r = Session.run(link, plan, new Session.Gate() {
                 @Override
@@ -264,12 +341,19 @@ public final class WatchSync {
                 }
             }, new Session.Sink() {
                 @Override
-                public void received(byte[] msg) throws IOException {
+                public void received(final byte[] msg) throws IOException {
                     try {
                         WatchStore.addRaw(db, session, seq[0]++, address, msg, captured);
                     } catch (RuntimeException e) {
                         throw new IOException(e);
                     }
+                    // stored first; then only read for the screens' percent (issue #478)
+                    if (mode == SYNC) shown(ring, new Show() {
+                        @Override
+                        public boolean apply() {
+                            return SHOWN.message(msg, SystemClock.elapsedRealtime());
+                        }
+                    });
                 }
 
                 @Override
@@ -287,6 +371,12 @@ public final class WatchSync {
                 }
             });
             link.close();
+            if (mode == SYNC) shown(ring, new Show() {
+                @Override
+                public boolean apply() {
+                    return SHOWN.saving();
+                }
+            });
             if (r.done.contains(WatchSetup.ALARM_ON) && !prefs.setWatchAlarmSent(alarmChange)) ring.log("watch: the alarm changed during the session, it goes with the next sync");
             if (r.done.contains(WatchSetup.FINISHED)) prefs.setWatchSetupAt(now);
             if (r.done.contains(WatchSetup.HANDS_STOP)) prefs.setWatchCalibrating(false);

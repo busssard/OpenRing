@@ -838,6 +838,23 @@ the person there on resume, where Setup opens (#59). The main screen finishes a 
 mode is on and no preparation runs (`Demo.finishOnStart`), also when the app is opened from the launcher
 after Android ended it (#69).
 
+**Sync progress (issue #478, display only).** `core/SyncProgress` holds the texts, percentages and throttle of a running
+sync; the Bluetooth code only hands it what it already has and nothing in it is sent. Ring: the download's sink sets the
+line and the bar from the ring's "bytes left" of each batch (`ringFraction`: 1 minus left over the first left above 0, never
+back, under 1 while something is left): "Syncing your ring, about 40 % (1234 events so far)", "in the background" for the
+job's sync (`SyncTicket.background`). Watch: `WatchSync.SHOWN` (a `SyncProgress.Watch`) hears a sync's start and end, its
+plan (the hello plus the session's steps), each step the session reports (`Session.Progress`) and each message after it
+was stored; within the three data steps the newest record time against the "since" asked and now gives a rough percent
+(it assumes oldest first). Before the hello the line says "getting ready" (stored messages decoded, waiting for the ring)
+and "connecting" once the ring is free. Every call goes through `WatchSync.shown` and the guards in core
+(`SyncProgress.show`, `SyncProgress.guard`), which swallow any error, and tells the screens through
+`RingManager.showChanged` at once for a new step and at most every 250 ms within one, and once more after the watch lock is
+released (so Settings sees the sync ended). The main screen's strip shows the watch's line and bar when no ring task runs (a
+ring task's line wins), a tap on it explains the numbers; Settings, Watch shows it in the card with the explanation. The
+ring's sync notification has the title "Syncing your ring" and the line without those words (`notificationText`).
+`tests/java/SyncProgressTest` runs WatchTest's made up watch with and without the progress, and with a display that throws
+behind the guards (the same bytes in the same order, the same result), and pins the ring sink's storing lines.
+
 ## Ring finder (issue #74)
 
 `ui/FinderActivity` (Today under the score rings, Settings, Ring) listens without connecting, so a sync
