@@ -1124,10 +1124,17 @@ public class ForecastTest {
         }
         w /= nw;
         o /= no;
-        String avg = Math.abs(w) < 0.5 ? "about on the expected day on average" : String.format(en, "%.1f", Math.abs(w)) + " days " + (w > 0 ? "later" : "earlier") + " than expected on average";
-        String oth = Math.abs(o) < 0.5 ? "came about on the expected day." : "came " + String.format(en, "%.1f", Math.abs(o)) + " days " + (o > 0 ? "later." : "earlier.");
+        String avg = Math.abs(w) < 0.5 ? "about on the expected day on average" : CycleFactors.days(w, en) + " " + (w > 0 ? "later" : "earlier") + " than expected on average";
+        String oth = Math.abs(o) < 0.5 ? "came about on the expected day." : "came " + CycleFactors.days(o, en) + " " + (o > 0 ? "later" : "earlier") + " than expected.";
         check("#383 phase 2: from two cycles, the averages with and without", nw == 2 && no >= 1 && c.line("stress", en).equals("Stress was logged in 2 of " + (nw + no)
                 + " cycles. Those periods came " + avg + ", the other " + (no == 1 ? "one " : no + " ") + oth), c.line("stress", en));
+        // review of 6835a38: a decimal only when the average is not whole
+        check("#383 review: whole days without a decimal", CycleFactors.days(2.0, en).equals("2 days") && CycleFactors.days(-1.0, en).equals("1 day")
+                && CycleFactors.days(1.96, en).equals("2 days"), CycleFactors.days(2.0, en) + " / " + CycleFactors.days(-1.0, en));
+        check("#383 review: other days with one decimal", CycleFactors.days(1.5, en).equals("1.5 days") && CycleFactors.days(-2.34, en).equals("2.3 days")
+                && CycleFactors.days(0.7, en).equals("0.7 days"), CycleFactors.days(1.5, en) + " / " + CycleFactors.days(-2.34, en));
+        check("#383 review: the line says than expected and has no 2.0", c.line("stress", en).endsWith(" than expected.") || c.line("stress", en).endsWith("expected day."),
+                c.line("stress", en));
         check("#383 phase 2: in every cycle, nothing to set it against", c.line("meditation", en).equals(CycleFactors.EVERY), c.line("meditation", en));
         check("#383 phase 2: a factor in no scored cycle has no line", c.line("nothing", en) == null, null);
         String tipAll = c.tip(pi, "illness", en);
