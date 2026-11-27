@@ -174,7 +174,7 @@ public class LifeTest {
                 "This month: Meditation on 3 days, Alcohol on 1 day, Stress on 1 day.");
         eq("a month without tags", LifeTags.monthLine(days, YearMonth.of(2026, 9), k), "Nothing logged this month.");
         List<String> all = new ArrayList<String>(Arrays.asList(LifeTags.TITLE, LifeTags.TITLE_PAST, LifeTags.NOTE, LifeTags.ALL, LifeTags.SEVERAL,
-                LifeTags.ADD_OWN, LifeTags.CHOOSE, LifeTags.REMOVE_OWN, LifeTags.OWN_HINT, LifeTags.BODY_TITLE, LifeTags.MONTH_HINT,
+                LifeTags.ADD_OWN, LifeTags.CHOOSE, LifeTags.REMOVE_OWN, LifeTags.OWN_HINT, LifeTags.BODY_TITLE, LifeTags.LOGGED_HINT, LifeTags.MONTH_HINT,
                 LifeTags.NONE_YET, LifeTags.NO_EFFECT_YET, LifeTags.NOT_SAVED, LifeTags.NOT_UNDONE, LifeTags.UNREADABLE, LifeTags.CSV_CHOICE,
                 LifeTags.CSV_INTIMACY, LifeTags.CSV_NOTE, LifeTags.SPAN_FUTURE, LifeTags.SPAN_BACKWARDS, LifeTags.OWN_REFUSED, LifeTags.monthLine(days, YearMonth.of(2026, 11), k),
                 LifeTags.spanDone(1), LifeTags.spanDone(5), RESTORE_TEXT));

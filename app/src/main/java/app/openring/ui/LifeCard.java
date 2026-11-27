@@ -801,7 +801,7 @@ final class LifeCard {
             card.addView(Ui.gap(c, 6));
             card.addView(Ui.text(c, note, 12, Ui.TEXT_3, Ui.REGULAR));
         }
-        card.addView(Ui.text(c, any ? app.openring.core.analysis.FactorEffect.BESIDE_HINT : app.openring.core.analysis.FactorEffect.LOGGED_HINT,
+        card.addView(Ui.text(c, any ? app.openring.core.analysis.FactorEffect.BESIDE_HINT : app.openring.core.LifeTags.LOGGED_HINT,
                 12, Ui.TEXT_3, Ui.REGULAR));
         card.setOnClickListener(new View.OnClickListener() {
             @Override

@@ -723,8 +723,6 @@ public final class FactorEffect {
     public static final String BESIDE_NOTE_SLEEP = "A pattern in your own nights, not a rule. The sleep score itself does not change: it comes from the night's own readings.";
     /** The hint of the card with at least one effect line (it opens Body, where the card Life factors and your nights is). */
     public static final String BESIDE_HINT = "Tap for how your nights went after each factor on Body.";
-    /** The hint of the card without one, as before phase 3. */
-    public static final String LOGGED_HINT = "As you logged them on Today. Tap for the month on Body.";
 
     /**
      * Phase 3 (issue #292, option A): one sentence per tag of the day before ({@code keys}, in the order of the logged line) whose
@@ -771,7 +769,7 @@ public final class FactorEffect {
     /** Every fixed text, for the tests (plain, no dashes). */
     public static String[] texts() {
         return new String[] {TITLE, INTRO, NOT_ADVICE, NOTHING, NO_RING, CYCLE_TEMP, UNREADABLE, CHART_NOTE, BAR_NOTE, BESIDE_NOTE_READY, BESIDE_NOTE_SLEEP,
-            BESIDE_HINT, LOGGED_HINT};
+            BESIDE_HINT};
     }
 
     /** Days between two dates (for the chart's axis). */
