@@ -824,6 +824,67 @@ public final class Explain {
         }
     }
 
+    // ---- badges without a ring (issue #329, phase 2): the rules as they count with the watch or the phone ----
+
+    /** The sleep badges with only the phone: why they cannot come. */
+    public static final String BADGE_NEEDS_NIGHT = "Needs a ring or a watch: this phone does not know when you sleep.";
+
+    /**
+     * {@link #badge(int)} for the device whose days the badges use ({@code DeviceHistory.device}: -1 with a ring, whose texts
+     * stay exactly as they are; {@code MainDevice.WATCH} or {@code PHONE} without one).
+     */
+    public static String badge(int kind, int device) {
+        String ring = badge(kind);
+        boolean watch = device == app.openring.core.MainDevice.WATCH, phone = device == app.openring.core.MainDevice.PHONE;
+        if (ring == null || !watch && !phone) return ring;
+        String week = Badges.WEEK + " days";
+        switch (kind) {
+            case Badges.ABOVE_USUAL:
+                return "Above your usual: at least " + Math.round(Badges.STEPS_ABOVE * 100) + "% more steps than your average on your last "
+                        + Badges.USUAL_DAYS + " days with " + (watch ? "your watch" : "this phone") + " (at least " + Badges.MIN_DAYS + " of them). "
+                        + (watch ? "Only days with the watch on for " + Badges.WORN_MIN / 60 + " hours or more count, sleep included."
+                        : "Only days this phone counted steps for " + Badges.WORN_MIN / 60 + " hours or more count.");
+            case Badges.GOAL:
+                return "Goal reached: your daily step goal reached on " + Badges.GOAL_OF + " of the last " + week + " (at most once in "
+                        + week + "), or the first goal day after " + week + " without one. There is no badge for every single day, "
+                        + "rest days matter too. "
+                        + (watch ? "Your step goal is set in the watch setup." : "Your step goal is set in Settings, Phone.")
+                        + " A new step goal also counts for earlier days.";
+            case Badges.BEST_NIGHT:
+            case Badges.RESTFUL_WEEK:
+            case Badges.RECOVERED:
+            case Badges.PHONE_FREE:
+                return phone ? ring + " " + BADGE_NEEDS_NIGHT : ring;
+            default:
+                return ring;
+        }
+    }
+
+    /** {@link #badgeRule(int)} for the device of {@link #badge(int, int)}. */
+    public static String badgeRule(int kind, int device) {
+        String line = badge(kind, device);
+        if (line == null) return null;
+        String rule = line.substring(Badges.NAMES[kind].length() + 2);
+        return Character.toUpperCase(rule.charAt(0)) + rule.substring(1);
+    }
+
+    /**
+     * {@link #badgesWait(int)} for the device of {@link #badge(int, int)}: with the watch it counts the watch's nights; with only
+     * the phone it counts the days with steps ({@code stepDays}) and says that sleep badges need a ring or a watch (before, it
+     * waited for nights with the ring that never come). Null when nothing is left to say.
+     */
+    public static String badgesWait(int nights, int device, int stepDays) {
+        if (device == app.openring.core.MainDevice.PHONE) {
+            String sleep = "Sleep badges need a ring or a watch.";
+            if (stepDays >= Badges.MIN_DAYS) return sleep;
+            return "Above your usual compares your steps with your own last " + Badges.WEEKS + " weeks, so it comes after about "
+                    + Badges.MIN_DAYS + " days with steps from this phone. You have " + (stepDays == 1 ? "1 day" : stepDays + " days") + " so far. " + sleep;
+        }
+        String ring = badgesWait(nights);
+        if (ring == null || device != app.openring.core.MainDevice.WATCH) return ring;
+        return ring.replace("nights with the ring", "nights with your watch");
+    }
+
     public static String of(String key) {
         if (key == null) return null;
         switch (key) {

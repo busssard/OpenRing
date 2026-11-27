@@ -1288,6 +1288,27 @@ app) keeps it on. Neither can be checked on the JVM; the log names each reading'
 * **What it cannot do**: no steps from before the first reading, none while the phone is not carried, and the steps since the last
   reading are lost when the phone dies without shutting down. Phone and ring count differently; phase 2 compares them.
 
+### Phase 2: calories, the comparison, badges without a ring
+
+Nothing new is stored: everything is worked out on each load from the stored intervals and settings.
+* **Calories from walking** (`core/StepCalories`, only with neither a ring nor a watch): 0.5 kcal per kg of body weight and km
+  walked on level ground (ACSM walking equation: 0.1 ml O2 per kg and metre, about 5 kcal per litre), from the distance the
+  Activity tab shows (0.762 m a step) and the profile's weight; shown to the nearest 10 kcal on Activity (with the rule, its
+  source and an error of about a quarter for walking) and on Today. Not used in the activity score (Training volume stays left
+  out for the phone: brisk steps already count in Training frequency).
+* **Compare with the phone's health app**: Android 13 has no way to read another app's step totals without Health Connect, whose
+  framework API needs Android 14 and otherwise an androidx library (not allowed here). So Activity lists the phone's steps of
+  the 7 days up to the shown day (the same numbers as the chart and the dial) to hold next to the health app by hand; the Data
+  check keeps its 14 day totals.
+* **Badges without a ring**: `Badges.Day.stepGoal` (the step goal, `BadgeDays.read` sets it on the watch's or the phone's days)
+  stands in for the ring's calorie target in Goal reached, with the same 4 of 7 and "after 7 days without" rules, on worn days
+  only; a day with the ring's target always goes by its burn, and a count takes only days of the kind of the day judged (old ring
+  days next to the phone's days after a ring was removed). The step goal is today's setting for every day, so a new goal also
+  counts for earlier days (stated in the rule's text; per day goals would be new stored data). The calorie average takes the 7
+  full days (`StepCalories.weekEnd`). The Badges page's rules (`Explain.badge(kind, device)`) and its
+  wait line (`badgesWait(nights, device, stepDays)`) follow the device; with the ring they are unchanged. Settings, Phone
+  offers the step goal (the watch setup's four chips, the same `watch_goal` setting) when no watch is added.
+
 ## Other rings (issue #418, phase 1)
 
 Open Ring reads the Oura ring and a Withings watch. Phase 1 prepares other ring brands without reading any of them:
