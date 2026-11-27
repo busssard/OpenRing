@@ -50,6 +50,7 @@ public class FinderTest {
         permissionAsk();
         fingerNow();
         fingerCheck();
+        finderSignal();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -2605,6 +2606,274 @@ public class FinderTest {
         }
         for (String t : new String[] {FingerCheck.BLIND_ASKING, FingerCheck.BLIND_BLINKING, FingerCheck.BLIND_DEMO, FingerCheck.BLINK_NOTE, FingerCheck.ASKING}) {
             check("check: no dash as punctuation (" + t + ")", !t.contains(" - ") && !t.contains("—"));
+        }
+    }
+
+    // ------------------------------------------------------------------ the line under the meter (FinderSignal)
+
+    /** The answers from Android, with a log of which were asked, in order. */
+    static final class FakeAsk implements FinderSignal.Ask {
+        final boolean granted, locationOn, linked;
+        final StringBuilder log = new StringBuilder();
+
+        FakeAsk(boolean granted, boolean locationOn, boolean linked) {
+            this.granted = granted;
+            this.locationOn = locationOn;
+            this.linked = linked;
+        }
+
+        @Override
+        public boolean granted() {
+            log.append('g');
+            return granted;
+        }
+
+        @Override
+        public boolean locationOn() {
+            log.append('l');
+            return locationOn;
+        }
+
+        @Override
+        public boolean linked() {
+            log.append('k');
+            return linked;
+        }
+    }
+
+    /**
+     * What the old FinderActivity.signalState set: band text, issue (text, button, action) or line. With
+     * {@link #oldSignalState} it may be removed once FinderSignal's texts or steps change on purpose (the copy
+     * then no longer describes the wanted behaviour); until then it proves the move to core changed nothing.
+     */
+    static final class OldState {
+        String band, line = "", issueText, button;
+        String action = "NONE";
+        boolean issueShown;
+
+        void issue(String text, String button, String action) {
+            issueShown = true;
+            issueText = text;
+            this.button = button;
+            if (button != null) this.action = action;
+        }
+    }
+
+    /**
+     * FinderActivity.signalState as it was before the move to core (dev at 07821b9), with only the Android
+     * calls replaced by the inputs and the fake answers, asked at the same places. The reference the new
+     * code is compared with. It may go together with {@link OldState} once FinderSignal changes on purpose.
+     */
+    static OldState oldSignalState(FinderSignal.Input in, FinderSignal.Ask ask, long now, long listenSince, long unusableAt, long otherAt) {
+        OldState o = new OldState();
+        boolean demo = in.demo;
+        if (!demo && !in.paired) {
+            o.band = "No ring paired";
+            o.issue("No ring is paired with this app yet, so there is no signal to listen for.", null, null);
+            return o;
+        }
+        if (!demo && !ask.granted()) {
+            o.band = "Not listening";
+            String what = PermissionAsk.neededText(in.sdk);
+            if (in.permissionBlocked) {
+                o.issue("To hear the ring, this app needs " + what + ". Android no longer asks, so switch it on in the app's settings.", "Open app settings", "APP_SETTINGS");
+            } else {
+                o.issue("To hear the ring, this app needs " + what + ".", "Allow", "ALLOW");
+            }
+            return o;
+        }
+        if (!demo && in.sdk < 31 && !ask.locationOn()) {
+            o.band = "Not listening";
+            o.issue("Location is off. Android 11 and older only find Bluetooth devices while Location is on.", "Open Location settings", "LOCATION_SETTINGS");
+            return o;
+        }
+        if (!demo && !in.bluetoothOn) {
+            o.band = "Not listening";
+            o.issue("Bluetooth is off. Switch it on to listen for the ring.", "Switch on", "BLUETOOTH_ON");
+            return o;
+        }
+        String blind = in.blind;
+        if (blind != null) {
+            o.band = "Connected";
+            o.issue(blind, null, null);
+            return o;
+        }
+        int band = in.band;
+        if (band != Proximity.NOT_HEARD) {
+            o.band = Proximity.label(band);
+            o.line = "dBm: closer to 0 is stronger. It tells warmer or colder, not metres.";
+            return o;
+        }
+        if (ask.linked()) {
+            o.band = "Connected";
+            o.issue("The ring is connected to this phone right now (a sync, Live or another app), so it is within Bluetooth range, "
+                    + "about 10 m. While connected it stops sending the signal this meter listens to; the meter carries on when the connection ends.", null, null);
+            return o;
+        }
+        if (in.retryWaiting) {
+            o.band = "Not listening";
+            int scanError = in.scanError;
+            o.issue(scanError == 6 ? "Android paused the Bluetooth scan for a moment. It starts again by itself within 30 s."
+                    : "The Bluetooth scan stopped (error " + scanError + "). It starts again by itself within 30 s.", null, null);
+            return o;
+        }
+        if (!demo && !in.scanning) {
+            o.band = "Not listening yet";
+            o.line = "It starts listening by itself within about half a minute.";
+            return o;
+        }
+        long heardAgo = in.heardAgo;
+        if (heardAgo < 0 && now - listenSince < Proximity.LOST_MS) {
+            o.band = "Listening";
+            o.line = "Waiting for the ring's signal";
+            return o;
+        }
+        boolean unusable = unusableAt != Long.MIN_VALUE && now - unusableAt < Proximity.LOST_MS;
+        o.band = Proximity.label(Proximity.NOT_HEARD, unusable);
+        String why = "The ring is out of range, its battery is empty, or a thick wall or metal is in the way.";
+        if (otherAt != Long.MIN_VALUE && now - otherAt < Proximity.LOST_MS) why = "This phone hears an Oura ring, but not the one paired with this app.";
+        if (unusable) why = "This phone receives the ring, so it is within Bluetooth range (about 10 m), "
+                + "but the phone gives no usable signal strength for it right now.";
+        o.line = why;
+        return o;
+    }
+
+    static void finderSignal() {
+        // every combination of what the screen knows and what Android answers, against the old code: the same
+        // label, box or line, button and action, and Android asked the same questions in the same order
+        long now = 1_000_000;
+        int combos = 0, differ = 0;
+        String first = null;
+        Set<String> labels = new TreeSet<String>();
+        for (int m = 0; m < 1 << 17; m++) {
+            int b = 0;
+            FinderSignal.Input in = new FinderSignal.Input();
+            in.demo = (m >> b++ & 1) == 1;
+            in.paired = (m >> b++ & 1) == 1;
+            in.permissionBlocked = (m >> b++ & 1) == 1;
+            in.sdk = (m >> b++ & 1) == 1 ? 33 : 30;
+            in.bluetoothOn = (m >> b++ & 1) == 1;
+            in.blind = (m >> b++ & 1) == 1 ? FingerCheck.BLIND_ASKING : null;
+            in.band = (m >> b++ & 1) == 1 ? Proximity.ROOM : Proximity.NOT_HEARD;
+            in.retryWaiting = (m >> b++ & 1) == 1;
+            in.scanError = (m >> b++ & 1) == 1 ? 6 : 2;
+            in.scanning = (m >> b++ & 1) == 1;
+            in.heardAgo = (m >> b++ & 1) == 1 ? 500 : -1;
+            long listenSince = (m >> b++ & 1) == 1 ? now - 2000 : now - 20000;
+            long unusableAt = (m >> b++ & 1) == 1 ? now - 3000 : Long.MIN_VALUE;
+            long otherAt = (m >> b++ & 1) == 1 ? now - 4000 : Long.MIN_VALUE;
+            boolean granted = (m >> b++ & 1) == 1, locationOn = (m >> b++ & 1) == 1, linked = (m >> b++ & 1) == 1;
+            // the screen's own sums, as FinderActivity.signalInput makes them
+            in.listening = now - listenSince;
+            in.unusable = unusableAt != Long.MIN_VALUE && now - unusableAt < Proximity.LOST_MS;
+            in.otherHeard = otherAt != Long.MIN_VALUE && now - otherAt < Proximity.LOST_MS;
+
+            FakeAsk oldAsk = new FakeAsk(granted, locationOn, linked), newAsk = new FakeAsk(granted, locationOn, linked);
+            OldState o = oldSignalState(in, oldAsk, now, listenSince, unusableAt, otherAt);
+            FinderSignal.State n = FinderSignal.of(in, newAsk);
+            String want = o.band + " | " + (o.issueShown ? "box " + o.issueText + " | " + o.button + " | " + o.action : "line " + o.line) + " | asked " + oldAsk.log;
+            String got = n.label + " | " + (n.issue ? "box " + n.text + " | " + n.button + " | " + n.action : "line " + n.text) + " | asked " + newAsk.log;
+            combos++;
+            labels.add(n.label);
+            if (!want.equals(got)) {
+                differ++;
+                if (first == null) first = "combination " + m + ": want " + want + ", got " + got;
+            }
+        }
+        check("signal: all " + combos + " combinations as the old code", differ == 0, first);
+        check("signal: every label reached", labels.size() == 8, labels);
+
+        // each step on its own, with its exact texts
+        FakeAsk yes = new FakeAsk(true, true, false);
+        FinderSignal.Input in = new FinderSignal.Input();
+        in.paired = true;
+        in.sdk = 33;
+        in.bluetoothOn = true;
+        in.scanning = true;
+        in.heardAgo = 500;
+        in.listening = 20000;
+        FinderSignal.State s = FinderSignal.of(in, yes);
+        eq("signal: not heard, label", s.label, "Not heard for 10 seconds");
+        eq("signal: not heard, line", s.text, "The ring is out of range, its battery is empty, or a thick wall or metal is in the way.");
+        check("signal: not heard, no box", !s.issue && s.button == null && s.action == FinderSignal.Action.NONE);
+        in.otherHeard = true;
+        eq("signal: another ring heard", FinderSignal.of(in, yes).text, "This phone hears an Oura ring, but not the one paired with this app.");
+        in.unusable = true;
+        s = FinderSignal.of(in, yes);
+        eq("signal: no usable signal, label", s.label, "No usable signal");
+        eq("signal: no usable signal wins over another ring", s.text, FinderSignal.UNUSABLE);
+        in.unusable = in.otherHeard = false;
+        in.band = Proximity.CLOSE;
+        s = FinderSignal.of(in, yes);
+        eq("signal: heard, the band", s.label, "Very close (within an arm)");
+        eq("signal: heard, what dBm means", s.text, FinderSignal.SIGNAL_LINE);
+        in.band = Proximity.NOT_HEARD;
+        in.heardAgo = -1;
+        in.listening = 2000;
+        s = FinderSignal.of(in, yes);
+        eq("signal: just started", s.label + " / " + s.text, "Listening / Waiting for the ring's signal");
+        in.listening = Proximity.LOST_MS;
+        eq("signal: 10 s without a sound", FinderSignal.of(in, yes).label, "Not heard for 10 seconds");
+        in.scanning = false;
+        s = FinderSignal.of(in, yes);
+        eq("signal: scan not started yet", s.label + " / " + s.text, "Not listening yet / It starts listening by itself within about half a minute.");
+        in.demo = true;
+        eq("signal: demo mode has no scan to wait for", FinderSignal.of(in, yes).label, "Not heard for 10 seconds");
+        in.demo = false;
+        in.retryWaiting = true;
+        in.scanError = 6;
+        s = FinderSignal.of(in, yes);
+        eq("signal: Android paused the scan", s.text, "Android paused the Bluetooth scan for a moment. It starts again by itself within 30 s.");
+        check("signal: paused, a box without a button", s.issue && s.button == null && s.label.equals("Not listening"));
+        in.scanError = 2;
+        eq("signal: the scan stopped with an error", FinderSignal.of(in, yes).text, "The Bluetooth scan stopped (error 2). It starts again by itself within 30 s.");
+        FakeAsk linked = new FakeAsk(true, true, true);
+        s = FinderSignal.of(in, linked);
+        check("signal: connected comes before the scan's wait", s.issue && s.label.equals("Connected") && s.text.startsWith("The ring is connected to this phone right now"));
+        in.blind = FingerCheck.BLIND_BLINKING;
+        FakeAsk count = new FakeAsk(true, true, true);
+        s = FinderSignal.of(in, count);
+        check("signal: the finder holds the ring", s.issue && s.label.equals("Connected") && s.text.equals(FingerCheck.BLIND_BLINKING));
+        eq("signal: the finder holding it asks no Bluetooth question", count.log.toString(), "g");
+        in.blind = null;
+        in.bluetoothOn = false;
+        s = FinderSignal.of(in, yes);
+        check("signal: Bluetooth off", s.issue && s.text.equals("Bluetooth is off. Switch it on to listen for the ring.")
+                && "Switch on".equals(s.button) && s.action == FinderSignal.Action.BLUETOOTH_ON);
+        in.sdk = 30;
+        s = FinderSignal.of(in, new FakeAsk(true, false, false));
+        check("signal: Location off on Android 11", s.issue && s.text.startsWith("Location is off.") && s.action == FinderSignal.Action.LOCATION_SETTINGS
+                && "Open Location settings".equals(s.button));
+        FakeAsk new12 = new FakeAsk(true, false, false);
+        in.sdk = 33;
+        FinderSignal.of(in, new12);
+        eq("signal: Android 12 never asks for Location", new12.log.toString(), "g");
+        // the limit itself: Android 12 (sdk 31) is the first that does not need Location, Android 11 (30) the last that does
+        FakeAsk at31 = new FakeAsk(true, false, false), at30 = new FakeAsk(true, false, false);
+        in.sdk = 31;
+        s = FinderSignal.of(in, at31);
+        eq("signal: sdk 31 with Location off does not ask for Location", at31.log.toString(), "g");
+        check("signal: sdk 31 with Location off shows no Location box", s.action != FinderSignal.Action.LOCATION_SETTINGS);
+        in.sdk = 30;
+        s = FinderSignal.of(in, at30);
+        eq("signal: sdk 30 with Location off asks for Location", at30.log.toString(), "gl");
+        check("signal: sdk 30 with Location off shows the Location box", s.action == FinderSignal.Action.LOCATION_SETTINGS);
+        in.sdk = 33;
+        s = FinderSignal.of(in, new FakeAsk(false, true, false));
+        eq("signal: permission missing", s.text, "To hear the ring, this app needs the Nearby devices permission.");
+        check("signal: permission missing, Allow", "Allow".equals(s.button) && s.action == FinderSignal.Action.ALLOW && s.label.equals("Not listening"));
+        in.permissionBlocked = true;
+        s = FinderSignal.of(in, new FakeAsk(false, true, false));
+        check("signal: permission blocked, app settings", "Open app settings".equals(s.button) && s.action == FinderSignal.Action.APP_SETTINGS
+                && s.text.endsWith("Android no longer asks, so switch it on in the app's settings."));
+        in.paired = false;
+        FakeAsk none = new FakeAsk(false, false, false);
+        s = FinderSignal.of(in, none);
+        check("signal: no ring paired", s.issue && s.label.equals("No ring paired") && s.button == null
+                && s.text.equals("No ring is paired with this app yet, so there is no signal to listen for."));
+        eq("signal: no ring paired asks Android nothing", none.log.toString(), "");
+        for (String t : new String[] {FinderSignal.SIGNAL_LINE, FinderSignal.UNUSABLE}) {
+            check("signal: no dash as punctuation (" + t + ")", !t.contains(" - ") && !t.contains("—"));
         }
     }
 
