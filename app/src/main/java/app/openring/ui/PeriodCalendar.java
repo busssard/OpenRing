@@ -61,7 +61,7 @@ final class PeriodCalendar extends MonthView {
                 LocalDate d = month.atDay(dom);
                 double wt = weight(ahead, d, pass);
                 if (wt <= 0) continue;
-                int i = off + dom - 1, col = i % MonthGrid.COLS, row = i / MonthGrid.COLS;
+                int col = MonthGrid.col(off, dom), row = MonthGrid.row(off, dom);
                 float x0 = col * cw, top = head + row * cellH;
                 boolean left = col > 0 && dom > 1 && weight(ahead, d.minusDays(1), pass) > 0;
                 boolean right = col < MonthGrid.COLS - 1 && dom < len && weight(ahead, d.plusDays(1), pass) > 0;
@@ -82,7 +82,7 @@ final class PeriodCalendar extends MonthView {
         stroke.setStrokeWidth(Ui.dp(c, 1.4f));
         for (int dom = 1; dom <= len; dom++) {
             LocalDate d = month.atDay(dom);
-            int i = off + dom - 1, col = i % MonthGrid.COLS, row = i / MonthGrid.COLS;
+            int col = MonthGrid.col(off, dom), row = MonthGrid.row(off, dom);
             float cx = cw * (col + 0.5f), cyy = head + row * cellH + cellH / 2 - Ui.dp(c, 1);
             Integer f = cy.flows.get(d);
             boolean bleeding = f != null && f >= Cycles.LIGHT;
