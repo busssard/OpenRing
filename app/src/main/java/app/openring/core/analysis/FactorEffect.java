@@ -678,15 +678,17 @@ public final class FactorEffect {
      * {@link #value}, which rounds it), so the difference in brackets still fits it.
      */
     public static String usual(int k, double v, Locale l) {
+        // the precision is number()'s, so it lives in one place (review of f8ddbc5); a usual is never below 0
+        String n = number(k, v, l);
         switch (k) {
             case HRV:
-                return Math.round(v) + " ms";
+                return n + " ms";
             case RHR:
-                return String.format(l, "%.1f", v) + " bpm";
+                return n + " bpm";
             case TEMP:
-                return String.format(l, "%.2f", v) + " °C";
+                return n + " °C";
             default:
-                return String.valueOf(Math.round(v));
+                return n;
         }
     }
 
