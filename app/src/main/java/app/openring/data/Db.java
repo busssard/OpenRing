@@ -734,8 +734,9 @@ public final class Db extends SQLiteOpenHelper {
         return rep;
     }
 
-    private static long countOf(SQLiteDatabase db, String sql) {
-        Cursor c = db.rawQuery(sql, null);
+    /** The first column of the first row of {@code sql} as a number, 0 when there is no row. */
+    private static long countOf(SQLiteDatabase db, String sql, String... args) {
+        Cursor c = db.rawQuery(sql, args.length == 0 ? null : args);
         try {
             return c.moveToFirst() ? c.getLong(0) : 0;
         } finally {
@@ -743,31 +744,30 @@ public final class Db extends SQLiteOpenHelper {
         }
     }
 
-    public long count(String sql) {
-        Cursor c = getReadableDatabase().rawQuery(sql, null);
-        try {
-            return c.moveToFirst() ? c.getLong(0) : 0;
-        } finally {
-            c.close();
-        }
+    /** The first column of the first row of {@code sql} as a number, 0 when there is no row. */
+    public long count(String sql, String... args) {
+        return countOf(getReadableDatabase(), sql, args);
     }
 
-    /** Newest dated events of the given types since {@code sinceUnix}, newest first. */
-    public List<Row> latest(int[] tags, double sinceUnix, int limit) {
+    /** "1,2,3": the event types for a {@code tag IN (...)} clause (numbers only, so nothing to escape). */
+    private static String tagList(int[] tags) {
         StringBuilder in = new StringBuilder();
         for (int t : tags) {
             if (in.length() > 0) in.append(',');
             in.append(t);
         }
+        return in.toString();
+    }
+
+    /** Reads every row of a {@code SELECT tag, ds, unix, body} query and closes the cursor; an undated row's unix is NaN. */
+    private static List<Row> rows(Cursor c) {
         List<Row> out = new ArrayList<Row>();
-        Cursor c = getReadableDatabase().rawQuery("SELECT tag, ds, unix, body FROM events WHERE tag IN (" + in
-                + ") AND unix >= ? ORDER BY unix DESC LIMIT " + limit, new String[] {String.valueOf(sinceUnix)});
         try {
             while (c.moveToNext()) {
                 Row r = new Row();
                 r.tag = c.getInt(0);
                 r.ds = c.getLong(1);
-                r.unix = c.getDouble(2);
+                r.unix = c.isNull(2) ? Double.NaN : c.getDouble(2);
                 r.body = c.getBlob(3);
                 out.add(r);
             }
@@ -777,14 +777,15 @@ public final class Db extends SQLiteOpenHelper {
         return out;
     }
 
+    /** Newest dated events of the given types since {@code sinceUnix}, newest first. */
+    public List<Row> latest(int[] tags, double sinceUnix, int limit) {
+        return rows(getReadableDatabase().rawQuery("SELECT tag, ds, unix, body FROM events WHERE tag IN (" + tagList(tags)
+                + ") AND unix >= ? ORDER BY unix DESC LIMIT " + limit, new String[] {String.valueOf(sinceUnix)}));
+    }
+
     /** The time of the newest dated event of the given types before {@code beforeUnix}, NaN when there is none. */
     public double newestBefore(int[] tags, double beforeUnix) {
-        StringBuilder in = new StringBuilder();
-        for (int t : tags) {
-            if (in.length() > 0) in.append(',');
-            in.append(t);
-        }
-        Cursor c = getReadableDatabase().rawQuery("SELECT unix FROM events WHERE tag IN (" + in
+        Cursor c = getReadableDatabase().rawQuery("SELECT unix FROM events WHERE tag IN (" + tagList(tags)
                 + ") AND unix < ? ORDER BY unix DESC LIMIT 1", new String[] {String.valueOf(beforeUnix)});
         try {
             return c.moveToFirst() && !c.isNull(0) ? c.getDouble(0) : Double.NaN;
@@ -815,47 +816,15 @@ public final class Db extends SQLiteOpenHelper {
         public byte[] body;
     }
 
+    /** Dated events of the given types in [{@code fromUnix}, {@code toUnix}), oldest first. */
     public List<Row> events(int[] tags, double fromUnix, double toUnix) {
-        StringBuilder in = new StringBuilder();
-        for (int t : tags) {
-            if (in.length() > 0) in.append(',');
-            in.append(t);
-        }
-        List<Row> out = new ArrayList<Row>();
-        Cursor c = getReadableDatabase().rawQuery("SELECT tag, ds, unix, body FROM events WHERE tag IN (" + in
-                + ") AND unix >= ? AND unix < ? ORDER BY unix", new String[] {String.valueOf(fromUnix), String.valueOf(toUnix)});
-        try {
-            while (c.moveToNext()) {
-                Row r = new Row();
-                r.tag = c.getInt(0);
-                r.ds = c.getLong(1);
-                r.unix = c.getDouble(2);
-                r.body = c.getBlob(3);
-                out.add(r);
-            }
-        } finally {
-            c.close();
-        }
-        return out;
+        return rows(getReadableDatabase().rawQuery("SELECT tag, ds, unix, body FROM events WHERE tag IN (" + tagList(tags)
+                + ") AND unix >= ? AND unix < ? ORDER BY unix", new String[] {String.valueOf(fromUnix), String.valueOf(toUnix)}));
     }
 
-    /** Most recent events for the raw event viewer. */
+    /** Most recent events for the raw event viewer, undated ones too (unix NaN). */
     public List<Row> recentEvents(int limit) {
-        List<Row> out = new ArrayList<Row>();
-        Cursor c = getReadableDatabase().rawQuery("SELECT tag, ds, unix, body FROM events ORDER BY id DESC LIMIT " + limit, null);
-        try {
-            while (c.moveToNext()) {
-                Row r = new Row();
-                r.tag = c.getInt(0);
-                r.ds = c.getLong(1);
-                r.unix = c.isNull(2) ? Double.NaN : c.getDouble(2);
-                r.body = c.getBlob(3);
-                out.add(r);
-            }
-        } finally {
-            c.close();
-        }
-        return out;
+        return rows(getReadableDatabase().rawQuery("SELECT tag, ds, unix, body FROM events ORDER BY id DESC LIMIT " + limit, null));
     }
 
     public double[] datedRange() {
@@ -884,12 +853,7 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     public long eventCount() {
-        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events", null);
-        try {
-            return c.moveToFirst() ? c.getLong(0) : 0;
-        } finally {
-            c.close();
-        }
+        return count("SELECT COUNT(*) FROM events");
     }
 
     /**
@@ -932,12 +896,7 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     public long undatedCount() {
-        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events WHERE unix IS NULL", null);
-        try {
-            return c.moveToFirst() ? c.getLong(0) : 0;
-        } finally {
-            c.close();
-        }
+        return count("SELECT COUNT(*) FROM events WHERE unix IS NULL");
     }
 
     // ---------------------------------------------------------------------- nights, days
@@ -1503,34 +1462,19 @@ public final class Db extends SQLiteOpenHelper {
 
     /** Stored nights that overlap [from, to), for the preview in Settings. */
     public long nightsOverlapping(double from, double to) {
-        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM nights WHERE start < ? AND stop > ?", new String[] {String.valueOf(to), String.valueOf(from)});
-        try {
-            return c.moveToFirst() ? c.getLong(0) : 0;
-        } finally {
-            c.close();
-        }
+        return count("SELECT COUNT(*) FROM nights WHERE start < ? AND stop > ?", String.valueOf(to), String.valueOf(from));
     }
 
     /** Stored nights wholly inside [from, to) (left out, not cut), for the preview in Settings. */
     public long nightsInside(double from, double to) {
-        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM nights WHERE start >= ? AND stop <= ?", new String[] {String.valueOf(from), String.valueOf(to)});
-        try {
-            return c.moveToFirst() ? c.getLong(0) : 0;
-        } finally {
-            c.close();
-        }
+        return count("SELECT COUNT(*) FROM nights WHERE start >= ? AND stop <= ?", String.valueOf(from), String.valueOf(to));
     }
 
     /** Distinct hours in [from, to) with a heart rate or skin temperature event, for the preview in Settings. */
     public long hoursWithReadings(double from, double to) {
-        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(DISTINCT CAST(unix / 3600 AS INTEGER)) FROM events WHERE tag IN ("
+        return count("SELECT COUNT(DISTINCT CAST(unix / 3600 AS INTEGER)) FROM events WHERE tag IN ("
                 + EventCodec.GREEN_IBI_QUALITY + "," + EventCodec.AOHR_EVENT + "," + EventCodec.HRV_EVENT + "," + EventCodec.TEMP_EVENT + ","
-                + EventCodec.SLEEP_TEMP_EVENT + ") AND unix >= ? AND unix < ?", new String[] {String.valueOf(from), String.valueOf(to)});
-        try {
-            return c.moveToFirst() ? c.getLong(0) : 0;
-        } finally {
-            c.close();
-        }
+                + EventCodec.SLEEP_TEMP_EVENT + ") AND unix >= ? AND unix < ?", String.valueOf(from), String.valueOf(to));
     }
 
     // ---------------------------------------------------------------------------- zones
