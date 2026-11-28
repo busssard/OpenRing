@@ -831,6 +831,7 @@ public class PipelineTest {
         screenGaps(full.toByteArray());
         sqlForOldPhones();
         oneEventCheck();
+        dbReaders();
         nightSummaryCases();
         backupGaps(full.toByteArray());
         historyCache();
@@ -1078,6 +1079,65 @@ public class PipelineTest {
     }
 
     /** Issue #92, code review of PR #100: a history of a single event says "1 event", also in the timing line. */
+    /**
+     * The event and count readers of {@code Db} on a small hand made table (code health: one copy of the tag list, the row
+     * reading and the count query). Every expected value is worked out by hand from the rows below.
+     */
+    static void dbReaders() throws Exception {
+        Context c = freshDb("openring-readers");
+        Db db = Db.get(c);
+        android.database.sqlite.SQLiteDatabase w = db.getWritableDatabase();
+        int a = EventCodec.TEMP_EVENT, b = EventCodec.AOHR_EVENT, m = EventCodec.MOTION_EVENT;
+        Object[][] rows = {
+            {a, 10, 1000.0}, {b, 11, 2000.5}, {a, 12, null}, {m, 13, 3000.0}, {a, 14, 1500.0}, {b, 16, 7300.0}, {a, 17, 9000.0}};
+        for (int i = 0; i < rows.length; i++) {
+            w.execSQL("INSERT INTO events (epoch, tag, ds, body, captured, unix) VALUES (1, ?, ?, ?, 0, ?)",
+                    new Object[] {rows[i][0], rows[i][1], new byte[] {(byte) (i + 1)}, rows[i][2]});
+        }
+        w.execSQL("INSERT INTO nights (start, stop, day, main, json) VALUES (100, 200, '2026-01-01', 1, '{}')");
+        w.execSQL("INSERT INTO nights (start, stop, day, main, json) VALUES (150, 400, '2026-01-01', 0, '{}')");
+        w.execSQL("INSERT INTO nights (start, stop, day, main, json) VALUES (500, 600, '2026-01-02', 1, '{}')");
+
+        check("db readers: latest, newest first, limit", unixes(db.latest(new int[] {a, b}, 1000, 3)).equals("[9000.0, 7300.0, 2000.5]"),
+                unixes(db.latest(new int[] {a, b}, 1000, 3)));
+        check("db readers: latest, one tag, since is inclusive", unixes(db.latest(new int[] {a}, 1500, 10)).equals("[9000.0, 1500.0]"),
+                unixes(db.latest(new int[] {a}, 1500, 10)));
+        List<Db.Row> l = db.latest(new int[] {b}, 0, 1);
+        check("db readers: latest gives tag, ds and body", l.size() == 1 && l.get(0).tag == b && l.get(0).ds == 16 && Arrays.equals(l.get(0).body, new byte[] {6}),
+                l.size());
+        check("db readers: newest before, the limit is exclusive", db.newestBefore(new int[] {a, b}, 7300) == 2000.5, db.newestBefore(new int[] {a, b}, 7300));
+        check("db readers: newest before, just after", db.newestBefore(new int[] {a}, 9000.1) == 9000.0, db.newestBefore(new int[] {a}, 9000.1));
+        check("db readers: newest before, none is NaN", Double.isNaN(db.newestBefore(new int[] {m}, 3000)), db.newestBefore(new int[] {m}, 3000));
+        List<Db.Row> e = db.events(new int[] {a, b}, 1000, 7300);
+        check("db readers: events in [from, to), oldest first, undated left out", unixes(e).equals("[1000.0, 1500.0, 2000.5]"), unixes(e));
+        check("db readers: events give tag, ds and body", e.get(1).tag == a && e.get(1).ds == 14 && Arrays.equals(e.get(1).body, new byte[] {5})
+                && e.get(2).tag == b && e.get(2).ds == 11 && Arrays.equals(e.get(2).body, new byte[] {2}), e.get(1).ds);
+        check("db readers: events of another tag", unixes(db.events(new int[] {m}, 0, 1e9)).equals("[3000.0]"), unixes(db.events(new int[] {m}, 0, 1e9)));
+        check("db readers: no events in an empty range", db.events(new int[] {a, b, m}, 9000.5, 1e9).isEmpty(), null);
+        check("db readers: recent events, newest stored first", unixes(db.recentEvents(3)).equals("[9000.0, 7300.0, 1500.0]"), unixes(db.recentEvents(3)));
+        List<Db.Row> r = db.recentEvents(10);
+        check("db readers: recent events keep the undated one as NaN", r.size() == 7 && unixes(r).equals("[9000.0, 7300.0, 1500.0, 3000.0, NaN, 2000.5, 1000.0]")
+                && r.get(4).tag == a && r.get(4).ds == 12 && Arrays.equals(r.get(4).body, new byte[] {3}), unixes(r));
+        check("db readers: event count", db.eventCount() == 7, db.eventCount());
+        check("db readers: undated count", db.undatedCount() == 1, db.undatedCount());
+        Db.Counts n = db.counts();
+        check("db readers: counts", n.events == 7 && n.undated == 1 && !n.allNew, n.events + " " + n.undated + " " + n.allNew);
+        check("db readers: count of a query", db.count("SELECT COUNT(*) FROM events WHERE tag = " + a) == 4, db.count("SELECT COUNT(*) FROM events WHERE tag = " + a));
+        check("db readers: count of an empty answer is 0", db.count("SELECT 5 FROM events WHERE tag = -1") == 0, null);
+        check("db readers: hours with readings", db.hoursWithReadings(0, 10000) == 2, db.hoursWithReadings(0, 10000));
+        check("db readers: hours with readings, to is exclusive", db.hoursWithReadings(0, 7300) == 1, db.hoursWithReadings(0, 7300));
+        check("db readers: nights overlapping", db.nightsOverlapping(180, 520) == 3 && db.nightsOverlapping(200, 500) == 1,
+                db.nightsOverlapping(180, 520) + " " + db.nightsOverlapping(200, 500));
+        check("db readers: nights inside", db.nightsInside(100, 400) == 2 && db.nightsInside(150, 600) == 2 && db.nightsInside(101, 599) == 1,
+                db.nightsInside(100, 400) + " " + db.nightsInside(150, 600) + " " + db.nightsInside(101, 599));
+    }
+
+    static String unixes(List<Db.Row> rows) {
+        List<Double> u = new ArrayList<Double>();
+        for (Db.Row row : rows) u.add(row.unix);
+        return u.toString();
+    }
+
     static void oneEventCheck() throws Exception {
         long now = T0 + 3600;
         Context c = freshDb("openring-one");
