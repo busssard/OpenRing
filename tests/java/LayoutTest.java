@@ -333,7 +333,7 @@ public class LayoutTest {
         check("a note's key leaves out numbers", tiles.contains("k = Layout.noteKey(firstText)"));
         check("a tile takes its card's spec, so the spec no longer keeps the page", tiles.contains("Spec s = SPECS.take(card);")
                 && tiles.contains("new CardSpecs<View, Spec>()"));
-        // only spec() may read a spec without taking it, whatever the spelling of a second read (issue #494)
+        // only spec() may read a spec without taking it: any second SPECS.get( call fails, also in a comment (issue #494)
         check("only spec() reads a spec without taking it", count(tiles, "SPECS.get(") == 1
                 && tiles.contains("Spec s = SPECS.get(card);\n        if (s == null) SPECS.put(card, s = new Spec());"));
         check("a page that is not arranged leaves no spec behind", tiles.contains("SPECS.take(root.getChildAt(i));"));

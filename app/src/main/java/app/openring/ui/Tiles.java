@@ -71,7 +71,8 @@ final class Tiles {
 
     /**
      * The spec of {@code card}, made on first use. Only while the page is built, before {@link #arrange}: arrange takes the
-     * spec off the card (issue #470), so a later write is lost without an error.
+     * spec off the card (issue #470), so a later write is lost without an error, and its new spec stays in {@code SPECS} as
+     * long as the card lives (a listener written late would keep the page again).
      */
     static Spec spec(View card) {
         Spec s = SPECS.get(card);
