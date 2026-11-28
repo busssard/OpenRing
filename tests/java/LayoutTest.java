@@ -296,6 +296,13 @@ public class LayoutTest {
         return new String(Files.readAllBytes(Paths.get("app/src/main/java/app/openring/" + f)), "UTF-8");
     }
 
+    /** How often {@code part} occurs in {@code text}. */
+    static int count(String text, String part) {
+        int n = 0;
+        for (int i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + part.length())) n++;
+        return n;
+    }
+
     /** The screens use it: every tab is arranged, the tile header is the shared fold, demo keeps its own, the backup holds it. */
     static void sources() throws Exception {
         String main = src("ui/MainActivity.java"), tiles = src("ui/Tiles.java"), prefs = src("data/Prefs.java"), backup = src("data/Backup.java");
@@ -325,7 +332,10 @@ public class LayoutTest {
                 && tiles.contains("Layout.orderToSave(Layout.parse(orderOf(c, tabName)), keys, standard)"));
         check("a note's key leaves out numbers", tiles.contains("k = Layout.noteKey(firstText)"));
         check("a tile takes its card's spec, so the spec no longer keeps the page", tiles.contains("Spec s = SPECS.take(card);")
-                && !tiles.contains("SPECS.get(card);\n            t.spec") && tiles.contains("new CardSpecs<View, Spec>()"));
+                && tiles.contains("new CardSpecs<View, Spec>()"));
+        // only spec() may read a spec without taking it, whatever the spelling of a second read (issue #494)
+        check("only spec() reads a spec without taking it", count(tiles, "SPECS.get(") == 1
+                && tiles.contains("Spec s = SPECS.get(card);\n        if (s == null) SPECS.put(card, s = new Spec());"));
         check("a page that is not arranged leaves no spec behind", tiles.contains("SPECS.take(root.getChildAt(i));"));
         check("Further analysis' listener holds its body (the reason a spec must be taken)",
                 sleep.contains("s.listener = new Tiles.Listener()") && sleep.contains("fillAnalysis(c, d, body);"));
