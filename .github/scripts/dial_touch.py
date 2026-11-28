@@ -7,7 +7,7 @@ Usage: dial_touch.py <screencap raw file> --view <x1> <y1> <x2> <y2> <density>
 With --view (the clock's bounds from the uiautomator dump, content-desc "Phone use clock", and the
 screen density) the circle follows the drawing in Charts.ScreenDial: its middle is the middle of the
 view, its radius 0.87 of the dial's r (the use lines run from 0.75 r to r, r = half the smaller side
-less 18 dp). The bounds are only taken when the view is its full 300 dp high (Pages.java), not cut off
+less 18 dp). The bounds are only taken when the view is its full 300 dp high (ScreenPage.java), not cut off
 at a screen edge. Then it prints "x y" just inside the trailing edge (clockwise) of the first lit phone
 use line, or 13:00 on the same circle when there is none.
 
@@ -23,7 +23,7 @@ import struct
 import sys
 
 STEPS = 3600
-DIAL_DP = 300  # the clock's height in Pages.java (Ui.sized(c, -1, 300))
+DIAL_DP = 300  # the clock's height in ScreenPage.java (Ui.sized(c, -1, 300))
 
 
 def lit(r, g, b):

@@ -55,7 +55,7 @@ public final class Tour {
         s.add(new Step(SCORES, TODAY, "Your scores for the day. Tap one to see why.", true, true));
         s.add(new Step(TABS, ANY, "Sleep, Ready, Activity, Body and Screen show the details. Tap one to open it.", false, true));
         s.add(new Step(CHART, SLEEP, "Touch and slide on any chart to read the exact time and value. Try it here.", false, false));
-        s.add(new Step(TILE, SLEEP, "Tap a title to fold a tile. In Settings, Rearrange tiles puts them in your order.", false, true));
+        s.add(new Step(TILE, SLEEP, "Tap a title to fold a tile, tap it again to open it. In Settings, Rearrange tiles puts them in your order.", false, true));
         s.add(new Step(LIFE, TODAY, "Log what shaped your day, like Meditation or Stress. Sleep, Ready and Body show it next to your nights.", true, true));
         s.add(new Step(SETTINGS, ANY, "Your devices, backups and what the app is allowed to use are here.", true, true));
         STEPS = Collections.unmodifiableList(s);
@@ -79,9 +79,11 @@ public final class Tour {
         return hasDevice ? END_BACK : END_TEXT;
     }
 
-    /** The text of step {@code i} (0 based); {@code firstSync}: the tour started after the first sync with a real device. */
+    /**
+     * The text of step {@code i} (0 based); {@code firstSync}: the tour started after the first sync with a real device. Empty
+     * for the ending, whose text depends on a device ({@link #endText}).
+     */
     public static String text(int i, boolean firstSync) {
-        if (i == END) return END_TEXT;
         if (i < 0 || i >= COUNT) return "";
         return i == 0 && firstSync ? SYNC_FIRST : STEPS.get(i).text;
     }
@@ -127,14 +129,23 @@ public final class Tour {
 
     /**
      * Whether the tour starts by itself now. {@code seen}: it was done or skipped once (one flag for demo and real); never
-     * while the tiles are rearranged. In demo mode it starts at the first look; with a real device after the first successful
-     * sync: {@code syncedBefore} the newest good sync (ring or watch) the screen knew, 0 for none, {@code syncedNow} the newest
-     * now (a failed sync sets none).
+     * while the tiles are rearranged. In demo mode it starts at the first look. With a real device after the first successful
+     * sync: {@code afterSetup} the saved mark that setup ended before any sync ({@link #waitsForFirstSync}, issue #476, so a
+     * main screen created again after that sync still starts it), else {@code syncedBefore} the newest good sync (ring or
+     * watch) this screen knew, 0 for none; {@code syncedNow} the newest now (a failed sync sets none).
      */
-    public static int autoStart(boolean demo, boolean seen, boolean editing, long syncedBefore, long syncedNow) {
+    public static int autoStart(boolean demo, boolean seen, boolean editing, boolean afterSetup, long syncedBefore, long syncedNow) {
         if (seen || editing) return NONE;
         if (demo) return DEMO;
-        return syncedBefore <= 0 && syncedNow > 0 ? FIRST_SYNC : NONE;
+        return syncedNow > 0 && (afterSetup || syncedBefore <= 0) ? FIRST_SYNC : NONE;
+    }
+
+    /**
+     * Whether setup, ending now, marks the tour to start after the first sync (issue #476): only when no good sync (ring or
+     * watch) exists yet, so a new key for a ring that synced before, or a ring added by a person with a watch, starts nothing.
+     */
+    public static boolean waitsForFirstSync(long syncedNow) {
+        return syncedNow <= 0;
     }
 
     /** Every text of the tour, for the tests. */

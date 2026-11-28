@@ -34,7 +34,7 @@ public final class SleepHero {
 
     /**
      * "23:10 to 07:05, 7h 55m in bed", the times in the night's zone ({@code zone} null is the phone's); without the time in
-     * bed (unknown or negative, as {@code Pages.shownInBed} gives -1 for a night without an end) only "23:10 to 07:05".
+     * bed (unknown or negative, as {@code SleepPage.shownInBed} gives -1 for a night without an end) only "23:10 to 07:05".
      */
     public static String window(double start, double end, double inBedMin, ZoneId zone) {
         String times = WakeUps.clock(start, zone) + " to " + WakeUps.clock(end, zone);

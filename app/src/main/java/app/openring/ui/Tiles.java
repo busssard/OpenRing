@@ -69,14 +69,21 @@ final class Tiles {
     private static Page busy;
     private static Runnable afterDrop;
 
-    /** The spec of {@code card}, made on first use. */
+    /**
+     * The spec of {@code card}, made on first use. Only while the page is built, before {@link #arrange}: arrange takes the
+     * spec off the card (issue #470), so a later write is lost without an error, and its new spec stays in {@code SPECS} as
+     * long as the card lives (a listener written late would keep the page again).
+     */
     static Spec spec(View card) {
         Spec s = SPECS.get(card);
         if (s == null) SPECS.put(card, s = new Spec());
         return s;
     }
 
-    /** Names a card that has no caption, or whose caption changes (a stable key), with the summary shown while it is folded. */
+    /**
+     * Names a card that has no caption, or whose caption changes (a stable key), with the summary shown while it is folded.
+     * Only while the page is built, before {@link #arrange}; later writes are lost.
+     */
     static <T extends View> T name(T card, String key, String title, String summary) {
         Spec s = spec(card);
         s.key = key;
@@ -88,6 +95,7 @@ final class Tiles {
     /**
      * Small score dials for the folded tile (owner's wish of 21 November): one dial goes left of the title (a score card), several
      * go in a row under it in place of the line (Today's scores). Scores that are missing are left out; none left, no dials.
+     * Only while the page is built, before {@link #arrange}; later writes are lost.
      */
     static <T extends View> T dials(T card, double[] values, int[] colors, String[] names) {
         spec(card).dials = Layout.dials(values, colors, names);
@@ -128,7 +136,10 @@ final class Tiles {
     /** The size of a folded tile's dial: big enough for a two digit score, small enough to keep the tile one row. */
     static final int DIAL_DP = 44;
 
-    /** The summary shown while the card is folded (its key number), in place of the one read from the card. */
+    /**
+     * The summary shown while the card is folded (its key number), in place of the one read from the card. Only while the page
+     * is built, before {@link #arrange}; later writes are lost.
+     */
     static <T extends View> T summary(T card, String summary) {
         spec(card).summary = summary;
         return card;

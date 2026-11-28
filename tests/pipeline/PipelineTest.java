@@ -991,6 +991,8 @@ public class PipelineTest {
         soundQueue1b450();
         soundDemoNoFolder1b450();
         soundFinishFails1b450();
+        // sleep sounds, phase 1c (issue #380): the gaps of a night and the zone of a night, read only
+        soundTimeline1c380();
 
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -14252,7 +14254,17 @@ public class PipelineTest {
         check("#373 the watch path past About you: the app", !app.openring.core.Start.opensSetup(false, false, p.keyState(), false, false), p.keyState());
         p.setWatch("AA:BB:CC:00:11:22", "Steel HR 94");
         // a backup of a watch only phone carries the choice and no key; a restore elsewhere goes on with the watch
-        p.setTourSeen(); // the short tour's flag (issue #453) is a hint, never in a backup
+        // the short tour's flags (issues #453 and #476) are hints, never in a backup; setup's mark is cleared once the tour was
+        // done or skipped, and is set again here so the backup has both to leave out
+        p.setTourAfterSetup(true);
+        boolean marked = p.tourAfterSetup();
+        p.setTourSeen();
+        boolean seenClears = !p.tourAfterSetup();
+        p.setTourAfterSetup(false);
+        boolean cleared = !p.tourAfterSetup();
+        check("#476 setup's tour mark is kept, cleared by itself and by the tour done or skipped", marked && cleared && seenClears && p.tourSeen(),
+                marked + " " + seenClears + " " + cleared);
+        p.setTourAfterSetup(true);
         byte[] full = backup252(c);
         org.json.JSONObject o = new org.json.JSONObject(new String(zipEntry(full, "openring-backup.json"), java.nio.charset.StandardCharsets.UTF_8));
         check("#373 the backup holds the choice and the watch, no key", o.optInt("start_choice") == app.openring.core.Start.WATCH && !o.has("key")
@@ -14261,8 +14273,12 @@ public class PipelineTest {
         Context other = phone254("openring373-restore");
         app.openring.data.Prefs q = app.openring.data.Prefs.of(other);
         q.clearKey();
+        // the restoring phone has its own tour flags (code review of #453, issue #477): the restore must leave them as they are
+        q.setTourSeen();
+        q.setTourAfterSetup(true);
         app.openring.data.Backup.Result r = app.openring.data.Backup.read(other, new java.io.ByteArrayInputStream(full));
-        check("#453 the tour's flag is not in the backup, the restore leaves the phone's as it was", !o.toString().contains("tour") && !q.tourSeen(), o.keySet());
+        check("#453 the tour's flags are not in the backup, the restore leaves the phone's as they were", !o.toString().contains("tour")
+                && q.tourSeen() && q.tourAfterSetup(), o.keySet());
         check("#373 restored: the watch, the choice, no ring, never Setup", r.ok && q.startChoice() == app.openring.core.Start.WATCH
                 && q.watchAddress() != null && q.keyState() == app.openring.core.KeyState.NO_RING
                 && !app.openring.core.Start.opensSetup(false, false, q.keyState(), false, true), r.message);
@@ -17890,6 +17906,82 @@ public class PipelineTest {
         realDb = Db.get(c);
         check("#380 1b: the real sounds and files are untouched by the demo's", soundRows380(realDb).equals(realRows)
                 && files380(app.openring.data.Sounds.folder(c, false)).equals(realFiles), null);
+        clean254();
+    }
+
+    /**
+     * Phase 1c of #380 (marks on the night timeline) reads only: each night's gaps (of every kind, by start, not the next
+     * night's), the silence total as before, the zone of a night (the day's zone: noted Tokyo while the phone is elsewhere),
+     * the demo night's gap; every row and clip file stays the same.
+     */
+    static void soundTimeline1c380() throws Exception {
+        Context c = phone254("openring380-1c");
+        Db db = Db.get(c);
+        ZoneId zh = ZoneId.of("Europe/Zurich"), tokyo = ZoneId.of("Asia/Tokyo");
+        double a = LocalDate.of(2026, 11, 21).atTime(23, 0).atZone(zh).toEpochSecond(), aStop = a + 8 * 3600;
+        double b = a + 86400, bStop = b + 8 * 3600;
+        app.openring.data.Sounds.addNight(db, a, aStop, -60.0, 0, app.openring.data.Sounds.ENDED_TIME);
+        app.openring.data.Sounds.addNight(db, b, bStop, -60.0, 0, app.openring.data.Sounds.ENDED_SYSTEM);
+        app.openring.data.Sounds.addMark(db, a + 3600, a + 3604, app.openring.core.analysis.SoundDetector.TALK, -30.0);
+        app.openring.data.Sounds.addGap(db, a + 4 * 3600, a + 4 * 3600 + 720, app.openring.data.Sounds.GAP_SILENCE);
+        app.openring.data.Sounds.addGap(db, a + 2 * 3600, a + 2 * 3600 + 30, app.openring.data.Sounds.GAP_SYSTEM);
+        app.openring.data.Sounds.addGap(db, a + 3 * 3600, a + 3 * 3600 + 90, null);
+        app.openring.data.Sounds.addGap(db, b + 3600, b + 3600 + 300, app.openring.data.Sounds.GAP_SILENCE);
+        String rows = soundRows380(db);
+        List<String> files = files380(app.openring.data.Sounds.folder(c, false));
+
+        app.openring.data.Sounds.Night n = app.openring.data.Sounds.night(db, a);
+        check("#380 1c: a night's gaps of every kind, by start", n != null && n.gaps.size() == 3 && n.gaps.get(0).start == a + 2 * 3600
+                && app.openring.data.Sounds.GAP_SYSTEM.equals(n.gaps.get(0).why) && n.gaps.get(1).why == null
+                && app.openring.data.Sounds.GAP_SILENCE.equals(n.gaps.get(2).why) && n.gaps.get(2).stop == a + 4 * 3600 + 720, n == null ? null : n.gaps.size());
+        check("#380 1c: the silence total stays the silence only", n != null && n.silent == 720, n == null ? null : n.silent);
+        app.openring.data.Sounds.Night nb = app.openring.data.Sounds.night(db, b);
+        check("#380 1c: the next night has only its own gap", nb != null && nb.gaps.size() == 1 && nb.gaps.get(0).start == b + 3600, nb == null ? null : nb.gaps.size());
+        check("#380 1c: the stored gap values are the ones core words", app.openring.data.Sounds.GAP_SILENCE.equals(app.openring.core.SoundMarks.GAP_SILENCE)
+                && app.openring.data.Sounds.GAP_SYSTEM.equals(app.openring.core.SoundMarks.GAP_SYSTEM), null);
+        // the rows the timeline gets, from what is stored
+        List<app.openring.core.analysis.TimelineRow> tl = app.openring.core.SoundMarks.rows(n.marks(), n.gaps, n.start, n.stop, n.ended, zh);
+        StringBuilder got = new StringBuilder();
+        for (app.openring.core.analysis.TimelineRow r : app.openring.core.analysis.TimelineRow.merge(new ArrayList<app.openring.core.analysis.TimelineRow>(), tl)) {
+            got.append(r.clock).append(' ').append(r.text).append('\n');
+        }
+        check("#380 1c: the night's timeline rows from the stored night", got.toString().equals("23:00 Started listening for sleep sounds\n"
+                + "00:00 Talking or other sound, 4 s (sound deleted)\n"
+                + "02:00 Not listening for 2 min\n"
+                + "03:00 Not listening for 12 min: another app used the microphone\n"
+                + "07:00 Stopped listening\n"), got);
+        check("#380 1c: one short time not listening", app.openring.core.SoundMarks.shortGaps(n.gaps) == 1, null);
+
+        // the zone of a night: the phone's without a noted zone, the noted zone of the night's day after a trip
+        check("#380 1c: no zone noted, the phone's", app.openring.data.Sounds.zone(db, a, zh).equals(zh), app.openring.data.Sounds.zone(db, a, zh));
+        db.noteZone(a - 86400, "Asia/Tokyo");
+        db.noteZone(bStop, "Asia/Tokyo");
+        check("#380 1c: a night listened in Tokyo shows Tokyo times while the phone is in Zurich", app.openring.data.Sounds.zone(db, a, zh).equals(tokyo),
+                app.openring.data.Sounds.zone(db, a, zh));
+        check("#380 1c: so the mark reads 08:00 there", app.openring.core.SoundMarks.markTip(n.marks().get(0), app.openring.data.Sounds.zone(db, a, zh))
+                .equals("08:00, talking or other sound, 4 s (sound deleted)"), null);
+        check("#380 1c: reading changes no row and no file", soundRows380(db).equals(rows) && files380(app.openring.data.Sounds.folder(c, false)).equals(files), null);
+
+        // the demo night: one gap of 12 minutes at 04:10
+        app.openring.data.Prefs.of(c).setDemo(true);
+        try {
+            Db d = Db.get(c);
+            java.lang.reflect.Method demo = app.openring.data.Sounds.class.getDeclaredMethod("demo", Context.class, Db.class, LocalDate.class, ZoneId.class);
+            demo.setAccessible(true);
+            demo.invoke(null, c, d, LocalDate.now(Z58), Z58);
+            app.openring.data.Sounds.Night dn = app.openring.data.Sounds.forDay(d, LocalDate.now(Z58), Z58);
+            check("#380 1c: the demo night has its 4 marks and its gap of 12 minutes at 04:10", dn != null && dn.clips.size() == 4 && dn.gaps.size() == 1
+                    && dn.gaps.get(0).stop - dn.gaps.get(0).start == 720 && app.openring.core.SleepSounds.clock(dn.gaps.get(0).start, Z58).equals("04:10")
+                    && app.openring.data.Sounds.GAP_SILENCE.equals(dn.gaps.get(0).why), dn == null ? null : dn.gaps.size());
+        } finally {
+            app.openring.data.Prefs.of(c).setDemo(false);
+        }
+        // a zone id this phone does not know (noted by another phone, restored): the phone's zone, never an error
+        db = Db.get(c);
+        db.noteZone(bStop + 7 * 86400, "Not/AZone");
+        double later = bStop + 7 * 86400 - 3600;
+        check("#380 1c: a zone this phone does not know gives the phone's", app.openring.data.Sounds.zone(db, later, zh).equals(zh),
+                app.openring.data.Sounds.zone(db, later, zh));
         clean254();
     }
 
